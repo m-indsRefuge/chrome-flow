@@ -27,23 +27,19 @@ const workspaceAimInput = document.getElementById("workspaceAim");
 const workspaceTypeSelect = document.getElementById("workspaceType");
 const workspaceTypeDescription = document.getElementById("workspaceTypeDescription");
 const saveWorkspaceButton = document.getElementById("saveWorkspaceButton");
-
 const scanTabsButton = document.getElementById("scanTabsButton");
 const addSelectedTabsButton = document.getElementById("addSelectedTabsButton");
 const clearScannedTabsButton = document.getElementById("clearScannedTabsButton");
 const intakeStatus = document.getElementById("intakeStatus");
 const availableTabsList = document.getElementById("availableTabsList");
-
 const searchQueryInput = document.getElementById("searchQuery");
 const openSearchTabButton = document.getElementById("openSearchTabButton");
 const refreshWorkspaceTabsButton = document.getElementById("refreshWorkspaceTabsButton");
 const clearWorkspaceTabsButton = document.getElementById("clearWorkspaceTabsButton");
 const tabsList = document.getElementById("tabsList");
-
 const journalEntryInput = document.getElementById("journalEntry");
 const addJournalButton = document.getElementById("addJournalButton");
 const journalList = document.getElementById("journalList");
-
 const timelineList = document.getElementById("timelineList");
 
 let workspace = await getWorkspace();
@@ -58,10 +54,8 @@ saveWorkspaceButton.addEventListener("click", async () => {
   workspace.aim = workspaceAimInput.value.trim();
   workspace.workspaceType = workspaceTypeSelect.value || DEFAULT_WORKSPACE_TYPE;
   workspace.updatedAt = new Date().toISOString();
-
   await saveWorkspace(workspace);
   await addTimelineEvent("workspace_saved", "Workspace saved.");
-
   workspace = await getWorkspace();
   renderWorkspace();
 });
@@ -69,13 +63,8 @@ saveWorkspaceButton.addEventListener("click", async () => {
 workspaceTypeSelect.addEventListener("change", async () => {
   workspace.workspaceType = workspaceTypeSelect.value || DEFAULT_WORKSPACE_TYPE;
   workspace.updatedAt = new Date().toISOString();
-
   await saveWorkspace(workspace);
-  await addTimelineEvent(
-    "workspace_type_changed",
-    "Workspace type changed to " + getWorkspaceTypeLabel(workspace.workspaceType) + "."
-  );
-
+  await addTimelineEvent("workspace_type_changed", "Workspace type changed to " + getWorkspaceTypeLabel(workspace.workspaceType) + ".");
   workspace = await getWorkspace();
   setIntakeStatus("Workspace type set to " + getWorkspaceTypeLabel(workspace.workspaceType) + ". Tab role options and subgroups have been updated.");
   renderWorkspace();
@@ -83,9 +72,7 @@ workspaceTypeSelect.addEventListener("change", async () => {
 
 scanTabsButton.addEventListener("click", async () => {
   availableTabs = await getCurrentWindowTabs();
-
   await addTimelineEvent("tabs_scanned", "Scanned " + availableTabs.length + " tabs from current window.");
-
   workspace = await getWorkspace();
   setIntakeStatus("Scanned " + availableTabs.length + " tabs. Select the tabs you want to add to this workspace.");
   renderAvailableTabs();
@@ -110,9 +97,7 @@ addSelectedTabsButton.addEventListener("click", async () => {
       return;
     }
 
-    const existing = findWorkspaceTabMatch(tab);
-
-    if (existing) {
+    if (findWorkspaceTabMatch(tab)) {
       skippedCount += 1;
       return;
     }
@@ -122,13 +107,8 @@ addSelectedTabsButton.addEventListener("click", async () => {
   });
 
   workspace.updatedAt = new Date().toISOString();
-
   await saveWorkspace(workspace);
-  await addTimelineEvent(
-    "selected_tabs_added",
-    "Added " + addedCount + " selected tab(s) to workspace. Skipped " + skippedCount + " existing tab(s)."
-  );
-
+  await addTimelineEvent("selected_tabs_added", "Added " + addedCount + " selected tab(s) to workspace. Skipped " + skippedCount + " existing tab(s).");
   workspace = await getWorkspace();
   setIntakeStatus("Added " + addedCount + " tab(s) to workspace. Skipped " + skippedCount + " existing tab(s).");
   renderWorkspace();
@@ -174,7 +154,6 @@ refreshWorkspaceTabsButton.addEventListener("click", async () => {
     }
 
     refreshedCount += 1;
-
     return updateWorkspaceTabFromBrowserTab(workspaceTab, currentTab, {
       isOpen: true,
       lastSeenAt: now
@@ -182,13 +161,8 @@ refreshWorkspaceTabsButton.addEventListener("click", async () => {
   });
 
   workspace.updatedAt = now;
-
   await saveWorkspace(workspace);
-  await addTimelineEvent(
-    "workspace_tabs_refreshed",
-    "Refreshed metadata for " + refreshedCount + " workspace tab(s). " + missingCount + " tab(s) were not found in the browser."
-  );
-
+  await addTimelineEvent("workspace_tabs_refreshed", "Refreshed metadata for " + refreshedCount + " workspace tab(s). " + missingCount + " tab(s) were not found in the browser.");
   workspace = await getWorkspace();
   setIntakeStatus("Refreshed " + refreshedCount + " workspace tab(s). " + missingCount + " tab(s) were not found in the browser.");
   renderWorkspace();
@@ -201,9 +175,7 @@ clearWorkspaceTabsButton.addEventListener("click", async () => {
     return;
   }
 
-  const confirmed = window.confirm(
-    "Clear all workspace tabs? This will remove tab aliases and roles from this workspace, but it will keep the workspace name, aim, journal, and timeline."
-  );
+  const confirmed = window.confirm("Clear all workspace tabs? This will remove tab aliases and roles from this workspace, but it will keep the workspace name, aim, journal, and timeline.");
 
   if (!confirmed) {
     return;
@@ -212,10 +184,8 @@ clearWorkspaceTabsButton.addEventListener("click", async () => {
   const clearedCount = workspace.tabs.length;
   workspace.tabs = [];
   workspace.updatedAt = new Date().toISOString();
-
   await saveWorkspace(workspace);
   await addTimelineEvent("workspace_tabs_cleared", "Cleared " + clearedCount + " tab(s) from workspace.");
-
   workspace = await getWorkspace();
   setIntakeStatus("Cleared " + clearedCount + " workspace tab(s). Scan again and select only the tabs you want.");
   renderWorkspace();
@@ -231,7 +201,6 @@ addJournalButton.addEventListener("click", async () => {
 
   await addJournalEntry(text);
   await addTimelineEvent("journal_added", "Journal entry added.");
-
   journalEntryInput.value = "";
   workspace = await getWorkspace();
   renderWorkspace();
@@ -239,7 +208,6 @@ addJournalButton.addEventListener("click", async () => {
 
 function populateWorkspaceTypeSelect() {
   clearElement(workspaceTypeSelect);
-
   WORKSPACE_TYPES.forEach((workspaceType) => {
     const option = document.createElement("option");
     option.value = workspaceType.id;
@@ -250,13 +218,11 @@ function populateWorkspaceTypeSelect() {
 
 function renderWorkspace() {
   const workspaceType = getWorkspaceType(workspace.workspaceType);
-
   workspace.workspaceType = workspaceType.id;
   workspaceNameInput.value = workspace.name || "";
   workspaceAimInput.value = workspace.aim || "";
   workspaceTypeSelect.value = workspaceType.id;
   workspaceTypeDescription.textContent = getWorkspaceTypeDescription(workspaceType.id);
-
   renderTabs();
   renderJournal();
   renderTimeline();
@@ -274,7 +240,6 @@ function renderAvailableTabs() {
 
   availableTabs.forEach((tab, index) => {
     const alreadyInWorkspace = Boolean(findWorkspaceTabMatch(tab));
-
     const card = document.createElement("div");
     card.className = "available-tab-card";
 
@@ -291,11 +256,7 @@ function renderAvailableTabs() {
     card.appendChild(checkbox);
 
     const content = document.createElement("div");
-
-    const title = document.createElement("div");
-    title.className = "tab-title";
-    title.textContent = tab.title || "Untitled tab";
-    content.appendChild(title);
+    appendTextDiv(content, "tab-title", tab.title || "Untitled tab");
 
     const url = document.createElement("div");
     url.className = "tab-url";
@@ -303,10 +264,7 @@ function renderAvailableTabs() {
     url.title = tab.url || "";
     content.appendChild(url);
 
-    const meta = document.createElement("div");
-    meta.className = "tab-meta";
-    meta.textContent = "Window " + tab.windowId + " | Tab " + tab.id;
-    content.appendChild(meta);
+    appendTextDiv(content, "tab-meta", "Window " + tab.windowId + " | Tab " + tab.id);
 
     if (alreadyInWorkspace) {
       const badge = document.createElement("span");
@@ -330,9 +288,7 @@ function renderTabs() {
     return;
   }
 
-  const roleGroups = createTabRoleGroups(workspace.tabs);
-
-  roleGroups.forEach((group) => {
+  createTabRoleGroups(workspace.tabs).forEach((group) => {
     const groupSection = document.createElement("div");
     groupSection.className = "tab-role-group";
 
@@ -342,16 +298,8 @@ function renderTabs() {
 
     const groupHeader = document.createElement("div");
     groupHeader.className = "tab-role-group-header";
-
-    const groupTitle = document.createElement("h3");
-    groupTitle.textContent = group.label;
-    groupHeader.appendChild(groupTitle);
-
-    const groupCount = document.createElement("span");
-    groupCount.className = "tab-role-group-count";
-    groupCount.textContent = group.tabs.length + " tab" + (group.tabs.length === 1 ? "" : "s");
-    groupHeader.appendChild(groupCount);
-
+    appendTextHeading(groupHeader, "h3", group.label);
+    appendTextSpan(groupHeader, "tab-role-group-count", group.tabs.length + " tab" + (group.tabs.length === 1 ? "" : "s"));
     groupSection.appendChild(groupHeader);
 
     group.tabs.forEach((tab) => {
@@ -361,10 +309,13 @@ function renderTabs() {
     tabsList.appendChild(groupSection);
   });
 
+  attachWorkspaceTabHandlers();
+}
+
+function attachWorkspaceTabHandlers() {
   document.querySelectorAll(".alias-input").forEach((input) => {
     input.addEventListener("change", async (event) => {
-      const tabKey = event.target.dataset.tabKey;
-      const tab = findWorkspaceTabByKey(tabKey);
+      const tab = findWorkspaceTabByKey(event.target.dataset.tabKey);
 
       if (!tab) {
         return;
@@ -372,10 +323,8 @@ function renderTabs() {
 
       tab.alias = event.target.value.trim();
       workspace.updatedAt = new Date().toISOString();
-
       await saveWorkspace(workspace);
       await addTimelineEvent("tab_alias_updated", "Updated alias for: " + getTabName(tab) + ".");
-
       workspace = await getWorkspace();
       renderWorkspace();
     });
@@ -383,8 +332,7 @@ function renderTabs() {
 
   document.querySelectorAll(".role-select").forEach((select) => {
     select.addEventListener("change", async (event) => {
-      const tabKey = event.target.dataset.tabKey;
-      const tab = findWorkspaceTabByKey(tabKey);
+      const tab = findWorkspaceTabByKey(event.target.dataset.tabKey);
 
       if (!tab) {
         return;
@@ -392,14 +340,9 @@ function renderTabs() {
 
       tab.role = event.target.value;
       workspace.updatedAt = new Date().toISOString();
-
       const roleLabel = getWorkspaceRoleLabel(workspace.workspaceType, tab.role);
       await saveWorkspace(workspace);
-      await addTimelineEvent(
-        "tab_role_updated",
-        "Assigned " + getTabName(tab) + " to " + roleLabel + " subgroup."
-      );
-
+      await addTimelineEvent("tab_role_updated", "Assigned " + getTabName(tab) + " to " + roleLabel + " subgroup.");
       workspace = await getWorkspace();
       renderWorkspace();
     });
@@ -411,12 +354,6 @@ function renderTabs() {
     });
   });
 
-  document.querySelectorAll(".reopen-tab-button").forEach((button) => {
-    button.addEventListener("click", async (event) => {
-      await reopenWorkspaceTab(event.target.dataset.tabKey);
-    });
-  });
-
   document.querySelectorAll(".close-browser-tab-button").forEach((button) => {
     button.addEventListener("click", async (event) => {
       await closeBrowserTabForWorkspaceTab(event.target.dataset.tabKey);
@@ -425,32 +362,7 @@ function renderTabs() {
 
   document.querySelectorAll(".remove-tab-button").forEach((button) => {
     button.addEventListener("click", async (event) => {
-      const tabKey = event.target.dataset.tabKey;
-      const tabIndex = workspace.tabs.findIndex((item) => item.tabKey === tabKey);
-
-      if (tabIndex < 0) {
-        setIntakeStatus("Could not find that workspace tab to remove.");
-        return;
-      }
-
-      const tab = workspace.tabs[tabIndex];
-      const tabName = getTabName(tab);
-      const confirmed = window.confirm("Remove this tab from the workspace? The browser tab itself will not be closed.");
-
-      if (!confirmed) {
-        return;
-      }
-
-      workspace.tabs.splice(tabIndex, 1);
-      workspace.updatedAt = new Date().toISOString();
-
-      await saveWorkspace(workspace);
-      await addTimelineEvent("workspace_tab_removed", "Removed " + tabName + " from workspace.");
-
-      workspace = await getWorkspace();
-      setIntakeStatus("Removed " + tabName + " from workspace. The browser tab was not closed.");
-      renderWorkspace();
-      renderAvailableTabs();
+      await removeWorkspaceTabWithTrail(event.target.dataset.tabKey);
     });
   });
 }
@@ -458,11 +370,7 @@ function renderTabs() {
 function createWorkspaceTabCard(tab) {
   const card = document.createElement("div");
   card.className = "tab-card";
-
-  const title = document.createElement("div");
-  title.className = "tab-title";
-  title.textContent = tab.originalTitle || "Untitled tab";
-  card.appendChild(title);
+  appendTextDiv(card, "tab-title", tab.originalTitle || "Untitled tab");
 
   const url = document.createElement("div");
   url.className = "tab-url";
@@ -505,35 +413,9 @@ function createWorkspaceTabCard(tab) {
 
   const actions = document.createElement("div");
   actions.className = "tab-card-actions";
-
-  const focusButton = document.createElement("button");
-  focusButton.type = "button";
-  focusButton.className = "focus-tab-button secondary-button";
-  focusButton.dataset.tabKey = tab.tabKey || "";
-  focusButton.textContent = "Focus Tab";
-  actions.appendChild(focusButton);
-
-  const reopenButton = document.createElement("button");
-  reopenButton.type = "button";
-  reopenButton.className = "reopen-tab-button secondary-button";
-  reopenButton.dataset.tabKey = tab.tabKey || "";
-  reopenButton.textContent = "Reopen URL";
-  actions.appendChild(reopenButton);
-
-  const closeBrowserTabButton = document.createElement("button");
-  closeBrowserTabButton.type = "button";
-  closeBrowserTabButton.className = "close-browser-tab-button danger-button";
-  closeBrowserTabButton.dataset.tabKey = tab.tabKey || "";
-  closeBrowserTabButton.textContent = "Close Browser Tab";
-  actions.appendChild(closeBrowserTabButton);
-
-  const removeButton = document.createElement("button");
-  removeButton.type = "button";
-  removeButton.className = "remove-tab-button danger-button";
-  removeButton.dataset.tabKey = tab.tabKey || "";
-  removeButton.textContent = "Remove from Workspace";
-  actions.appendChild(removeButton);
-
+  actions.appendChild(createActionButton("Focus Tab", "focus-tab-button secondary-button", tab.tabKey));
+  actions.appendChild(createActionButton("Close Browser Tab", "close-browser-tab-button danger-button", tab.tabKey));
+  actions.appendChild(createActionButton("Remove from Workspace", "remove-tab-button danger-button", tab.tabKey));
   card.appendChild(actions);
 
   return card;
@@ -542,14 +424,7 @@ function createWorkspaceTabCard(tab) {
 function createTabRoleGroups(tabs) {
   const workspaceType = workspace.workspaceType || DEFAULT_WORKSPACE_TYPE;
   const roles = getWorkspaceRoles(workspaceType);
-
-  const roleGroups = roles.map((role) => ({
-    roleId: role.id,
-    label: role.label,
-    tabs: [],
-    isLegacy: false
-  }));
-
+  const roleGroups = roles.map((role) => ({ roleId: role.id, label: role.label, tabs: [], isLegacy: false }));
   const legacyGroups = [];
 
   tabs.forEach((tab) => {
@@ -564,12 +439,7 @@ function createTabRoleGroups(tabs) {
     let legacyGroup = legacyGroups.find((item) => item.roleId === roleId);
 
     if (!legacyGroup) {
-      legacyGroup = {
-        roleId: roleId,
-        label: getWorkspaceRoleLabel(workspaceType, roleId),
-        tabs: [],
-        isLegacy: true
-      };
+      legacyGroup = { roleId: roleId, label: getWorkspaceRoleLabel(workspaceType, roleId), tabs: [], isLegacy: true };
       legacyGroups.push(legacyGroup);
     }
 
@@ -581,7 +451,6 @@ function createTabRoleGroups(tabs) {
 
 function renderRoleOptions(roleSelect, currentRole) {
   clearElement(roleSelect);
-
   const roles = getWorkspaceRoles(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE);
   const currentRoleIsValid = isValidWorkspaceRole(workspace.workspaceType, currentRole);
 
@@ -611,14 +480,8 @@ async function openSearchTabFromWorkspace() {
   }
 
   const searchUrl = "https://www.google.com/search?q=" + encodeURIComponent(query);
-
-  await chrome.tabs.create({
-    url: searchUrl,
-    active: true
-  });
-
+  await chrome.tabs.create({ url: searchUrl, active: true });
   await addTimelineEvent("browser_search_tab_opened", "Opened search tab for: " + query + ".");
-
   searchQueryInput.value = "";
   workspace = await getWorkspace();
   setIntakeStatus("Opened search tab for: " + query + ". Scan current window if you want to add it to this workspace.");
@@ -640,68 +503,21 @@ async function focusWorkspaceTab(tabKey) {
     workspace.updatedAt = new Date().toISOString();
     await saveWorkspace(workspace);
     await addTimelineEvent("browser_tab_focus_failed", "Could not focus " + getTabName(tab) + " because it was not found in the browser.");
-
     workspace = await getWorkspace();
-    setIntakeStatus("Could not find " + getTabName(tab) + " in the browser. Use Reopen URL to open it again.");
+    setIntakeStatus("Could not find " + getTabName(tab) + " in the browser. Use timeline recovery if a saved action exists.");
     renderWorkspace();
     return;
   }
 
-  await chrome.windows.update(liveTab.windowId, {
-    focused: true
-  });
-
-  await chrome.tabs.update(liveTab.id, {
-    active: true
-  });
-
-  updateWorkspaceTabFromBrowserTabInPlace(tab, liveTab, {
-    isOpen: true,
-    lastSeenAt: new Date().toISOString()
-  });
-
+  await chrome.windows.update(liveTab.windowId, { focused: true });
+  await chrome.tabs.update(liveTab.id, { active: true });
+  updateWorkspaceTabFromBrowserTabInPlace(tab, liveTab, { isOpen: true, lastSeenAt: new Date().toISOString() });
   workspace.updatedAt = new Date().toISOString();
   await saveWorkspace(workspace);
   await addTimelineEvent("browser_tab_focused", "Focused browser tab: " + getTabName(tab) + ".");
-
   workspace = await getWorkspace();
   setIntakeStatus("Focused browser tab: " + getTabName(tab) + ".");
   renderWorkspace();
-}
-
-async function reopenWorkspaceTab(tabKey) {
-  const tab = findWorkspaceTabByKey(tabKey);
-
-  if (!tab) {
-    setIntakeStatus("Could not find that workspace tab.");
-    return;
-  }
-
-  if (!tab.url) {
-    setIntakeStatus("This workspace tab does not have a saved URL to reopen.");
-    return;
-  }
-
-  const createdTab = await chrome.tabs.create({
-    url: tab.url,
-    active: true
-  });
-
-  const browserTab = createBrowserTabSnapshot(createdTab);
-  updateWorkspaceTabFromBrowserTabInPlace(tab, browserTab, {
-    isOpen: true,
-    lastOpenedAt: new Date().toISOString(),
-    lastSeenAt: new Date().toISOString()
-  });
-
-  workspace.updatedAt = new Date().toISOString();
-  await saveWorkspace(workspace);
-  await addTimelineEvent("browser_tab_reopened", "Reopened saved URL for: " + getTabName(tab) + ".");
-
-  workspace = await getWorkspace();
-  setIntakeStatus("Reopened saved URL for: " + getTabName(tab) + ".");
-  renderWorkspace();
-  renderAvailableTabs();
 }
 
 async function closeBrowserTabForWorkspaceTab(tabKey) {
@@ -719,30 +535,77 @@ async function closeBrowserTabForWorkspaceTab(tabKey) {
     workspace.updatedAt = new Date().toISOString();
     await saveWorkspace(workspace);
     await addTimelineEvent("browser_tab_close_failed", "Could not close " + getTabName(tab) + " because it was not found in the browser.");
-
     workspace = await getWorkspace();
     setIntakeStatus("Could not find " + getTabName(tab) + " in the browser. The workspace record was kept.");
     renderWorkspace();
     return;
   }
 
-  const confirmed = window.confirm("Close this actual browser tab? The saved Chrome Flow workspace record will be kept.");
+  const confirmed = window.confirm("Close this browser tab? The saved Chrome Flow workspace record will be kept and the timeline will include recovery.");
 
   if (!confirmed) {
     return;
   }
 
-  await chrome.tabs.remove(liveTab.id);
+  const reason = promptForActionReason("closing this browser tab", getTabName(tab));
 
+  if (reason === null) {
+    setIntakeStatus("Close cancelled. No action was taken.");
+    return;
+  }
+
+  const tabSnapshot = createTabSnapshot(tab);
+  await chrome.tabs.remove(liveTab.id);
   tab.isOpen = false;
   tab.lastClosedAt = new Date().toISOString();
   workspace.updatedAt = new Date().toISOString();
-
   await saveWorkspace(workspace);
-  await addTimelineEvent("browser_tab_closed", "Closed browser tab for: " + getTabName(tab) + ". Workspace record was kept.");
-
+  await addActionJournalEntry("Closed browser tab", tabSnapshot, reason);
+  await addTimelineEvent("browser_tab_closed", "Closed browser tab for: " + snapshotName(tabSnapshot) + ". Workspace record was kept.", {
+    reason: reason,
+    tabSnapshot: tabSnapshot,
+    recoveryActions: { canReopenUrl: true, canReaddToWorkspace: false }
+  });
   workspace = await getWorkspace();
-  setIntakeStatus("Closed browser tab for " + getTabName(tab) + ". Workspace record was kept.");
+  setIntakeStatus("Closed browser tab for " + snapshotName(tabSnapshot) + ". Recovery is available from the timeline.");
+  renderWorkspace();
+  renderAvailableTabs();
+}
+
+async function removeWorkspaceTabWithTrail(tabKey) {
+  const tabIndex = workspace.tabs.findIndex((item) => item.tabKey === tabKey);
+
+  if (tabIndex < 0) {
+    setIntakeStatus("Could not find that workspace tab to remove.");
+    return;
+  }
+
+  const tab = workspace.tabs[tabIndex];
+  const tabSnapshot = createTabSnapshot(tab);
+  const confirmed = window.confirm("Remove this tab from the workspace? The browser tab itself will not be closed and the timeline will include recovery.");
+
+  if (!confirmed) {
+    return;
+  }
+
+  const reason = promptForActionReason("removing this tab from the workspace", snapshotName(tabSnapshot));
+
+  if (reason === null) {
+    setIntakeStatus("Remove cancelled. No action was taken.");
+    return;
+  }
+
+  workspace.tabs.splice(tabIndex, 1);
+  workspace.updatedAt = new Date().toISOString();
+  await saveWorkspace(workspace);
+  await addActionJournalEntry("Removed tab from workspace", tabSnapshot, reason);
+  await addTimelineEvent("workspace_tab_removed", "Removed " + snapshotName(tabSnapshot) + " from workspace.", {
+    reason: reason,
+    tabSnapshot: tabSnapshot,
+    recoveryActions: { canReopenUrl: true, canReaddToWorkspace: true }
+  });
+  workspace = await getWorkspace();
+  setIntakeStatus("Removed " + snapshotName(tabSnapshot) + " from workspace. Recovery is available from the timeline.");
   renderWorkspace();
   renderAvailableTabs();
 }
@@ -760,15 +623,12 @@ function renderJournal() {
   workspace.journal.forEach((entry) => {
     const card = document.createElement("div");
     card.className = "journal-card";
-
     const text = document.createElement("p");
     text.textContent = entry.text;
     card.appendChild(text);
-
     const time = document.createElement("small");
     time.textContent = entry.createdAt;
     card.appendChild(time);
-
     journalList.appendChild(card);
   });
 }
@@ -786,21 +646,144 @@ function renderTimeline() {
   workspace.timeline.slice().reverse().forEach((event) => {
     const card = document.createElement("div");
     card.className = "timeline-card";
-
     const type = document.createElement("strong");
     type.textContent = event.type;
     card.appendChild(type);
-
     const message = document.createElement("p");
     message.textContent = event.message;
     card.appendChild(message);
 
+    if (event.reason) {
+      const reason = document.createElement("p");
+      reason.className = "timeline-reason";
+      reason.textContent = "Reason: " + event.reason;
+      card.appendChild(reason);
+    }
+
+    if (event.tabSnapshot) {
+      card.appendChild(createTimelineTabSnapshot(event.tabSnapshot));
+    }
+
+    if (event.recoveryActions && event.tabSnapshot) {
+      const actions = document.createElement("div");
+      actions.className = "timeline-actions";
+
+      if (event.recoveryActions.canReopenUrl) {
+        const reopenButton = document.createElement("button");
+        reopenButton.type = "button";
+        reopenButton.className = "timeline-reopen-url-button secondary-button";
+        reopenButton.dataset.eventId = event.eventId;
+        reopenButton.textContent = "Reopen URL";
+        actions.appendChild(reopenButton);
+      }
+
+      if (event.recoveryActions.canReaddToWorkspace) {
+        const readdButton = document.createElement("button");
+        readdButton.type = "button";
+        readdButton.className = "timeline-readd-workspace-button secondary-button";
+        readdButton.dataset.eventId = event.eventId;
+        readdButton.textContent = "Re-add to Workspace";
+        actions.appendChild(readdButton);
+      }
+
+      card.appendChild(actions);
+    }
+
     const time = document.createElement("small");
     time.textContent = event.createdAt;
     card.appendChild(time);
-
     timelineList.appendChild(card);
   });
+
+  attachTimelineRecoveryHandlers();
+}
+
+function createTimelineTabSnapshot(tabSnapshot) {
+  const snapshot = document.createElement("div");
+  snapshot.className = "timeline-tab-snapshot";
+  appendTextDiv(snapshot, "tab-title", snapshotName(tabSnapshot));
+  const url = document.createElement("div");
+  url.className = "tab-url";
+  url.textContent = tabSnapshot.displayUrl || createDisplayUrl(tabSnapshot.url || "");
+  url.title = tabSnapshot.url || "";
+  snapshot.appendChild(url);
+  appendTextDiv(snapshot, "tab-meta", "Role: " + (tabSnapshot.role || "unassigned") + " | Workspace type: " + (tabSnapshot.workspaceType || "unknown"));
+  return snapshot;
+}
+
+function attachTimelineRecoveryHandlers() {
+  document.querySelectorAll(".timeline-reopen-url-button").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      await reopenUrlFromTimeline(event.target.dataset.eventId);
+    });
+  });
+
+  document.querySelectorAll(".timeline-readd-workspace-button").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      await readdWorkspaceTabFromTimeline(event.target.dataset.eventId);
+    });
+  });
+}
+
+async function reopenUrlFromTimeline(eventId) {
+  const timelineEvent = findTimelineEventById(eventId);
+
+  if (!timelineEvent || !timelineEvent.tabSnapshot || !timelineEvent.tabSnapshot.url) {
+    setIntakeStatus("Could not find a saved URL for this timeline event.");
+    return;
+  }
+
+  const createdTab = await chrome.tabs.create({ url: timelineEvent.tabSnapshot.url, active: true });
+  const browserTab = createBrowserTabSnapshot(createdTab);
+  const matchingWorkspaceTab = workspace.tabs.find((tab) => tab.url === timelineEvent.tabSnapshot.url || tab.tabKey === timelineEvent.tabSnapshot.tabKey);
+
+  if (matchingWorkspaceTab) {
+    updateWorkspaceTabFromBrowserTabInPlace(matchingWorkspaceTab, browserTab, {
+      isOpen: true,
+      lastOpenedAt: new Date().toISOString(),
+      lastSeenAt: new Date().toISOString()
+    });
+    workspace.updatedAt = new Date().toISOString();
+    await saveWorkspace(workspace);
+  }
+
+  await addTimelineEvent("timeline_url_reopened", "Reopened URL from timeline for: " + snapshotName(timelineEvent.tabSnapshot) + ".", {
+    tabSnapshot: timelineEvent.tabSnapshot,
+    recoverySourceEventId: eventId
+  });
+  workspace = await getWorkspace();
+  setIntakeStatus("Reopened URL from timeline for: " + snapshotName(timelineEvent.tabSnapshot) + ".");
+  renderWorkspace();
+  renderAvailableTabs();
+}
+
+async function readdWorkspaceTabFromTimeline(eventId) {
+  const timelineEvent = findTimelineEventById(eventId);
+
+  if (!timelineEvent || !timelineEvent.tabSnapshot) {
+    setIntakeStatus("Could not find a saved tab snapshot for this timeline event.");
+    return;
+  }
+
+  const tabSnapshot = timelineEvent.tabSnapshot;
+  const existing = workspace.tabs.find((tab) => tab.url === tabSnapshot.url || tab.tabKey === tabSnapshot.tabKey);
+
+  if (existing) {
+    setIntakeStatus(snapshotName(tabSnapshot) + " is already in the workspace.");
+    return;
+  }
+
+  workspace.tabs.push(createWorkspaceTabFromSnapshot(tabSnapshot));
+  workspace.updatedAt = new Date().toISOString();
+  await saveWorkspace(workspace);
+  await addTimelineEvent("workspace_tab_readded", "Re-added " + snapshotName(tabSnapshot) + " to workspace from timeline recovery.", {
+    tabSnapshot: tabSnapshot,
+    recoverySourceEventId: eventId
+  });
+  workspace = await getWorkspace();
+  setIntakeStatus("Re-added " + snapshotName(tabSnapshot) + " to workspace from timeline recovery.");
+  renderWorkspace();
+  renderAvailableTabs();
 }
 
 function getSelectedAvailableTabIndexes() {
@@ -811,19 +794,11 @@ function getSelectedAvailableTabIndexes() {
 }
 
 function findWorkspaceTabMatch(tab) {
-  return workspace.tabs.find((item) =>
-    item.tabId === tab.id ||
-    item.tabKey === tab.tabKey ||
-    item.url === tab.url
-  );
+  return workspace.tabs.find((item) => item.tabId === tab.id || item.tabKey === tab.tabKey || item.url === tab.url);
 }
 
 function findCurrentTabForWorkspaceTab(workspaceTab, currentTabs) {
-  return currentTabs.find((tab) =>
-    tab.id === workspaceTab.tabId ||
-    tab.url === workspaceTab.url ||
-    tab.tabKey === workspaceTab.tabKey
-  );
+  return currentTabs.find((tab) => tab.id === workspaceTab.tabId || tab.url === workspaceTab.url || tab.tabKey === workspaceTab.tabKey);
 }
 
 async function findLiveBrowserTabForWorkspaceTab(workspaceTab) {
@@ -835,9 +810,12 @@ function findWorkspaceTabByKey(tabKey) {
   return workspace.tabs.find((item) => item.tabKey === tabKey);
 }
 
+function findTimelineEventById(eventId) {
+  return workspace.timeline.find((event) => event.eventId === eventId);
+}
+
 function createWorkspaceTab(tab) {
   const now = new Date().toISOString();
-
   return {
     tabId: tab.id,
     tabKey: tab.tabKey,
@@ -851,6 +829,44 @@ function createWorkspaceTab(tab) {
     isOpen: true,
     firstSeenAt: now,
     lastSeenAt: now
+  };
+}
+
+function createWorkspaceTabFromSnapshot(tabSnapshot) {
+  const now = new Date().toISOString();
+  return {
+    tabId: tabSnapshot.tabId,
+    tabKey: tabSnapshot.tabKey || ((tabSnapshot.url || "") + "::" + (tabSnapshot.originalTitle || "")),
+    windowId: tabSnapshot.windowId,
+    groupId: tabSnapshot.groupId,
+    url: tabSnapshot.url,
+    displayUrl: tabSnapshot.displayUrl || createDisplayUrl(tabSnapshot.url || ""),
+    originalTitle: tabSnapshot.originalTitle,
+    alias: tabSnapshot.alias || "",
+    role: tabSnapshot.role || "unassigned",
+    isOpen: false,
+    firstSeenAt: tabSnapshot.firstSeenAt || now,
+    lastSeenAt: tabSnapshot.lastSeenAt || now,
+    restoredAt: now
+  };
+}
+
+function createTabSnapshot(tab) {
+  return {
+    tabId: tab.tabId,
+    tabKey: tab.tabKey,
+    windowId: tab.windowId,
+    groupId: tab.groupId,
+    url: tab.url,
+    displayUrl: tab.displayUrl || createDisplayUrl(tab.url || ""),
+    originalTitle: tab.originalTitle,
+    alias: tab.alias || "",
+    role: tab.role || "unassigned",
+    workspaceType: workspace.workspaceType || DEFAULT_WORKSPACE_TYPE,
+    isOpen: tab.isOpen !== false,
+    firstSeenAt: tab.firstSeenAt,
+    lastSeenAt: tab.lastSeenAt,
+    capturedAt: new Date().toISOString()
   };
 }
 
@@ -869,12 +885,61 @@ function updateWorkspaceTabFromBrowserTab(workspaceTab, browserTab, extraFields 
 }
 
 function updateWorkspaceTabFromBrowserTabInPlace(workspaceTab, browserTab, extraFields = {}) {
-  const updatedTab = updateWorkspaceTabFromBrowserTab(workspaceTab, browserTab, extraFields);
-  Object.assign(workspaceTab, updatedTab);
+  Object.assign(workspaceTab, updateWorkspaceTabFromBrowserTab(workspaceTab, browserTab, extraFields));
 }
 
 function getTabName(tab) {
   return tab.alias || tab.originalTitle || tab.displayUrl || "Untitled tab";
+}
+
+function snapshotName(tabSnapshot) {
+  return tabSnapshot.alias || tabSnapshot.originalTitle || tabSnapshot.displayUrl || "Untitled tab";
+}
+
+function promptForActionReason(actionLabel, tabName) {
+  const reason = window.prompt("Reason for " + actionLabel + "? This will be recorded in the journal and timeline.\n\nTab: " + tabName, "");
+
+  if (reason === null) {
+    return null;
+  }
+
+  return reason.trim() || "No reason recorded.";
+}
+
+async function addActionJournalEntry(actionLabel, tabSnapshot, reason) {
+  await addJournalEntry(actionLabel + ": " + snapshotName(tabSnapshot) + "\nReason: " + reason + "\nURL: " + (tabSnapshot.url || "No URL recorded."));
+}
+
+function createActionButton(text, className, tabKey) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.dataset.tabKey = tabKey || "";
+  button.textContent = text;
+  return button;
+}
+
+function appendTextDiv(parent, className, text) {
+  const element = document.createElement("div");
+  element.className = className;
+  element.textContent = text;
+  parent.appendChild(element);
+  return element;
+}
+
+function appendTextSpan(parent, className, text) {
+  const element = document.createElement("span");
+  element.className = className;
+  element.textContent = text;
+  parent.appendChild(element);
+  return element;
+}
+
+function appendTextHeading(parent, tagName, text) {
+  const element = document.createElement(tagName);
+  element.textContent = text;
+  parent.appendChild(element);
+  return element;
 }
 
 function createDisplayUrl(rawUrl) {
