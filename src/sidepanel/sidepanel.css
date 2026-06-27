@@ -137,20 +137,38 @@ button {
   margin-top: 0;
 }
 
-.tab-card-actions {
+.tab-card-actions,
+.timeline-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
   margin-top: 10px;
 }
 
-.tab-card-actions button {
+.tab-card-actions button,
+.timeline-actions button {
   margin-bottom: 0;
 }
 
 .remove-tab-button,
 .close-browser-tab-button {
   margin-bottom: 0;
+}
+
+.timeline-reason {
+  padding: 8px;
+  border-left: 3px solid #ccc;
+  background: #ffffff;
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.timeline-tab-snapshot {
+  padding: 8px;
+  margin: 8px 0;
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  background: #ffffff;
 }
 
 .available-tab-card {
