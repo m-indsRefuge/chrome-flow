@@ -6,6 +6,7 @@ Workspace:
   workspaceId: string,
   name: string,
   aim: string,
+  workspaceType: string, // research, design, build, decision, or learning
   createdAt: string,
   updatedAt: string,
   tabs: FlowTab[],
@@ -23,7 +24,7 @@ FlowTab:
   displayUrl: string, // shortened URL for side-panel display
   originalTitle: string,
   alias: string,
-  role: string,
+  role: string,       // selected from the current workspace type role set
   firstSeenAt: string,
   lastSeenAt: string
 }
