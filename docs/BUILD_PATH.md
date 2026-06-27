@@ -26,16 +26,27 @@ Done when:
 - Existing workspace tabs are detected and skipped
 - Selected-tab intake actions are recorded in the timeline
 
-## V0.2B Workspace Tab Management
+## V0.2B Workspace Classification and Dynamic Tab Roles
+
+Done when:
+
+- User can assign a workspace type/classification
+- Supported workspace types are Research, Design, Build, Decision, and Learning
+- Workspace type is stored with the workspace
+- Workspace type changes are recorded in the timeline
+- Tab role dropdowns update based on the selected workspace type
+- Existing roles that no longer match the selected workspace type are preserved as legacy roles until changed
+
+## V0.2C Workspace Tab Management
 
 Planned:
 
-- Remove tab from workspace
+- Remove individual tab from workspace
 - Refresh workspace tab metadata
 - Preserve aliases and roles during refresh
 - Prevent duplicate workspace tabs more robustly
 
-## V0.2C Native Chrome Tab Grouping
+## V0.2D Native Chrome Tab Grouping
 
 Planned:
 
