@@ -12,6 +12,7 @@ import {
 import {
   DEFAULT_WORKSPACE_TYPE,
   WORKSPACE_TYPES,
+  getWorkspaceRoleLabel,
   getWorkspaceType,
   getWorkspaceTypeDescription,
   getWorkspaceTypeLabel,
@@ -71,7 +72,7 @@ workspaceTypeSelect.addEventListener("change", async () => {
   );
 
   workspace = await getWorkspace();
-  setIntakeStatus("Workspace type set to " + getWorkspaceTypeLabel(workspace.workspaceType) + ". Tab role options have been updated.");
+  setIntakeStatus("Workspace type set to " + getWorkspaceTypeLabel(workspace.workspaceType) + ". Tab role options and subgroups have been updated.");
   renderWorkspace();
 });
 
@@ -270,43 +271,35 @@ function renderTabs() {
     return;
   }
 
-  workspace.tabs.forEach((tab) => {
-    const card = document.createElement("div");
-    card.className = "tab-card";
+  const roleGroups = createTabRoleGroups(workspace.tabs);
 
-    const title = document.createElement("div");
-    title.className = "tab-title";
-    title.textContent = tab.originalTitle || "Untitled tab";
-    card.appendChild(title);
+  roleGroups.forEach((group) => {
+    const groupSection = document.createElement("div");
+    groupSection.className = "tab-role-group";
 
-    const url = document.createElement("div");
-    url.className = "tab-url";
-    url.textContent = tab.displayUrl || createDisplayUrl(tab.url || "");
-    url.title = tab.url || "";
-    card.appendChild(url);
+    if (group.isLegacy) {
+      groupSection.classList.add("legacy-role-group");
+    }
 
-    const aliasLabel = document.createElement("label");
-    aliasLabel.textContent = "Custom Alias";
-    card.appendChild(aliasLabel);
+    const groupHeader = document.createElement("div");
+    groupHeader.className = "tab-role-group-header";
 
-    const aliasInput = document.createElement("input");
-    aliasInput.type = "text";
-    aliasInput.className = "alias-input";
-    aliasInput.dataset.tabKey = tab.tabKey || "";
-    aliasInput.value = tab.alias || "";
-    card.appendChild(aliasInput);
+    const groupTitle = document.createElement("h3");
+    groupTitle.textContent = group.label;
+    groupHeader.appendChild(groupTitle);
 
-    const roleLabel = document.createElement("label");
-    roleLabel.textContent = "Role for " + getWorkspaceTypeLabel(workspace.workspaceType);
-    card.appendChild(roleLabel);
+    const groupCount = document.createElement("span");
+    groupCount.className = "tab-role-group-count";
+    groupCount.textContent = group.tabs.length + " tab" + (group.tabs.length === 1 ? "" : "s");
+    groupHeader.appendChild(groupCount);
 
-    const roleSelect = document.createElement("select");
-    roleSelect.className = "role-select";
-    roleSelect.dataset.tabKey = tab.tabKey || "";
-    renderRoleOptions(roleSelect, tab.role || "unassigned");
-    card.appendChild(roleSelect);
+    groupSection.appendChild(groupHeader);
 
-    tabsList.appendChild(card);
+    group.tabs.forEach((tab) => {
+      groupSection.appendChild(createWorkspaceTabCard(tab));
+    });
+
+    tabsList.appendChild(groupSection);
   });
 
   document.querySelectorAll(".alias-input").forEach((input) => {
@@ -341,13 +334,96 @@ function renderTabs() {
       tab.role = event.target.value;
       workspace.updatedAt = new Date().toISOString();
 
+      const roleLabel = getWorkspaceRoleLabel(workspace.workspaceType, tab.role);
       await saveWorkspace(workspace);
-      await addTimelineEvent("tab_role_updated", "Updated role for: " + (tab.alias || tab.originalTitle || "Untitled tab") + ".");
+      await addTimelineEvent(
+        "tab_role_updated",
+        "Assigned " + (tab.alias || tab.originalTitle || "Untitled tab") + " to " + roleLabel + " subgroup."
+      );
 
       workspace = await getWorkspace();
       renderWorkspace();
     });
   });
+}
+
+function createWorkspaceTabCard(tab) {
+  const card = document.createElement("div");
+  card.className = "tab-card";
+
+  const title = document.createElement("div");
+  title.className = "tab-title";
+  title.textContent = tab.originalTitle || "Untitled tab";
+  card.appendChild(title);
+
+  const url = document.createElement("div");
+  url.className = "tab-url";
+  url.textContent = tab.displayUrl || createDisplayUrl(tab.url || "");
+  url.title = tab.url || "";
+  card.appendChild(url);
+
+  const aliasLabel = document.createElement("label");
+  aliasLabel.textContent = "Custom Alias";
+  card.appendChild(aliasLabel);
+
+  const aliasInput = document.createElement("input");
+  aliasInput.type = "text";
+  aliasInput.className = "alias-input";
+  aliasInput.dataset.tabKey = tab.tabKey || "";
+  aliasInput.value = tab.alias || "";
+  card.appendChild(aliasInput);
+
+  const roleLabel = document.createElement("label");
+  roleLabel.textContent = "Role for " + getWorkspaceTypeLabel(workspace.workspaceType);
+  card.appendChild(roleLabel);
+
+  const roleSelect = document.createElement("select");
+  roleSelect.className = "role-select";
+  roleSelect.dataset.tabKey = tab.tabKey || "";
+  renderRoleOptions(roleSelect, tab.role || "unassigned");
+  card.appendChild(roleSelect);
+
+  return card;
+}
+
+function createTabRoleGroups(tabs) {
+  const workspaceType = workspace.workspaceType || DEFAULT_WORKSPACE_TYPE;
+  const roles = getWorkspaceRoles(workspaceType);
+
+  const roleGroups = roles.map((role) => ({
+    roleId: role.id,
+    label: role.label,
+    tabs: [],
+    isLegacy: false
+  }));
+
+  const legacyGroups = [];
+
+  tabs.forEach((tab) => {
+    const roleId = tab.role || "unassigned";
+    const group = roleGroups.find((item) => item.roleId === roleId);
+
+    if (group) {
+      group.tabs.push(tab);
+      return;
+    }
+
+    let legacyGroup = legacyGroups.find((item) => item.roleId === roleId);
+
+    if (!legacyGroup) {
+      legacyGroup = {
+        roleId: roleId,
+        label: getWorkspaceRoleLabel(workspaceType, roleId),
+        tabs: [],
+        isLegacy: true
+      };
+      legacyGroups.push(legacyGroup);
+    }
+
+    legacyGroup.tabs.push(tab);
+  });
+
+  return roleGroups.filter((group) => group.tabs.length > 0).concat(legacyGroups);
 }
 
 function renderRoleOptions(roleSelect, currentRole) {
