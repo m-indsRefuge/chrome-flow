@@ -105,6 +105,20 @@ export function getWorkspaceTypeDescription(workspaceTypeId) {
   return getWorkspaceType(workspaceTypeId).description;
 }
 
+export function getWorkspaceRoleLabel(workspaceTypeId, roleId) {
+  const role = getWorkspaceRoles(workspaceTypeId).find((item) => item.id === roleId);
+
+  if (role) {
+    return role.label;
+  }
+
+  if (roleId) {
+    return "Legacy: " + roleId;
+  }
+
+  return "Unassigned";
+}
+
 export function isValidWorkspaceRole(workspaceTypeId, roleId) {
   return getWorkspaceRoles(workspaceTypeId).some((role) => role.id === roleId);
 }
