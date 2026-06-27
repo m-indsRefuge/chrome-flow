@@ -53,13 +53,25 @@ Done when:
 Done when:
 
 - User can remove an individual tab from the workspace without closing the browser tab
-- User can refresh workspace tab metadata from the current Chrome window
+- User can refresh workspace tab metadata from open browser tabs
 - Refresh preserves custom aliases, tab roles, and first-seen timestamps
 - Refresh updates current title, URL, display URL, window ID, group ID, tab ID, and last-seen timestamp when a match is found
-- Refresh reports tabs that are no longer found in the current window
+- Refresh reports tabs that are no longer found in the browser
 - Remove and refresh actions are recorded in the timeline
 
-## V0.2E Native Chrome Tab Grouping
+## V0.2E Browser Action Controls
+
+Done when:
+
+- User can open a new search tab from the workspace
+- User can focus an open browser tab from its workspace tab card
+- User can reopen a saved workspace URL in a new browser tab
+- User can close an actual browser tab from its workspace tab card with confirmation
+- Closing a browser tab keeps the saved workspace record
+- Browser action state is reflected with open/not-open status
+- Browser actions are recorded in the timeline
+
+## V0.2F Native Chrome Tab Grouping
 
 Planned:
 
