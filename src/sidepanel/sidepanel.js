@@ -9,8 +9,20 @@ import {
   getCurrentWindowTabs
 } from "../core/tab-state.js";
 
+import {
+  DEFAULT_WORKSPACE_TYPE,
+  WORKSPACE_TYPES,
+  getWorkspaceType,
+  getWorkspaceTypeDescription,
+  getWorkspaceTypeLabel,
+  getWorkspaceRoles,
+  isValidWorkspaceRole
+} from "../core/workspace-role-sets.js";
+
 const workspaceNameInput = document.getElementById("workspaceName");
 const workspaceAimInput = document.getElementById("workspaceAim");
+const workspaceTypeSelect = document.getElementById("workspaceType");
+const workspaceTypeDescription = document.getElementById("workspaceTypeDescription");
 const saveWorkspaceButton = document.getElementById("saveWorkspaceButton");
 
 const scanTabsButton = document.getElementById("scanTabsButton");
@@ -31,18 +43,35 @@ const timelineList = document.getElementById("timelineList");
 let workspace = await getWorkspace();
 let availableTabs = [];
 
+populateWorkspaceTypeSelect();
 renderWorkspace();
 renderAvailableTabs();
 
 saveWorkspaceButton.addEventListener("click", async () => {
   workspace.name = workspaceNameInput.value.trim();
   workspace.aim = workspaceAimInput.value.trim();
+  workspace.workspaceType = workspaceTypeSelect.value || DEFAULT_WORKSPACE_TYPE;
   workspace.updatedAt = new Date().toISOString();
 
   await saveWorkspace(workspace);
   await addTimelineEvent("workspace_saved", "Workspace saved.");
 
   workspace = await getWorkspace();
+  renderWorkspace();
+});
+
+workspaceTypeSelect.addEventListener("change", async () => {
+  workspace.workspaceType = workspaceTypeSelect.value || DEFAULT_WORKSPACE_TYPE;
+  workspace.updatedAt = new Date().toISOString();
+
+  await saveWorkspace(workspace);
+  await addTimelineEvent(
+    "workspace_type_changed",
+    "Workspace type changed to " + getWorkspaceTypeLabel(workspace.workspaceType) + "."
+  );
+
+  workspace = await getWorkspace();
+  setIntakeStatus("Workspace type set to " + getWorkspaceTypeLabel(workspace.workspaceType) + ". Tab role options have been updated.");
   renderWorkspace();
 });
 
@@ -148,9 +177,25 @@ addJournalButton.addEventListener("click", async () => {
   renderWorkspace();
 });
 
+function populateWorkspaceTypeSelect() {
+  clearElement(workspaceTypeSelect);
+
+  WORKSPACE_TYPES.forEach((workspaceType) => {
+    const option = document.createElement("option");
+    option.value = workspaceType.id;
+    option.textContent = workspaceType.label;
+    workspaceTypeSelect.appendChild(option);
+  });
+}
+
 function renderWorkspace() {
+  const workspaceType = getWorkspaceType(workspace.workspaceType);
+
+  workspace.workspaceType = workspaceType.id;
   workspaceNameInput.value = workspace.name || "";
   workspaceAimInput.value = workspace.aim || "";
+  workspaceTypeSelect.value = workspaceType.id;
+  workspaceTypeDescription.textContent = getWorkspaceTypeDescription(workspaceType.id);
 
   renderTabs();
   renderJournal();
@@ -252,23 +297,13 @@ function renderTabs() {
     card.appendChild(aliasInput);
 
     const roleLabel = document.createElement("label");
-    roleLabel.textContent = "Role";
+    roleLabel.textContent = "Role for " + getWorkspaceTypeLabel(workspace.workspaceType);
     card.appendChild(roleLabel);
 
     const roleSelect = document.createElement("select");
     roleSelect.className = "role-select";
     roleSelect.dataset.tabKey = tab.tabKey || "";
-
-    const roles = ["unassigned", "source", "question", "docs", "video", "revisit", "discard"];
-
-    roles.forEach((role) => {
-      const option = document.createElement("option");
-      option.value = role;
-      option.textContent = role;
-      roleSelect.appendChild(option);
-    });
-
-    roleSelect.value = tab.role || "unassigned";
+    renderRoleOptions(roleSelect, tab.role || "unassigned");
     card.appendChild(roleSelect);
 
     tabsList.appendChild(card);
@@ -313,6 +348,29 @@ function renderTabs() {
       renderWorkspace();
     });
   });
+}
+
+function renderRoleOptions(roleSelect, currentRole) {
+  clearElement(roleSelect);
+
+  const roles = getWorkspaceRoles(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE);
+  const currentRoleIsValid = isValidWorkspaceRole(workspace.workspaceType, currentRole);
+
+  if (currentRole && !currentRoleIsValid) {
+    const legacyOption = document.createElement("option");
+    legacyOption.value = currentRole;
+    legacyOption.textContent = "Legacy: " + currentRole;
+    roleSelect.appendChild(legacyOption);
+  }
+
+  roles.forEach((role) => {
+    const option = document.createElement("option");
+    option.value = role.id;
+    option.textContent = role.label;
+    roleSelect.appendChild(option);
+  });
+
+  roleSelect.value = currentRole || "unassigned";
 }
 
 function renderJournal() {
