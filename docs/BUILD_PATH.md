@@ -37,7 +37,18 @@ Done when:
 - Tab role dropdowns update based on the selected workspace type
 - Existing roles that no longer match the selected workspace type are preserved as legacy roles until changed
 
-## V0.2C Workspace Tab Management
+## V0.2C Role-Based Workspace Tab Subgroups
+
+Done when:
+
+- Workspace tabs are visually grouped under their assigned role
+- Group headings use the active workspace type role labels
+- Group headings show tab counts
+- Changing a tab role moves the tab to the matching subgroup
+- Role changes are recorded in the timeline with the target subgroup
+- Legacy roles are grouped safely until changed
+
+## V0.2D Workspace Tab Management
 
 Planned:
 
@@ -46,7 +57,7 @@ Planned:
 - Preserve aliases and roles during refresh
 - Prevent duplicate workspace tabs more robustly
 
-## V0.2D Native Chrome Tab Grouping
+## V0.2E Native Chrome Tab Grouping
 
 Planned:
 
