@@ -137,6 +137,14 @@ button {
   margin-top: 0;
 }
 
+.tab-card-actions {
+  margin-top: 10px;
+}
+
+.remove-tab-button {
+  margin-bottom: 0;
+}
+
 .available-tab-card {
   display: grid;
   grid-template-columns: auto 1fr;
