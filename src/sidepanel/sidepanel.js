@@ -19,6 +19,7 @@ const clearScannedTabsButton = document.getElementById("clearScannedTabsButton")
 const intakeStatus = document.getElementById("intakeStatus");
 const availableTabsList = document.getElementById("availableTabsList");
 
+const clearWorkspaceTabsButton = document.getElementById("clearWorkspaceTabsButton");
 const tabsList = document.getElementById("tabsList");
 
 const journalEntryInput = document.getElementById("journalEntry");
@@ -105,6 +106,33 @@ clearScannedTabsButton.addEventListener("click", () => {
   renderAvailableTabs();
 });
 
+clearWorkspaceTabsButton.addEventListener("click", async () => {
+  if (!workspace.tabs.length) {
+    setIntakeStatus("Workspace already has no tabs.");
+    return;
+  }
+
+  const confirmed = window.confirm(
+    "Clear all workspace tabs? This will remove tab aliases and roles from this workspace, but it will keep the workspace name, aim, journal, and timeline."
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+  const clearedCount = workspace.tabs.length;
+  workspace.tabs = [];
+  workspace.updatedAt = new Date().toISOString();
+
+  await saveWorkspace(workspace);
+  await addTimelineEvent("workspace_tabs_cleared", "Cleared " + clearedCount + " tab(s) from workspace.");
+
+  workspace = await getWorkspace();
+  setIntakeStatus("Cleared " + clearedCount + " workspace tab(s). Scan again and select only the tabs you want.");
+  renderWorkspace();
+  renderAvailableTabs();
+});
+
 addJournalButton.addEventListener("click", async () => {
   const text = journalEntryInput.value.trim();
 
@@ -154,7 +182,7 @@ function renderAvailableTabs() {
     checkbox.className = "available-tab-checkbox";
     checkbox.dataset.tabIndex = String(index);
     checkbox.disabled = alreadyInWorkspace;
-    checkbox.checked = alreadyInWorkspace;
+    checkbox.checked = false;
     card.appendChild(checkbox);
 
     const content = document.createElement("div");
