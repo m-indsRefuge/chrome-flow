@@ -194,7 +194,8 @@ function renderAvailableTabs() {
 
     const url = document.createElement("div");
     url.className = "tab-url";
-    url.textContent = tab.url || "";
+    url.textContent = createDisplayUrl(tab.url || "");
+    url.title = tab.url || "";
     content.appendChild(url);
 
     const meta = document.createElement("div");
@@ -235,7 +236,8 @@ function renderTabs() {
 
     const url = document.createElement("div");
     url.className = "tab-url";
-    url.textContent = tab.url || "";
+    url.textContent = tab.displayUrl || createDisplayUrl(tab.url || "");
+    url.title = tab.url || "";
     card.appendChild(url);
 
     const aliasLabel = document.createElement("label");
@@ -393,12 +395,38 @@ function createWorkspaceTab(tab) {
     windowId: tab.windowId,
     groupId: tab.groupId,
     url: tab.url,
+    displayUrl: createDisplayUrl(tab.url || ""),
     originalTitle: tab.title,
     alias: "",
     role: "unassigned",
     firstSeenAt: now,
     lastSeenAt: now
   };
+}
+
+function createDisplayUrl(rawUrl) {
+  if (!rawUrl) {
+    return "";
+  }
+
+  try {
+    const parsedUrl = new URL(rawUrl);
+    const host = parsedUrl.hostname.replace(/^www\./, "");
+    const path = parsedUrl.pathname === "/" ? "" : parsedUrl.pathname;
+    const cleanUrl = host + path;
+
+    if (cleanUrl.length <= 72) {
+      return cleanUrl;
+    }
+
+    return cleanUrl.slice(0, 69) + "...";
+  } catch (error) {
+    if (rawUrl.length <= 72) {
+      return rawUrl;
+    }
+
+    return rawUrl.slice(0, 69) + "...";
+  }
 }
 
 function setIntakeStatus(message) {
