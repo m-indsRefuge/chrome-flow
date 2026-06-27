@@ -521,13 +521,14 @@ async function focusWorkspaceTab(tabKey) {
 }
 
 async function closeBrowserTabForWorkspaceTab(tabKey) {
-  const tab = findWorkspaceTabByKey(tabKey);
+  const tabIndex = workspace.tabs.findIndex((item) => item.tabKey === tabKey);
 
-  if (!tab) {
+  if (tabIndex < 0) {
     setIntakeStatus("Could not find that workspace tab.");
     return;
   }
 
+  const tab = workspace.tabs[tabIndex];
   const liveTab = await findLiveBrowserTabForWorkspaceTab(tab);
 
   if (!liveTab) {
@@ -541,13 +542,13 @@ async function closeBrowserTabForWorkspaceTab(tabKey) {
     return;
   }
 
-  const confirmed = window.confirm("Close this browser tab? The saved Chrome Flow workspace record will be kept and the timeline will include recovery.");
+  const confirmed = window.confirm("Close this browser tab and remove it from the workspace? The timeline will keep a recovery record.");
 
   if (!confirmed) {
     return;
   }
 
-  const reason = promptForActionReason("closing this browser tab", getTabName(tab));
+  const reason = promptForActionReason("closing this browser tab and removing it from the workspace", getTabName(tab));
 
   if (reason === null) {
     setIntakeStatus("Close cancelled. No action was taken.");
@@ -556,18 +557,17 @@ async function closeBrowserTabForWorkspaceTab(tabKey) {
 
   const tabSnapshot = createTabSnapshot(tab);
   await chrome.tabs.remove(liveTab.id);
-  tab.isOpen = false;
-  tab.lastClosedAt = new Date().toISOString();
+  workspace.tabs.splice(tabIndex, 1);
   workspace.updatedAt = new Date().toISOString();
   await saveWorkspace(workspace);
-  await addActionJournalEntry("Closed browser tab", tabSnapshot, reason);
-  await addTimelineEvent("browser_tab_closed", "Closed browser tab for: " + snapshotName(tabSnapshot) + ". Workspace record was kept.", {
+  await addActionJournalEntry("Closed browser tab and removed from workspace", tabSnapshot, reason);
+  await addTimelineEvent("browser_tab_closed_and_removed", "Closed browser tab and removed from workspace: " + snapshotName(tabSnapshot) + ".", {
     reason: reason,
     tabSnapshot: tabSnapshot,
-    recoveryActions: { canReopenUrl: true, canReaddToWorkspace: false }
+    recoveryActions: { canReopenUrl: true, canReaddToWorkspace: true }
   });
   workspace = await getWorkspace();
-  setIntakeStatus("Closed browser tab for " + snapshotName(tabSnapshot) + ". Recovery is available from the timeline.");
+  setIntakeStatus("Closed browser tab and removed " + snapshotName(tabSnapshot) + " from workspace. Recovery is available from the timeline.");
   renderWorkspace();
   renderAvailableTabs();
 }
