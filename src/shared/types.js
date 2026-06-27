@@ -20,12 +20,15 @@ FlowTab:
   tabKey: string,
   windowId: number,
   groupId: number,
-  url: string,        // full original URL for traceability
-  displayUrl: string, // shortened URL for side-panel display
+  url: string,         // full original URL for traceability
+  displayUrl: string,  // shortened URL for side-panel display
   originalTitle: string,
   alias: string,
-  role: string,       // selected from the current workspace type role set
+  role: string,        // selected from the current workspace type role set
+  isOpen: boolean,     // best-known browser-open state
   firstSeenAt: string,
-  lastSeenAt: string
+  lastSeenAt: string,
+  lastOpenedAt: string,
+  lastClosedAt: string
 }
 */
