@@ -32,6 +32,7 @@ const clearScannedTabsButton = document.getElementById("clearScannedTabsButton")
 const intakeStatus = document.getElementById("intakeStatus");
 const availableTabsList = document.getElementById("availableTabsList");
 
+const refreshWorkspaceTabsButton = document.getElementById("refreshWorkspaceTabsButton");
 const clearWorkspaceTabsButton = document.getElementById("clearWorkspaceTabsButton");
 const tabsList = document.getElementById("tabsList");
 
@@ -133,6 +134,54 @@ addSelectedTabsButton.addEventListener("click", async () => {
 clearScannedTabsButton.addEventListener("click", () => {
   availableTabs = [];
   setIntakeStatus("Cleared scanned tabs.");
+  renderAvailableTabs();
+});
+
+refreshWorkspaceTabsButton.addEventListener("click", async () => {
+  if (!workspace.tabs.length) {
+    setIntakeStatus("Workspace has no tabs to refresh.");
+    return;
+  }
+
+  const currentTabs = await getCurrentWindowTabs();
+  const now = new Date().toISOString();
+  let refreshedCount = 0;
+  let missingCount = 0;
+
+  workspace.tabs = workspace.tabs.map((workspaceTab) => {
+    const currentTab = findCurrentTabForWorkspaceTab(workspaceTab, currentTabs);
+
+    if (!currentTab) {
+      missingCount += 1;
+      return workspaceTab;
+    }
+
+    refreshedCount += 1;
+
+    return {
+      ...workspaceTab,
+      tabId: currentTab.id,
+      tabKey: currentTab.tabKey,
+      windowId: currentTab.windowId,
+      groupId: currentTab.groupId,
+      url: currentTab.url,
+      displayUrl: createDisplayUrl(currentTab.url || ""),
+      originalTitle: currentTab.title,
+      lastSeenAt: now
+    };
+  });
+
+  workspace.updatedAt = now;
+
+  await saveWorkspace(workspace);
+  await addTimelineEvent(
+    "workspace_tabs_refreshed",
+    "Refreshed metadata for " + refreshedCount + " workspace tab(s). " + missingCount + " tab(s) were not found in the current window."
+  );
+
+  workspace = await getWorkspace();
+  setIntakeStatus("Refreshed " + refreshedCount + " workspace tab(s). " + missingCount + " tab(s) were not found in the current window.");
+  renderWorkspace();
   renderAvailableTabs();
 });
 
@@ -345,6 +394,37 @@ function renderTabs() {
       renderWorkspace();
     });
   });
+
+  document.querySelectorAll(".remove-tab-button").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      const tabKey = event.target.dataset.tabKey;
+      const tabIndex = workspace.tabs.findIndex((item) => item.tabKey === tabKey);
+
+      if (tabIndex < 0) {
+        setIntakeStatus("Could not find that workspace tab to remove.");
+        return;
+      }
+
+      const tab = workspace.tabs[tabIndex];
+      const tabName = tab.alias || tab.originalTitle || "Untitled tab";
+      const confirmed = window.confirm("Remove this tab from the workspace? The browser tab itself will not be closed.");
+
+      if (!confirmed) {
+        return;
+      }
+
+      workspace.tabs.splice(tabIndex, 1);
+      workspace.updatedAt = new Date().toISOString();
+
+      await saveWorkspace(workspace);
+      await addTimelineEvent("workspace_tab_removed", "Removed " + tabName + " from workspace.");
+
+      workspace = await getWorkspace();
+      setIntakeStatus("Removed " + tabName + " from workspace. The browser tab was not closed.");
+      renderWorkspace();
+      renderAvailableTabs();
+    });
+  });
 }
 
 function createWorkspaceTabCard(tab) {
@@ -382,6 +462,18 @@ function createWorkspaceTabCard(tab) {
   roleSelect.dataset.tabKey = tab.tabKey || "";
   renderRoleOptions(roleSelect, tab.role || "unassigned");
   card.appendChild(roleSelect);
+
+  const actions = document.createElement("div");
+  actions.className = "tab-card-actions";
+
+  const removeButton = document.createElement("button");
+  removeButton.type = "button";
+  removeButton.className = "remove-tab-button danger-button";
+  removeButton.dataset.tabKey = tab.tabKey || "";
+  removeButton.textContent = "Remove from Workspace";
+  actions.appendChild(removeButton);
+
+  card.appendChild(actions);
 
   return card;
 }
@@ -517,6 +609,14 @@ function findWorkspaceTabMatch(tab) {
     item.tabId === tab.id ||
     item.tabKey === tab.tabKey ||
     item.url === tab.url
+  );
+}
+
+function findCurrentTabForWorkspaceTab(workspaceTab, currentTabs) {
+  return currentTabs.find((tab) =>
+    tab.id === workspaceTab.tabId ||
+    tab.url === workspaceTab.url ||
+    tab.tabKey === workspaceTab.tabKey
   );
 }
 
