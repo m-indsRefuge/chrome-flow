@@ -45,3 +45,19 @@
 13. Confirm changing Workspace Type creates a timeline event.
 14. Close and reopen the side panel.
 15. Confirm the selected Workspace Type persists.
+
+## V0.2C Role-based workspace subgroup checklist
+
+1. Open the Chrome Flow side panel.
+2. Confirm workspace tabs are shown under role subgroup headings.
+3. Confirm each subgroup heading shows a tab count.
+4. Assign one tab to a non-default role.
+5. Confirm that tab moves into the matching role subgroup.
+6. Assign a second tab to the same role.
+7. Confirm both tabs appear under the same subgroup.
+8. Change Workspace Type.
+9. Confirm the subgroup headings update to the new workspace type role set.
+10. Confirm any role that does not belong to the new workspace type appears as a legacy subgroup.
+11. Change a legacy role to a valid role from the current workspace type.
+12. Confirm the tab moves out of the legacy subgroup and into the new valid subgroup.
+13. Confirm role changes are recorded in the timeline with the target subgroup name.
