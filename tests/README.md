@@ -88,17 +88,39 @@
 3. Enter a search query and click Open Search Tab.
 4. Confirm Chrome opens a new search tab.
 5. Confirm the timeline records the search-tab action.
-6. Confirm each workspace tab has Focus Tab, Reopen URL, Close Browser Tab, and Remove from Workspace controls.
+6. Confirm each workspace tab has Focus Tab, Close Browser Tab, and Remove from Workspace controls.
 7. Click Focus Tab on an open workspace tab.
 8. Confirm Chrome switches to that browser tab/window.
 9. Confirm the timeline records the focus action.
-10. Click Reopen URL on a workspace tab.
-11. Confirm Chrome opens the saved URL in a new browser tab.
-12. Confirm the workspace record updates to the reopened browser tab.
-13. Click Close Browser Tab on a workspace tab.
-14. Confirm Chrome asks for confirmation before closing the actual browser tab.
-15. Confirm the browser tab closes after confirmation.
-16. Confirm the workspace record remains visible and is marked as not currently open.
-17. Confirm the timeline records the close action.
-18. Click Reopen URL on the closed workspace record.
-19. Confirm the saved URL opens again and the workspace record updates to open state.
+10. Click Close Browser Tab on a workspace tab.
+11. Confirm Chrome asks for confirmation before closing the actual browser tab.
+12. Confirm the browser tab closes after confirmation.
+13. Confirm the workspace record remains visible and is marked as not currently open.
+14. Confirm the timeline records the close action.
+
+## V0.2F Structured timeline recovery checklist
+
+1. Open the Chrome Flow side panel.
+2. Confirm Reopen URL is not shown on normal workspace tab cards.
+3. Click Close Browser Tab on one workspace tab.
+4. Confirm Chrome asks for close confirmation.
+5. Confirm Chrome Flow asks for a reason.
+6. Enter a reason and complete the close.
+7. Confirm the browser tab closes.
+8. Confirm the workspace record remains visible and is marked as not currently open.
+9. Confirm the journal contains an entry with the close reason and URL.
+10. Confirm the timeline close event shows the reason, tab snapshot, and Reopen URL button.
+11. Click Reopen URL from that timeline event.
+12. Confirm the saved URL opens in a new browser tab.
+13. Confirm the timeline records the recovery action.
+14. Click Remove from Workspace on one workspace tab.
+15. Confirm Chrome Flow asks for confirmation and a reason.
+16. Enter a reason and complete the removal.
+17. Confirm the browser tab itself remains open.
+18. Confirm the workspace record is removed.
+19. Confirm the journal contains an entry with the removal reason and URL.
+20. Confirm the timeline removal event shows the reason, tab snapshot, Reopen URL, and Re-add to Workspace buttons.
+21. Click Re-add to Workspace from that timeline event.
+22. Confirm the tab snapshot is restored to the workspace.
+23. Click Reopen URL from that same timeline event.
+24. Confirm the saved URL opens in a browser tab.
