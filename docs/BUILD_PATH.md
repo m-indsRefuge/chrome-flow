@@ -65,13 +65,26 @@ Done when:
 
 - User can open a new search tab from the workspace
 - User can focus an open browser tab from its workspace tab card
-- User can reopen a saved workspace URL in a new browser tab
 - User can close an actual browser tab from its workspace tab card with confirmation
 - Closing a browser tab keeps the saved workspace record
 - Browser action state is reflected with open/not-open status
 - Browser actions are recorded in the timeline
 
-## V0.2F Native Chrome Tab Grouping
+## V0.2F Structured Timeline Recovery
+
+Done when:
+
+- Reopen URL is removed from normal workspace tab cards
+- Closing a browser tab asks for a reason before completing
+- Removing a tab from the workspace asks for a reason before completing
+- Close and remove actions write a journal entry with the reason and URL
+- Close and remove actions create structured timeline events with a saved tab snapshot
+- Timeline cards show reason, tab snapshot, and recovery controls when available
+- Closed-tab timeline records can reopen the saved URL
+- Removed-tab timeline records can re-add the tab snapshot to the workspace
+- Timeline recovery actions are also recorded in the timeline
+
+## V0.2G Native Chrome Tab Grouping
 
 Planned:
 
