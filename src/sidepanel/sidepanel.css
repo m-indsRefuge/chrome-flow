@@ -1,0 +1,82 @@
+﻿* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #f7f7f7;
+  color: #1f1f1f;
+}
+
+.app {
+  padding: 16px;
+}
+
+.app-header {
+  margin-bottom: 20px;
+}
+
+.app-header h1 {
+  margin: 0 0 4px 0;
+  font-size: 22px;
+}
+
+.app-header p {
+  margin: 0;
+  color: #666;
+}
+
+section {
+  margin-bottom: 20px;
+  padding: 12px;
+  background: #ffffff;
+  border: 1px solid #ddd;
+  border-radius: 8px;
+}
+
+h2 {
+  margin-top: 0;
+  font-size: 16px;
+}
+
+label {
+  display: block;
+  margin-top: 10px;
+  margin-bottom: 4px;
+  font-weight: bold;
+}
+
+input,
+textarea,
+select,
+button {
+  width: 100%;
+  margin-bottom: 10px;
+  padding: 8px;
+  font: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.tab-card,
+.journal-card,
+.timeline-card {
+  padding: 10px;
+  margin-top: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.tab-title {
+  font-weight: bold;
+}
+
+.tab-url {
+  font-size: 12px;
+  color: #666;
+  word-break: break-all;
+}

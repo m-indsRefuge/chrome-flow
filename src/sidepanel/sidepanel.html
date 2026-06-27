@@ -1,0 +1,46 @@
+﻿<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Chrome Flow</title>
+  <link rel="stylesheet" href="./sidepanel.css" />
+</head>
+<body>
+  <main class="app">
+    <header class="app-header">
+      <h1>Chrome Flow</h1>
+      <p>Local cognitive workspace for browser flow.</p>
+    </header>
+
+    <section class="workspace-section">
+      <label for="workspaceName">Workspace Name</label>
+      <input id="workspaceName" type="text" placeholder="Example: Local LLM Memory Research" />
+
+      <label for="workspaceAim">Aim / Directive</label>
+      <textarea id="workspaceAim" rows="3" placeholder="What are you trying to understand or organize?"></textarea>
+
+      <button id="saveWorkspaceButton">Save Workspace</button>
+    </section>
+
+    <section class="tabs-section">
+      <h2>Current Tabs</h2>
+      <button id="loadTabsButton">Load Current Window Tabs</button>
+      <div id="tabsList"></div>
+    </section>
+
+    <section class="journal-section">
+      <h2>Journal</h2>
+      <textarea id="journalEntry" rows="4" placeholder="Add a note about this research journey..."></textarea>
+      <button id="addJournalButton">Add Journal Entry</button>
+      <div id="journalList"></div>
+    </section>
+
+    <section class="timeline-section">
+      <h2>Timeline</h2>
+      <div id="timelineList"></div>
+    </section>
+  </main>
+
+  <script type="module" src="./sidepanel.js"></script>
+</body>
+</html>
