@@ -50,12 +50,14 @@ Done when:
 
 ## V0.2D Workspace Tab Management
 
-Planned:
+Done when:
 
-- Remove individual tab from workspace
-- Refresh workspace tab metadata
-- Preserve aliases and roles during refresh
-- Prevent duplicate workspace tabs more robustly
+- User can remove an individual tab from the workspace without closing the browser tab
+- User can refresh workspace tab metadata from the current Chrome window
+- Refresh preserves custom aliases, tab roles, and first-seen timestamps
+- Refresh updates current title, URL, display URL, window ID, group ID, tab ID, and last-seen timestamp when a match is found
+- Refresh reports tabs that are no longer found in the current window
+- Remove and refresh actions are recorded in the timeline
 
 ## V0.2E Native Chrome Tab Grouping
 
