@@ -61,3 +61,22 @@
 11. Change a legacy role to a valid role from the current workspace type.
 12. Confirm the tab moves out of the legacy subgroup and into the new valid subgroup.
 13. Confirm role changes are recorded in the timeline with the target subgroup name.
+
+## V0.2D Workspace tab management checklist
+
+1. Open the Chrome Flow side panel.
+2. Confirm Refresh Workspace Tab Metadata appears above the Workspace Tabs list.
+3. Confirm each workspace tab has a Remove from Workspace button.
+4. Click Remove from Workspace on one tab.
+5. Confirm the browser tab itself remains open.
+6. Confirm only that tab is removed from the workspace.
+7. Confirm the removal is recorded in the timeline.
+8. Add at least one tab back into the workspace.
+9. Change that tab's alias and role.
+10. Click Refresh Workspace Tab Metadata.
+11. Confirm alias and role are preserved.
+12. Confirm title, URL/display URL, tab ID, window ID, group ID, and last-seen metadata can refresh when the tab is still present.
+13. Confirm the refresh action records how many workspace tabs were found and how many were not found.
+14. Close or move a workspace tab out of the current Chrome window.
+15. Click Refresh Workspace Tab Metadata again.
+16. Confirm Chrome Flow reports the missing tab count without deleting the missing tab from the workspace.
