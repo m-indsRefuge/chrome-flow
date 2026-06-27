@@ -27,3 +27,21 @@
 11. Click Scan Current Window Tabs again.
 12. Confirm tabs already in the workspace are marked as already added and cannot be selected again.
 13. Confirm the timeline records scan and selected-tab add events.
+
+## V0.2B Workspace classification checklist
+
+1. Open the Chrome Flow side panel.
+2. Confirm the Workspace Type dropdown appears in the workspace section.
+3. Confirm Research Workspace is available.
+4. Confirm Design Workspace is available.
+5. Confirm Build Workspace is available.
+6. Confirm Decision Workspace is available.
+7. Confirm Learning Workspace is available.
+8. Select Research Workspace and confirm tab role dropdowns show research-oriented roles.
+9. Select Design Workspace and confirm tab role dropdowns show design-oriented roles.
+10. Select Build Workspace and confirm tab role dropdowns show implementation-oriented roles.
+11. Select Decision Workspace and confirm tab role dropdowns show decision-oriented roles.
+12. Select Learning Workspace and confirm tab role dropdowns show learning-oriented roles.
+13. Confirm changing Workspace Type creates a timeline event.
+14. Close and reopen the side panel.
+15. Confirm the selected Workspace Type persists.
