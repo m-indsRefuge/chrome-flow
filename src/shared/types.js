@@ -1,4 +1,4 @@
-﻿/*
+/*
 Chrome Flow shared object shapes.
 
 Workspace:
@@ -19,7 +19,8 @@ FlowTab:
   tabKey: string,
   windowId: number,
   groupId: number,
-  url: string,
+  url: string,        // full original URL for traceability
+  displayUrl: string, // shortened URL for side-panel display
   originalTitle: string,
   alias: string,
   role: string,
