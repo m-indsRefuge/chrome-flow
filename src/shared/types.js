@@ -31,4 +31,37 @@ FlowTab:
   lastOpenedAt: string,
   lastClosedAt: string
 }
+
+TimelineEvent:
+{
+  eventId: string,
+  type: string,
+  message: string,
+  createdAt: string,
+  reason: string,
+  tabSnapshot: FlowTabSnapshot,
+  recoveryActions: {
+    canReopenUrl: boolean,
+    canReaddToWorkspace: boolean
+  },
+  recoverySourceEventId: string
+}
+
+FlowTabSnapshot:
+{
+  tabId: number,
+  tabKey: string,
+  windowId: number,
+  groupId: number,
+  url: string,
+  displayUrl: string,
+  originalTitle: string,
+  alias: string,
+  role: string,
+  workspaceType: string,
+  isOpen: boolean,
+  firstSeenAt: string,
+  lastSeenAt: string,
+  capturedAt: string
+}
 */
