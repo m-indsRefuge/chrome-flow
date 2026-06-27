@@ -1,4 +1,4 @@
-﻿<!doctype html>
+<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -22,9 +22,20 @@
       <button id="saveWorkspaceButton">Save Workspace</button>
     </section>
 
+    <section class="intake-section">
+      <h2>Workspace Intake</h2>
+      <p class="section-help">Scan the current Chrome window, select the tabs that belong to this workspace, then add only those selected tabs.</p>
+
+      <button id="scanTabsButton">Scan Current Window Tabs</button>
+      <button id="addSelectedTabsButton">Add Selected Tabs to Workspace</button>
+      <button id="clearScannedTabsButton" class="secondary-button">Clear Scanned Tabs</button>
+
+      <p id="intakeStatus" class="status-message"></p>
+      <div id="availableTabsList"></div>
+    </section>
+
     <section class="tabs-section">
-      <h2>Current Tabs</h2>
-      <button id="loadTabsButton">Load Current Window Tabs</button>
+      <h2>Workspace Tabs</h2>
       <div id="tabsList"></div>
     </section>
 
