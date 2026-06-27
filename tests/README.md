@@ -80,3 +80,25 @@
 14. Close or move a workspace tab out of the current Chrome window.
 15. Click Refresh Workspace Tab Metadata again.
 16. Confirm Chrome Flow reports the missing tab count without deleting the missing tab from the workspace.
+
+## V0.2E Browser action controls checklist
+
+1. Open the Chrome Flow side panel.
+2. Confirm Open Search Tab appears above the Workspace Tabs list.
+3. Enter a search query and click Open Search Tab.
+4. Confirm Chrome opens a new search tab.
+5. Confirm the timeline records the search-tab action.
+6. Confirm each workspace tab has Focus Tab, Reopen URL, Close Browser Tab, and Remove from Workspace controls.
+7. Click Focus Tab on an open workspace tab.
+8. Confirm Chrome switches to that browser tab/window.
+9. Confirm the timeline records the focus action.
+10. Click Reopen URL on a workspace tab.
+11. Confirm Chrome opens the saved URL in a new browser tab.
+12. Confirm the workspace record updates to the reopened browser tab.
+13. Click Close Browser Tab on a workspace tab.
+14. Confirm Chrome asks for confirmation before closing the actual browser tab.
+15. Confirm the browser tab closes after confirmation.
+16. Confirm the workspace record remains visible and is marked as not currently open.
+17. Confirm the timeline records the close action.
+18. Click Reopen URL on the closed workspace record.
+19. Confirm the saved URL opens again and the workspace record updates to open state.
