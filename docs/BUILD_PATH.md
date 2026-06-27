@@ -1,4 +1,4 @@
-﻿# Chrome Flow Build Path
+# Chrome Flow Build Path
 
 ## V0.1 Manual Cognitive Workspace
 
@@ -15,7 +15,35 @@ Done when:
 - Timeline records key events
 - Workspace persists locally
 
-## V0.2 Deterministic Helpers
+## V0.2A Selective Tab Intake
+
+Done when:
+
+- User can scan the current Chrome window without automatically adding every tab to the workspace
+- Scanned tabs appear in a separate Workspace Intake list
+- User can select one or more scanned tabs with checkboxes
+- User can add only selected tabs to the workspace
+- Existing workspace tabs are detected and skipped
+- Selected-tab intake actions are recorded in the timeline
+
+## V0.2B Workspace Tab Management
+
+Planned:
+
+- Remove tab from workspace
+- Refresh workspace tab metadata
+- Preserve aliases and roles during refresh
+- Prevent duplicate workspace tabs more robustly
+
+## V0.2C Native Chrome Tab Grouping
+
+Planned:
+
+- Add tabGroups permission
+- Create a native Chrome tab group from workspace tabs
+- Keep native tab grouping as an explicit user action
+
+## V0.3 Deterministic Helpers and Export
 
 Planned:
 
