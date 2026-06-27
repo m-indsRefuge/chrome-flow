@@ -52,14 +52,15 @@ export async function addJournalEntry(text) {
   await saveWorkspace(workspace);
 }
 
-export async function addTimelineEvent(type, message) {
+export async function addTimelineEvent(type, message, details = {}) {
   const workspace = await getWorkspace();
 
   workspace.timeline.push({
     eventId: crypto.randomUUID(),
     type: type,
     message: message,
-    createdAt: new Date().toISOString()
+    createdAt: new Date().toISOString(),
+    ...details
   });
 
   workspace.updatedAt = new Date().toISOString();
