@@ -1,4 +1,4 @@
-﻿import {
+import {
   getWorkspace,
   saveWorkspace,
   addJournalEntry,
@@ -12,16 +12,26 @@ import {
 const workspaceNameInput = document.getElementById("workspaceName");
 const workspaceAimInput = document.getElementById("workspaceAim");
 const saveWorkspaceButton = document.getElementById("saveWorkspaceButton");
-const loadTabsButton = document.getElementById("loadTabsButton");
+
+const scanTabsButton = document.getElementById("scanTabsButton");
+const addSelectedTabsButton = document.getElementById("addSelectedTabsButton");
+const clearScannedTabsButton = document.getElementById("clearScannedTabsButton");
+const intakeStatus = document.getElementById("intakeStatus");
+const availableTabsList = document.getElementById("availableTabsList");
+
 const tabsList = document.getElementById("tabsList");
+
 const journalEntryInput = document.getElementById("journalEntry");
 const addJournalButton = document.getElementById("addJournalButton");
 const journalList = document.getElementById("journalList");
+
 const timelineList = document.getElementById("timelineList");
 
 let workspace = await getWorkspace();
+let availableTabs = [];
 
 renderWorkspace();
+renderAvailableTabs();
 
 saveWorkspaceButton.addEventListener("click", async () => {
   workspace.name = workspaceNameInput.value.trim();
@@ -35,37 +45,64 @@ saveWorkspaceButton.addEventListener("click", async () => {
   renderWorkspace();
 });
 
-loadTabsButton.addEventListener("click", async () => {
-  const tabs = await getCurrentWindowTabs();
+scanTabsButton.addEventListener("click", async () => {
+  availableTabs = await getCurrentWindowTabs();
 
-  workspace.tabs = tabs.map((tab) => {
-    const existing = workspace.tabs.find((item) =>
-      item.tabId === tab.id ||
-      item.tabKey === tab.tabKey ||
-      item.url === tab.url
-    );
+  await addTimelineEvent("tabs_scanned", "Scanned " + availableTabs.length + " tabs from current window.");
 
-    return {
-      tabId: tab.id,
-      tabKey: tab.tabKey,
-      windowId: tab.windowId,
-      groupId: tab.groupId,
-      url: tab.url,
-      originalTitle: tab.title,
-      alias: existing ? existing.alias : "",
-      role: existing ? existing.role : "unassigned",
-      firstSeenAt: existing ? existing.firstSeenAt : new Date().toISOString(),
-      lastSeenAt: new Date().toISOString()
-    };
+  workspace = await getWorkspace();
+  setIntakeStatus("Scanned " + availableTabs.length + " tabs. Select the tabs you want to add to this workspace.");
+  renderAvailableTabs();
+  renderTimeline();
+});
+
+addSelectedTabsButton.addEventListener("click", async () => {
+  const selectedIndexes = getSelectedAvailableTabIndexes();
+
+  if (!selectedIndexes.length) {
+    setIntakeStatus("No tabs selected. Tick one or more scanned tabs first.");
+    return;
+  }
+
+  let addedCount = 0;
+  let skippedCount = 0;
+
+  selectedIndexes.forEach((index) => {
+    const tab = availableTabs[index];
+
+    if (!tab) {
+      return;
+    }
+
+    const existing = findWorkspaceTabMatch(tab);
+
+    if (existing) {
+      skippedCount += 1;
+      return;
+    }
+
+    workspace.tabs.push(createWorkspaceTab(tab));
+    addedCount += 1;
   });
 
   workspace.updatedAt = new Date().toISOString();
 
   await saveWorkspace(workspace);
-  await addTimelineEvent("tabs_loaded", "Loaded " + tabs.length + " tabs from current window.");
+  await addTimelineEvent(
+    "selected_tabs_added",
+    "Added " + addedCount + " selected tab(s) to workspace. Skipped " + skippedCount + " existing tab(s)."
+  );
 
   workspace = await getWorkspace();
+  setIntakeStatus("Added " + addedCount + " tab(s) to workspace. Skipped " + skippedCount + " existing tab(s).");
   renderWorkspace();
+  renderAvailableTabs();
+});
+
+clearScannedTabsButton.addEventListener("click", () => {
+  availableTabs = [];
+  setIntakeStatus("Cleared scanned tabs.");
+  renderAvailableTabs();
 });
 
 addJournalButton.addEventListener("click", async () => {
@@ -92,12 +129,69 @@ function renderWorkspace() {
   renderTimeline();
 }
 
+function renderAvailableTabs() {
+  clearElement(availableTabsList);
+
+  if (!availableTabs.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No scanned tabs yet.";
+    availableTabsList.appendChild(empty);
+    return;
+  }
+
+  availableTabs.forEach((tab, index) => {
+    const alreadyInWorkspace = Boolean(findWorkspaceTabMatch(tab));
+
+    const card = document.createElement("div");
+    card.className = "available-tab-card";
+
+    if (alreadyInWorkspace) {
+      card.classList.add("disabled");
+    }
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.className = "available-tab-checkbox";
+    checkbox.dataset.tabIndex = String(index);
+    checkbox.disabled = alreadyInWorkspace;
+    checkbox.checked = alreadyInWorkspace;
+    card.appendChild(checkbox);
+
+    const content = document.createElement("div");
+
+    const title = document.createElement("div");
+    title.className = "tab-title";
+    title.textContent = tab.title || "Untitled tab";
+    content.appendChild(title);
+
+    const url = document.createElement("div");
+    url.className = "tab-url";
+    url.textContent = tab.url || "";
+    content.appendChild(url);
+
+    const meta = document.createElement("div");
+    meta.className = "tab-meta";
+    meta.textContent = "Window " + tab.windowId + " | Tab " + tab.id;
+    content.appendChild(meta);
+
+    if (alreadyInWorkspace) {
+      const badge = document.createElement("span");
+      badge.className = "badge";
+      badge.textContent = "Already in workspace";
+      content.appendChild(badge);
+    }
+
+    card.appendChild(content);
+    availableTabsList.appendChild(card);
+  });
+}
+
 function renderTabs() {
   clearElement(tabsList);
 
   if (!workspace.tabs.length) {
     const empty = document.createElement("p");
-    empty.textContent = "No tabs loaded yet.";
+    empty.textContent = "No workspace tabs yet. Scan the current window and add selected tabs.";
     tabsList.appendChild(empty);
     return;
   }
@@ -245,6 +339,42 @@ function renderTimeline() {
 
     timelineList.appendChild(card);
   });
+}
+
+function getSelectedAvailableTabIndexes() {
+  return Array.from(document.querySelectorAll(".available-tab-checkbox:checked"))
+    .filter((checkbox) => !checkbox.disabled)
+    .map((checkbox) => Number(checkbox.dataset.tabIndex))
+    .filter((index) => Number.isInteger(index));
+}
+
+function findWorkspaceTabMatch(tab) {
+  return workspace.tabs.find((item) =>
+    item.tabId === tab.id ||
+    item.tabKey === tab.tabKey ||
+    item.url === tab.url
+  );
+}
+
+function createWorkspaceTab(tab) {
+  const now = new Date().toISOString();
+
+  return {
+    tabId: tab.id,
+    tabKey: tab.tabKey,
+    windowId: tab.windowId,
+    groupId: tab.groupId,
+    url: tab.url,
+    originalTitle: tab.title,
+    alias: "",
+    role: "unassigned",
+    firstSeenAt: now,
+    lastSeenAt: now
+  };
+}
+
+function setIntakeStatus(message) {
+  intakeStatus.textContent = message;
 }
 
 function clearElement(element) {
