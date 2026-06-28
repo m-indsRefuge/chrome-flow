@@ -86,11 +86,15 @@ Done when:
 
 ## V0.2G Native Chrome Tab Grouping
 
-Planned:
+Done when:
 
-- Add tabGroups permission
-- Create a native Chrome tab group from workspace tabs
-- Keep native tab grouping as an explicit user action
+- Extension requests the tabGroups permission
+- User can explicitly create native Chrome tab groups from the workspace
+- Open workspace tabs are grouped by Chrome Flow role/subgroup label
+- Tabs from different browser windows are grouped separately
+- Closed or missing workspace tabs are skipped safely
+- Workspace tab metadata is refreshed after grouping
+- Native grouping results are recorded in the timeline
 
 ## V0.3 Deterministic Helpers and Export
 
