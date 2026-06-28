@@ -182,10 +182,6 @@ async function startActionTrace(traceDefinition, clickContext) {
     ]
   });
 
-  scheduleActionTracePoll(traceId);
-}
-
-function scheduleActionTracePoll(traceId) {
   window.setTimeout(() => {
     void pollActionTrace(traceId);
   }, ACTION_TRACE_POLL_MS);
@@ -200,98 +196,56 @@ async function pollActionTrace(traceId) {
 
   const workspace = await getWorkspace();
   const timeline = Array.isArray(workspace?.timeline) ? workspace.timeline : [];
-  const intermediateEvents = findNewIntermediateEvents(trace, timeline);
+  const newEvents = timeline.slice(trace.timelineLength);
+  const observedEvents = newEvents.filter((event) => trace.allObservedTypes.includes(event.type));
+  const terminalEvent = observedEvents.find((event) => trace.terminalTypes.includes(event.type));
+  const intermediateEvents = observedEvents.filter((event) => trace.intermediateTypes.includes(event.type));
 
-  for (const intermediateEvent of intermediateEvents) {
-    trace.observedIntermediateEventIds.push(intermediateEvent.eventId || intermediateEvent.createdAt || intermediateEvent.type);
-    await recordActionIntermediate(trace, intermediateEvent);
+  for (const event of intermediateEvents) {
+    if (!trace.observedIntermediateEventIds.includes(event.eventId)) {
+      trace.observedIntermediateEventIds.push(event.eventId);
+      await recordDiagnostic("info", "action_intermediate", "Action intermediate event observed: " + trace.label + ".", {
+        traceId: trace.traceId,
+        actionName: trace.actionName,
+        buttonId: trace.clickContext.buttonId,
+        buttonText: trace.clickContext.buttonText,
+        observedEvent: createObservedEventSummary(event)
+      });
+    }
   }
 
-  const terminalEvent = findTerminalActionEvent(trace, timeline);
-
   if (terminalEvent) {
+    await finishActionTrace(trace, terminalEvent, workspace);
     pendingActionTraces.delete(traceId);
-    await recordActionResult(trace, terminalEvent, workspace);
-    await renderDiagnostics();
     return;
   }
 
-  const elapsedMs = Date.now() - trace.startedAtMs;
-
-  if (elapsedMs >= ACTION_TRACE_TIMEOUT_MS) {
-    pendingActionTraces.delete(traceId);
-    await recordDiagnostic("warn", "action_no_result_observed", "No terminal System Journal event was observed for: " + trace.label + ".", {
+  if (Date.now() - trace.startedAtMs >= ACTION_TRACE_TIMEOUT_MS) {
+    await recordDiagnostic("warn", "action_no_result_observed", "No terminal action result observed for: " + trace.label + ".", {
       traceId: trace.traceId,
       actionName: trace.actionName,
       buttonId: trace.clickContext.buttonId,
       buttonText: trace.clickContext.buttonText,
-      waitedMs: elapsedMs,
-      intermediateEventTypes: trace.intermediateTypes,
-      terminalEventTypes: trace.terminalTypes,
+      expectedTerminalEventTypes: trace.terminalTypes,
       observedIntermediateEventIds: trace.observedIntermediateEventIds,
-      note: "This can happen if the user cancelled a confirmation/prompt, the action did not produce a terminal system event, or the event type is not mapped yet."
+      timelineLengthAtStart: trace.timelineLength,
+      timelineLengthNow: timeline.length
     });
-    await renderDiagnostics();
+    pendingActionTraces.delete(traceId);
     return;
   }
 
-  scheduleActionTracePoll(traceId);
+  window.setTimeout(() => {
+    void pollActionTrace(traceId);
+  }, ACTION_TRACE_POLL_MS);
 }
 
-function findNewIntermediateEvents(trace, timeline) {
-  if (!trace.intermediateTypes.length) {
-    return [];
-  }
-
-  return timeline
-    .slice(trace.timelineLength)
-    .filter((event) => {
-      if (!event || !trace.intermediateTypes.includes(event.type)) {
-        return false;
-      }
-
-      if (event.createdAt && Date.parse(event.createdAt) < Date.parse(trace.startedAt)) {
-        return false;
-      }
-
-      const eventKey = event.eventId || event.createdAt || event.type;
-      return !trace.observedIntermediateEventIds.includes(eventKey);
-    });
-}
-
-function findTerminalActionEvent(trace, timeline) {
-  return timeline
-    .slice(trace.timelineLength)
-    .find((event) => {
-      if (!event || !trace.terminalTypes.includes(event.type)) {
-        return false;
-      }
-
-      if (!event.createdAt) {
-        return true;
-      }
-
-      return Date.parse(event.createdAt) >= Date.parse(trace.startedAt);
-    });
-}
-
-async function recordActionIntermediate(trace, intermediateEvent) {
-  await recordDiagnostic("info", "action_intermediate", "Action intermediate event observed: " + trace.label + ".", {
-    traceId: trace.traceId,
-    actionName: trace.actionName,
-    buttonId: trace.clickContext.buttonId,
-    buttonText: trace.clickContext.buttonText,
-    observedEvent: createObservedEventSummary(intermediateEvent)
-  });
-}
-
-async function recordActionResult(trace, observedEvent, workspace) {
-  const tabStatus = await calculateTabStatus(workspace);
+async function finishActionTrace(trace, observedEvent, workspace) {
   const resultType = getActionResultType(trace, observedEvent);
-  const diagnosticLevel = resultType === "failed" ? "error" : resultType === "skipped" ? "warn" : "info";
-  const diagnosticAction = "action_" + resultType;
+  const level = resultType === "failed" ? "error" : resultType === "skipped" ? "warn" : "info";
+  const tabStatus = await calculateTabStatus(workspace);
 
-  await recordDiagnostic(diagnosticLevel, diagnosticAction, "Action " + resultType + ": " + trace.label + ".", {
+  await recordDiagnostic(level, "action_" + resultType, "Action " + resultType + ": " + trace.label + ".", {
     traceId: trace.traceId,
     actionName: trace.actionName,
     buttonId: trace.clickContext.buttonId,
@@ -329,6 +283,10 @@ function getActionTraceDefinition(clickContext) {
 
   if (buttonId === "scanTabsButton") {
     return createActionTraceDefinition("scanCurrentWindowTabs", "Scan Current Window Tabs", ["tabs_scanned"]);
+  }
+
+  if (buttonId === "addActiveTabButton") {
+    return createActionTraceDefinition("addActiveTabToWorkspace", "Add Current Active Tab", ["active_tab_added"], ["active_tab_add_skipped"]);
   }
 
   if (buttonId === "addSelectedTabsButton") {
@@ -428,20 +386,20 @@ async function renderDiagnostics() {
 function renderDiagnosticsSummary(workspace, diagnostics, tabStatus) {
   clearElement(diagnosticsSummary);
 
-  const summary = document.createElement("div");
-  summary.className = "diagnostics-summary-grid";
+  const grid = document.createElement("div");
+  grid.className = "diagnostics-summary-grid";
 
-  summary.appendChild(createDiagnosticsMetric("Workspace", workspace?.name || "Unnamed"));
-  summary.appendChild(createDiagnosticsMetric("Type", workspace?.workspaceType || "unknown"));
-  summary.appendChild(createDiagnosticsMetric("Tabs", String(workspace?.tabs?.length || 0)));
-  summary.appendChild(createDiagnosticsMetric("Open", String(tabStatus.openTabs)));
-  summary.appendChild(createDiagnosticsMetric("Grouped", String(tabStatus.groupedTabs)));
-  summary.appendChild(createDiagnosticsMetric("Diagnostics", String(diagnostics.length)));
+  grid.appendChild(createSummaryCard("Workspace", workspace?.name || "Untitled"));
+  grid.appendChild(createSummaryCard("Type", workspace?.workspaceType || "unknown"));
+  grid.appendChild(createSummaryCard("Tabs", String(tabStatus.totalTabs)));
+  grid.appendChild(createSummaryCard("Open", String(tabStatus.openTabs)));
+  grid.appendChild(createSummaryCard("Grouped", String(tabStatus.groupedTabs)));
+  grid.appendChild(createSummaryCard("Diagnostics", String(diagnostics.length)));
 
-  diagnosticsSummary.appendChild(summary);
+  diagnosticsSummary.appendChild(grid);
 }
 
-function createDiagnosticsMetric(label, value) {
+function createSummaryCard(label, value) {
   const card = document.createElement("div");
   card.className = "diagnostics-summary-card";
 
@@ -461,32 +419,30 @@ function renderDiagnosticsList(diagnostics) {
 
   if (!diagnostics.length) {
     const empty = document.createElement("p");
-    empty.textContent = "No developer diagnostics recorded yet.";
+    empty.className = "empty-state";
+    empty.textContent = "No diagnostics recorded yet.";
     diagnosticsList.appendChild(empty);
     return;
   }
 
-  diagnostics.slice().reverse().slice(0, 30).forEach((event) => {
-    const card = document.createElement("div");
-    card.className = "diagnostic-card diagnostic-" + event.level;
+  diagnostics.slice(-20).reverse().forEach((diagnostic) => {
+    const card = document.createElement("article");
+    card.className = "diagnostic-card diagnostic-" + diagnostic.level;
 
-    const heading = document.createElement("strong");
-    heading.textContent = event.level.toUpperCase() + " · " + event.action;
+    const heading = document.createElement("p");
+    heading.textContent = diagnostic.createdAt + " | " + diagnostic.level + " | " + diagnostic.action;
     card.appendChild(heading);
 
     const message = document.createElement("p");
-    message.textContent = event.message;
+    message.textContent = diagnostic.message;
     card.appendChild(message);
 
-    if (event.details && Object.keys(event.details).length) {
+    if (diagnostic.details && Object.keys(diagnostic.details).length) {
       const details = document.createElement("pre");
-      details.textContent = JSON.stringify(event.details, null, 2);
+      details.textContent = JSON.stringify(diagnostic.details, null, 2);
       card.appendChild(details);
     }
 
-    const time = document.createElement("small");
-    time.textContent = event.createdAt;
-    card.appendChild(time);
     diagnosticsList.appendChild(card);
   });
 }
@@ -495,12 +451,7 @@ async function buildDiagnosticPacket() {
   const workspace = await getWorkspace();
   const diagnostics = await getDiagnostics();
   const tabStatus = await calculateTabStatus(workspace);
-  const recentTimeline = Array.isArray(workspace?.timeline) ? workspace.timeline.slice(-MAX_PACKET_EVENTS) : [];
-  const recentDiagnostics = diagnostics.slice(-MAX_PACKET_EVENTS);
-  const recentActionResultDiagnostics = diagnostics
-    .filter((event) => typeof event.action === "string" && event.action.startsWith("action_"))
-    .slice(-MAX_PACKET_EVENTS);
-  const recoverableEvents = recentTimeline.filter((event) => event.recoveryActions);
+  const timeline = Array.isArray(workspace?.timeline) ? workspace.timeline : [];
 
   const packet = {
     packetType: "Chrome Flow Diagnostic Packet",
@@ -510,12 +461,12 @@ async function buildDiagnosticPacket() {
       schema: "diagnostic-packet-v0.3"
     },
     workspace: {
-      workspaceId: workspace?.workspaceId || "unknown",
+      workspaceId: workspace?.workspaceId || "",
       name: workspace?.name || "",
-      workspaceType: workspace?.workspaceType || "unknown",
+      workspaceType: workspace?.workspaceType || "",
       tabCount: Array.isArray(workspace?.tabs) ? workspace.tabs.length : 0,
       journalCount: Array.isArray(workspace?.journal) ? workspace.journal.length : 0,
-      timelineCount: Array.isArray(workspace?.timeline) ? workspace.timeline.length : 0
+      timelineCount: timeline.length
     },
     tabStatus: tabStatus,
     pendingActionTraces: Array.from(pendingActionTraces.values()).map((trace) => ({
@@ -523,17 +474,18 @@ async function buildDiagnosticPacket() {
       actionName: trace.actionName,
       label: trace.label,
       startedAt: trace.startedAt,
-      buttonId: trace.clickContext.buttonId,
-      buttonText: trace.clickContext.buttonText,
-      intermediateEventTypes: trace.intermediateTypes,
-      terminalEventTypes: trace.terminalTypes,
-      observedIntermediateEventIds: trace.observedIntermediateEventIds,
-      expectedEventTypes: trace.allObservedTypes
+      terminalTypes: trace.terminalTypes,
+      intermediateTypes: trace.intermediateTypes,
+      observedIntermediateEventIds: trace.observedIntermediateEventIds
     })),
-    recentDiagnostics: recentDiagnostics,
-    recentActionResultDiagnostics: recentActionResultDiagnostics,
-    recentSystemEvents: recentTimeline,
-    recentRecoverableEvents: recoverableEvents,
+    recentDiagnostics: diagnostics.slice(-MAX_PACKET_EVENTS),
+    recentActionResultDiagnostics: diagnostics
+      .filter((diagnostic) => diagnostic.action.startsWith("action_"))
+      .slice(-MAX_PACKET_EVENTS),
+    recentSystemEvents: timeline.slice(-MAX_PACKET_EVENTS),
+    recentRecoverableEvents: timeline
+      .filter((event) => event.recoveryActions)
+      .slice(-MAX_PACKET_EVENTS),
     notes: [
       "This packet is generated locally by Chrome Flow.",
       "It does not intentionally include page content.",
@@ -547,79 +499,63 @@ async function buildDiagnosticPacket() {
 }
 
 async function calculateTabStatus(workspace) {
-  const tabs = Array.isArray(workspace?.tabs) ? workspace.tabs : [];
-
-  try {
-    const browserTabs = await chrome.tabs.query({});
-    const liveWorkspaceTabs = tabs
-      .map((workspaceTab) => ({
-        workspaceTab: workspaceTab,
-        liveTab: findBrowserTabMatch(workspaceTab, browserTabs)
-      }))
-      .filter((item) => Boolean(item.liveTab));
-
-    const groupedTabs = liveWorkspaceTabs.filter((item) => Number.isInteger(item.liveTab.groupId) && item.liveTab.groupId >= 0);
-
+  if (!workspace || !Array.isArray(workspace.tabs) || !workspace.tabs.length) {
     return {
-      totalTabs: tabs.length,
-      openTabs: liveWorkspaceTabs.length,
-      missingTabs: Math.max(tabs.length - liveWorkspaceTabs.length, 0),
-      groupedTabs: groupedTabs.length,
-      ungroupedTabs: Math.max(liveWorkspaceTabs.length - groupedTabs.length, 0),
-      unassignedTabs: tabs.filter((tab) => (tab.role || "unassigned") === "unassigned").length
-    };
-  } catch (error) {
-    await recordDiagnostic("error", "diagnostic_tab_status_failed", "Could not calculate tab status for diagnostics.", {
-      error: summarizeError(error)
-    });
-
-    return {
-      totalTabs: tabs.length,
+      totalTabs: 0,
       openTabs: 0,
-      missingTabs: tabs.length,
+      missingTabs: 0,
       groupedTabs: 0,
       ungroupedTabs: 0,
-      unassignedTabs: tabs.filter((tab) => (tab.role || "unassigned") === "unassigned").length,
-      error: "Could not query browser tabs."
+      unassignedTabs: 0
     };
   }
-}
 
-function findBrowserTabMatch(workspaceTab, browserTabs) {
-  return browserTabs.find((tab) =>
-    tab.id === workspaceTab.tabId ||
-    tab.url === workspaceTab.url ||
-    createTabKey(tab) === workspaceTab.tabKey
+  let browserTabs = [];
+
+  try {
+    browserTabs = await chrome.tabs.query({});
+  } catch (error) {
+    return {
+      totalTabs: workspace.tabs.length,
+      openTabs: 0,
+      missingTabs: workspace.tabs.length,
+      groupedTabs: 0,
+      ungroupedTabs: 0,
+      unassignedTabs: workspace.tabs.filter((tab) => (tab.role || "unassigned") === "unassigned").length
+    };
+  }
+
+  const openTabs = workspace.tabs.filter((workspaceTab) =>
+    browserTabs.some((browserTab) => browserTab.id === workspaceTab.tabId || browserTab.url === workspaceTab.url)
   );
-}
+  const groupedTabs = openTabs.filter((workspaceTab) =>
+    browserTabs.some((browserTab) => browserTab.id === workspaceTab.tabId && Number.isInteger(browserTab.groupId) && browserTab.groupId >= 0)
+  );
 
-function createTabKey(tab) {
-  return (tab.url || "") + "::" + (tab.title || "");
+  return {
+    totalTabs: workspace.tabs.length,
+    openTabs: openTabs.length,
+    missingTabs: Math.max(workspace.tabs.length - openTabs.length, 0),
+    groupedTabs: groupedTabs.length,
+    ungroupedTabs: Math.max(openTabs.length - groupedTabs.length, 0),
+    unassignedTabs: workspace.tabs.filter((tab) => (tab.role || "unassigned") === "unassigned").length
+  };
 }
 
 function sanitizeDetails(details) {
   try {
-    return JSON.parse(JSON.stringify(details, truncateLongStrings));
+    return JSON.parse(JSON.stringify(details || {}));
   } catch (error) {
-    return { serializationError: String(error) };
+    return {
+      unserializable: true,
+      summary: String(details)
+    };
   }
-}
-
-function truncateLongStrings(key, value) {
-  if (typeof value === "string" && value.length > 1000) {
-    return value.slice(0, 1000) + "...";
-  }
-
-  return value;
 }
 
 function summarizeError(error) {
   if (!error) {
     return { message: "Unknown error" };
-  }
-
-  if (typeof error === "string") {
-    return { message: error };
   }
 
   return {
