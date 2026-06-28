@@ -172,6 +172,22 @@ Done when:
 - Existing User Journal, Recovery View, and System Timeline data/rendering remain intact
 - Switching journal views does not require rewriting the underlying storage model
 
+## V0.2J Developer Diagnostics and Diagnostic Packet Export
+
+Done when:
+
+- Developer Diagnostics appears as a dedicated local testing surface
+- Diagnostics captures UI button clicks
+- Diagnostics captures runtime errors
+- Diagnostics captures unhandled promise rejections
+- Diagnostics keeps a capped local diagnostics log to reduce storage risk
+- Diagnostics summarizes current workspace name, type, tab count, open tabs, grouped tabs, and diagnostic count
+- User can refresh the diagnostic view
+- User can clear developer diagnostics without clearing workspace data, User Journal, System Journal, or Recovery Journal
+- User can copy a diagnostic packet for debugging
+- Diagnostic packet includes workspace metadata, tab status, recent diagnostics, recent system events, and recent recoverable events
+- Diagnostic packet avoids intentionally capturing page content, but may include workspace names, tab titles, and URLs for debugging
+
 ## AI Command Contract
 
 Current draft:
