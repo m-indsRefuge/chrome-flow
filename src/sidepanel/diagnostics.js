@@ -2,6 +2,8 @@ const WORKSPACE_KEY = "chromeFlowWorkspace";
 const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const MAX_DIAGNOSTICS = 200;
 const MAX_PACKET_EVENTS = 30;
+const ACTION_TRACE_TIMEOUT_MS = 30000;
+const ACTION_TRACE_POLL_MS = 1000;
 
 const diagnosticsStatus = document.getElementById("diagnosticsStatus");
 const diagnosticsSummary = document.getElementById("diagnosticsSummary");
@@ -9,6 +11,8 @@ const diagnosticsList = document.getElementById("diagnosticsList");
 const refreshDiagnosticsButton = document.getElementById("refreshDiagnosticsButton");
 const copyDiagnosticPacketButton = document.getElementById("copyDiagnosticPacketButton");
 const clearDiagnosticsButton = document.getElementById("clearDiagnosticsButton");
+
+const pendingActionTraces = new Map();
 
 window.addEventListener("error", (event) => {
   void recordDiagnostic("error", "runtime_error", event.message || "Runtime error captured.", {
@@ -45,10 +49,18 @@ document.addEventListener("click", (event) => {
     return;
   }
 
-  void recordDiagnostic("info", "ui_click", "Button clicked: " + (buttonId || buttonText) + ".", {
+  const clickContext = {
     buttonId: buttonId,
     buttonText: buttonText
-  });
+  };
+
+  void recordDiagnostic("info", "ui_click", "Button clicked: " + (buttonId || buttonText) + ".", clickContext);
+
+  const traceDefinition = getActionTraceDefinition(clickContext);
+
+  if (traceDefinition) {
+    void startActionTrace(traceDefinition, clickContext);
+  }
 });
 
 refreshDiagnosticsButton?.addEventListener("click", async () => {
@@ -118,6 +130,219 @@ async function getDiagnostics() {
 async function getWorkspace() {
   const result = await chrome.storage.local.get(WORKSPACE_KEY);
   return result[WORKSPACE_KEY] || null;
+}
+
+async function startActionTrace(traceDefinition, clickContext) {
+  const workspace = await getWorkspace();
+  const timelineLength = Array.isArray(workspace?.timeline) ? workspace.timeline.length : 0;
+  const traceId = crypto.randomUUID();
+  const startedAt = new Date().toISOString();
+
+  pendingActionTraces.set(traceId, {
+    traceId: traceId,
+    actionName: traceDefinition.actionName,
+    label: traceDefinition.label,
+    successTypes: traceDefinition.successTypes || [],
+    skippedTypes: traceDefinition.skippedTypes || [],
+    failedTypes: traceDefinition.failedTypes || [],
+    allObservedTypes: [
+      ...(traceDefinition.successTypes || []),
+      ...(traceDefinition.skippedTypes || []),
+      ...(traceDefinition.failedTypes || [])
+    ],
+    clickContext: clickContext,
+    startedAt: startedAt,
+    startedAtMs: Date.now(),
+    timelineLength: timelineLength
+  });
+
+  await recordDiagnostic("info", "action_started", "Action started: " + traceDefinition.label + ".", {
+    traceId: traceId,
+    actionName: traceDefinition.actionName,
+    buttonId: clickContext.buttonId,
+    buttonText: clickContext.buttonText,
+    timelineLength: timelineLength
+  });
+
+  scheduleActionTracePoll(traceId);
+}
+
+function scheduleActionTracePoll(traceId) {
+  window.setTimeout(() => {
+    void pollActionTrace(traceId);
+  }, ACTION_TRACE_POLL_MS);
+}
+
+async function pollActionTrace(traceId) {
+  const trace = pendingActionTraces.get(traceId);
+
+  if (!trace) {
+    return;
+  }
+
+  const workspace = await getWorkspace();
+  const timeline = Array.isArray(workspace?.timeline) ? workspace.timeline : [];
+  const observedEvent = findObservedActionEvent(trace, timeline);
+
+  if (observedEvent) {
+    pendingActionTraces.delete(traceId);
+    await recordActionResult(trace, observedEvent, workspace);
+    await renderDiagnostics();
+    return;
+  }
+
+  const elapsedMs = Date.now() - trace.startedAtMs;
+
+  if (elapsedMs >= ACTION_TRACE_TIMEOUT_MS) {
+    pendingActionTraces.delete(traceId);
+    await recordDiagnostic("warn", "action_no_result_observed", "No matching System Journal event was observed for: " + trace.label + ".", {
+      traceId: trace.traceId,
+      actionName: trace.actionName,
+      buttonId: trace.clickContext.buttonId,
+      buttonText: trace.clickContext.buttonText,
+      waitedMs: elapsedMs,
+      expectedEventTypes: trace.allObservedTypes,
+      note: "This can happen if the user cancelled a confirmation/prompt, the action did not produce a system event, or the event type is not mapped yet."
+    });
+    await renderDiagnostics();
+    return;
+  }
+
+  scheduleActionTracePoll(traceId);
+}
+
+function findObservedActionEvent(trace, timeline) {
+  return timeline
+    .slice(trace.timelineLength)
+    .find((event) => {
+      if (!event || !trace.allObservedTypes.includes(event.type)) {
+        return false;
+      }
+
+      if (!event.createdAt) {
+        return true;
+      }
+
+      return Date.parse(event.createdAt) >= Date.parse(trace.startedAt);
+    });
+}
+
+async function recordActionResult(trace, observedEvent, workspace) {
+  const tabStatus = await calculateTabStatus(workspace);
+  const resultType = getActionResultType(trace, observedEvent);
+  const diagnosticLevel = resultType === "failed" ? "error" : resultType === "skipped" ? "warn" : "info";
+  const diagnosticAction = "action_" + resultType;
+
+  await recordDiagnostic(diagnosticLevel, diagnosticAction, "Action " + resultType + ": " + trace.label + ".", {
+    traceId: trace.traceId,
+    actionName: trace.actionName,
+    buttonId: trace.clickContext.buttonId,
+    buttonText: trace.clickContext.buttonText,
+    observedEvent: {
+      eventId: observedEvent.eventId || "",
+      type: observedEvent.type || "unknown",
+      message: observedEvent.message || "",
+      createdAt: observedEvent.createdAt || ""
+    },
+    tabStatus: tabStatus
+  });
+}
+
+function getActionResultType(trace, observedEvent) {
+  if (trace.failedTypes.includes(observedEvent.type)) {
+    return "failed";
+  }
+
+  if (trace.skippedTypes.includes(observedEvent.type)) {
+    return "skipped";
+  }
+
+  return "success";
+}
+
+function getActionTraceDefinition(clickContext) {
+  const buttonId = clickContext.buttonId;
+  const buttonText = clickContext.buttonText;
+
+  if (buttonId === "scanTabsButton") {
+    return createActionTraceDefinition("scanCurrentWindowTabs", "Scan Current Window Tabs", ["tabs_scanned"]);
+  }
+
+  if (buttonId === "addSelectedTabsButton") {
+    return createActionTraceDefinition("addSelectedTabsToWorkspace", "Add Selected Tabs to Workspace", ["selected_tabs_added"]);
+  }
+
+  if (buttonId === "openSearchTabButton") {
+    return createActionTraceDefinition("openSearchTab", "Open Search Tab", ["browser_search_tab_opened"]);
+  }
+
+  if (buttonId === "createChromeGroupsButton") {
+    return createActionTraceDefinition("createChromeTabGroups", "Create Chrome Tab Groups", ["chrome_tab_groups_created"], ["chrome_tab_grouping_skipped"], ["chrome_tab_grouping_failed"]);
+  }
+
+  if (buttonId === "removeChromeGroupsButton") {
+    return createActionTraceDefinition("removeAllChromeTabGroups", "Remove All Chrome Tab Groups", ["chrome_tab_groups_removed"], ["chrome_tab_groups_remove_skipped"], ["chrome_tab_groups_remove_failed"]);
+  }
+
+  if (buttonId === "refreshWorkspaceTabsButton") {
+    return createActionTraceDefinition("refreshWorkspaceTabMetadata", "Refresh Workspace Tab Metadata", ["workspace_tabs_refreshed"]);
+  }
+
+  if (buttonId === "clearWorkspaceTabsButton") {
+    return createActionTraceDefinition("clearWorkspaceTabs", "Clear Workspace Tabs", ["workspace_tabs_cleared"]);
+  }
+
+  if (buttonId === "refreshTabStatusButton") {
+    return createActionTraceDefinition("refreshTabStatus", "Refresh Tab Status", ["workspace_tab_status_refreshed"], [], ["workspace_tab_status_refresh_failed"]);
+  }
+
+  if (buttonId === "addJournalButton") {
+    return createActionTraceDefinition("addUserJournalEntry", "Add User Journal Entry", ["user_journal_added"]);
+  }
+
+  if (buttonText === "Focus Group") {
+    return createActionTraceDefinition("focusChromeGroupForRole", "Focus Group", ["chrome_tab_group_focused"], ["chrome_tab_group_focus_skipped"], ["chrome_tab_group_focus_failed"]);
+  }
+
+  if (buttonText === "Remove Chrome Group") {
+    return createActionTraceDefinition("removeChromeTabGroupForRole", "Remove Chrome Group", ["chrome_tab_group_removed"], ["chrome_tab_group_remove_skipped"], ["chrome_tab_group_remove_failed"]);
+  }
+
+  if (buttonText === "Focus Tab") {
+    return createActionTraceDefinition("focusWorkspaceTab", "Focus Tab", ["browser_tab_focused"], [], ["browser_tab_focus_failed"]);
+  }
+
+  if (buttonText === "Close Browser Tab") {
+    return createActionTraceDefinition("closeBrowserTabAndRemoveFromWorkspace", "Close Browser Tab", ["browser_tab_closed_and_removed"], [], ["browser_tab_close_failed"]);
+  }
+
+  if (buttonText === "Remove from Workspace") {
+    return createActionTraceDefinition("removeWorkspaceTab", "Remove from Workspace", ["workspace_tab_removed"]);
+  }
+
+  if (buttonText === "Reopen URL") {
+    return createActionTraceDefinition("reopenUrlFromRecovery", "Reopen URL", ["timeline_url_reopened"]);
+  }
+
+  if (buttonText === "Re-add to Workspace") {
+    return createActionTraceDefinition("readdTabFromRecovery", "Re-add to Workspace", ["workspace_tab_readded"]);
+  }
+
+  if (buttonText === "Recreate Chrome Groups") {
+    return createActionTraceDefinition("recreateChromeGroupsFromRecovery", "Recreate Chrome Groups", ["timeline_chrome_groups_recreate_requested", "chrome_tab_groups_created"], ["chrome_tab_grouping_skipped"], ["chrome_tab_grouping_failed"]);
+  }
+
+  return null;
+}
+
+function createActionTraceDefinition(actionName, label, successTypes = [], skippedTypes = [], failedTypes = []) {
+  return {
+    actionName: actionName,
+    label: label,
+    successTypes: successTypes,
+    skippedTypes: skippedTypes,
+    failedTypes: failedTypes
+  };
 }
 
 async function renderDiagnostics() {
@@ -201,6 +426,9 @@ async function buildDiagnosticPacket() {
   const tabStatus = await calculateTabStatus(workspace);
   const recentTimeline = Array.isArray(workspace?.timeline) ? workspace.timeline.slice(-MAX_PACKET_EVENTS) : [];
   const recentDiagnostics = diagnostics.slice(-MAX_PACKET_EVENTS);
+  const recentActionResultDiagnostics = diagnostics
+    .filter((event) => typeof event.action === "string" && event.action.startsWith("action_"))
+    .slice(-MAX_PACKET_EVENTS);
   const recoverableEvents = recentTimeline.filter((event) => event.recoveryActions);
 
   const packet = {
@@ -208,7 +436,7 @@ async function buildDiagnosticPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "diagnostic-packet-v0.1"
+      schema: "diagnostic-packet-v0.2"
     },
     workspace: {
       workspaceId: workspace?.workspaceId || "unknown",
@@ -219,13 +447,24 @@ async function buildDiagnosticPacket() {
       timelineCount: Array.isArray(workspace?.timeline) ? workspace.timeline.length : 0
     },
     tabStatus: tabStatus,
+    pendingActionTraces: Array.from(pendingActionTraces.values()).map((trace) => ({
+      traceId: trace.traceId,
+      actionName: trace.actionName,
+      label: trace.label,
+      startedAt: trace.startedAt,
+      buttonId: trace.clickContext.buttonId,
+      buttonText: trace.clickContext.buttonText,
+      expectedEventTypes: trace.allObservedTypes
+    })),
     recentDiagnostics: recentDiagnostics,
+    recentActionResultDiagnostics: recentActionResultDiagnostics,
     recentSystemEvents: recentTimeline,
     recentRecoverableEvents: recoverableEvents,
     notes: [
       "This packet is generated locally by Chrome Flow.",
       "It does not intentionally include page content.",
-      "Review before sharing if workspace names, tab titles, or URLs are sensitive."
+      "Review before sharing if workspace names, tab titles, and URLs are sensitive.",
+      "Action result diagnostics link known button clicks to observed System Journal outcomes."
     ]
   };
 
