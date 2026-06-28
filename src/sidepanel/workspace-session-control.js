@@ -8,7 +8,7 @@ installWorkspaceSessionControl();
 
 async function installWorkspaceSessionControl() {
   renderWorkspaceSessionControl();
-  await refreshWorkspaceSessionSummary();
+  await refreshWorkspaceSessionSurface();
   attachWorkspaceSessionHandlers();
 }
 
@@ -35,7 +35,7 @@ function renderWorkspaceSessionControl() {
 
   const help = document.createElement("p");
   help.className = "section-help";
-  help.textContent = "Archive the current workspace trace, copy a snapshot for debugging, or start a clean validation workspace without clearing Developer Diagnostics.";
+  help.textContent = "Archive the current workspace trace, browse archived workspaces, copy packaged snapshots for debugging, or start a clean validation workspace without clearing Developer Diagnostics.";
   section.appendChild(help);
 
   const summary = document.createElement("div");
@@ -48,9 +48,33 @@ function renderWorkspaceSessionControl() {
 
   actions.appendChild(createButton("archiveWorkspaceButton", "Archive Current Workspace", "secondary-button"));
   actions.appendChild(createButton("archiveAndStartFreshButton", "Archive + Start Fresh Workspace", "secondary-button"));
-  actions.appendChild(createButton("copyWorkspaceSnapshotButton", "Copy Workspace Snapshot", "secondary-button"));
+  actions.appendChild(createButton("copyWorkspaceSnapshotButton", "Copy Active Workspace Packet", "secondary-button"));
 
   section.appendChild(actions);
+
+  const archiveBrowser = document.createElement("div");
+  archiveBrowser.className = "archive-browser-panel";
+
+  const archiveLabel = document.createElement("label");
+  archiveLabel.htmlFor = "archiveWorkspaceSelect";
+  archiveLabel.textContent = "Archived Workspaces";
+  archiveBrowser.appendChild(archiveLabel);
+
+  const archiveSelect = document.createElement("select");
+  archiveSelect.id = "archiveWorkspaceSelect";
+  archiveBrowser.appendChild(archiveSelect);
+
+  const archiveSummary = document.createElement("div");
+  archiveSummary.id = "selectedArchiveSummary";
+  archiveSummary.className = "selected-archive-summary";
+  archiveBrowser.appendChild(archiveSummary);
+
+  const archiveActions = document.createElement("div");
+  archiveActions.className = "workspace-session-actions";
+  archiveActions.appendChild(createButton("copySelectedArchiveSnapshotButton", "Copy Selected Archive Packet", "secondary-button"));
+  archiveBrowser.appendChild(archiveActions);
+
+  section.appendChild(archiveBrowser);
 
   const status = document.createElement("p");
   status.id = "workspaceSessionStatus";
@@ -79,8 +103,22 @@ function attachWorkspaceSessionHandlers() {
   });
 
   document.getElementById("copyWorkspaceSnapshotButton")?.addEventListener("click", async () => {
-    await copyWorkspaceSnapshot();
+    await copyActiveWorkspacePacket();
   });
+
+  document.getElementById("copySelectedArchiveSnapshotButton")?.addEventListener("click", async () => {
+    await copySelectedArchivePacket();
+  });
+
+  document.getElementById("archiveWorkspaceSelect")?.addEventListener("change", async () => {
+    await refreshSelectedArchiveSummary();
+  });
+}
+
+async function refreshWorkspaceSessionSurface() {
+  await refreshWorkspaceSessionSummary();
+  await refreshArchiveSelector();
+  await refreshSelectedArchiveSummary();
 }
 
 async function refreshWorkspaceSessionSummary() {
@@ -92,11 +130,80 @@ async function refreshWorkspaceSessionSummary() {
 
   const workspace = await getWorkspace();
   const archives = await getArchivedWorkspaces();
-  const tabCount = Array.isArray(workspace.tabs) ? workspace.tabs.length : 0;
-  const journalCount = Array.isArray(workspace.journal) ? workspace.journal.length : 0;
-  const timelineCount = Array.isArray(workspace.timeline) ? workspace.timeline.length : 0;
+  const workspaceSummary = createWorkspaceSummary(workspace);
 
-  summary.textContent = "Active: " + (workspace.name || "Untitled Workspace") + " | Tabs: " + tabCount + " | User notes: " + journalCount + " | System events: " + timelineCount + " | Archived workspaces: " + archives.length + ".";
+  summary.textContent = "Active: " + (workspaceSummary.name || "Untitled Workspace") + " | Tabs: " + workspaceSummary.tabCount + " | User notes: " + workspaceSummary.journalCount + " | System events: " + workspaceSummary.timelineCount + " | Archived workspaces: " + archives.length + ".";
+}
+
+async function refreshArchiveSelector() {
+  const archiveSelect = document.getElementById("archiveWorkspaceSelect");
+
+  if (!archiveSelect) {
+    return;
+  }
+
+  const previousSelection = archiveSelect.value;
+  const archives = await getArchivedWorkspaces();
+  clearElement(archiveSelect);
+
+  if (!archives.length) {
+    const emptyOption = document.createElement("option");
+    emptyOption.value = "";
+    emptyOption.textContent = "No archived workspaces yet";
+    archiveSelect.appendChild(emptyOption);
+    archiveSelect.disabled = true;
+    document.getElementById("copySelectedArchiveSnapshotButton")?.setAttribute("disabled", "disabled");
+    return;
+  }
+
+  archiveSelect.disabled = false;
+  document.getElementById("copySelectedArchiveSnapshotButton")?.removeAttribute("disabled");
+
+  archives.forEach((archive) => {
+    const option = document.createElement("option");
+    option.value = archive.archiveId;
+    option.textContent = archive.archiveName + " | Tabs: " + (archive.summary?.tabCount ?? 0) + " | Events: " + (archive.summary?.timelineCount ?? 0);
+    archiveSelect.appendChild(option);
+  });
+
+  if (previousSelection && archives.some((archive) => archive.archiveId === previousSelection)) {
+    archiveSelect.value = previousSelection;
+  }
+}
+
+async function refreshSelectedArchiveSummary() {
+  const summary = document.getElementById("selectedArchiveSummary");
+  const archiveSelect = document.getElementById("archiveWorkspaceSelect");
+
+  if (!summary || !archiveSelect) {
+    return;
+  }
+
+  const archives = await getArchivedWorkspaces();
+  const selectedArchive = archives.find((archive) => archive.archiveId === archiveSelect.value);
+
+  clearElement(summary);
+
+  if (!selectedArchive) {
+    summary.textContent = "No archive selected.";
+    return;
+  }
+
+  const archiveSummary = selectedArchive.summary || createWorkspaceSummary(selectedArchive.workspace || {});
+  summary.appendChild(createArchiveSummaryLine("Archive", selectedArchive.archiveName));
+  summary.appendChild(createArchiveSummaryLine("Reason", selectedArchive.reason || "unknown"));
+  summary.appendChild(createArchiveSummaryLine("Workspace", archiveSummary.name || "Untitled Workspace"));
+  summary.appendChild(createArchiveSummaryLine("Type", archiveSummary.workspaceType || "unknown"));
+  summary.appendChild(createArchiveSummaryLine("Tabs", String(archiveSummary.tabCount || 0)));
+  summary.appendChild(createArchiveSummaryLine("User notes", String(archiveSummary.journalCount || 0)));
+  summary.appendChild(createArchiveSummaryLine("System events", String(archiveSummary.timelineCount || 0)));
+}
+
+function createArchiveSummaryLine(label, value) {
+  const line = document.createElement("div");
+  line.className = "archive-summary-line";
+  line.textContent = label + ": " + value;
+  return line;
 }
 
 async function archiveCurrentWorkspaceOnly() {
@@ -110,7 +217,7 @@ async function archiveCurrentWorkspaceOnly() {
 
   const archiveRecord = await archiveWorkspace(workspace, "manual_archive");
   setStatus("Archived current workspace: " + archiveRecord.archiveName + ". Active workspace was not changed.");
-  await refreshWorkspaceSessionSummary();
+  await refreshWorkspaceSessionSurface();
 }
 
 async function archiveCurrentAndStartFreshWorkspace() {
@@ -135,43 +242,123 @@ async function archiveCurrentAndStartFreshWorkspace() {
   window.setTimeout(() => window.location.reload(), 500);
 }
 
-async function copyWorkspaceSnapshot() {
+async function copyActiveWorkspacePacket() {
   try {
     const workspace = await getWorkspace();
     const archives = await getArchivedWorkspaces();
-    const snapshot = {
-      packetType: "Chrome Flow Workspace Snapshot",
-      createdAt: new Date().toISOString(),
-      activeWorkspace: workspace,
-      archiveSummary: archives.map((archive) => ({
-        archiveId: archive.archiveId,
-        archiveName: archive.archiveName,
-        archivedAt: archive.archivedAt,
-        reason: archive.reason,
-        summary: archive.summary
-      })),
-      notes: [
-        "This snapshot is generated locally by Chrome Flow.",
-        "It may include workspace names, tab titles, URLs, User Journal notes, System Journal events, and Recovery Journal data.",
-        "Review before sharing if workspace data is sensitive."
-      ]
-    };
+    const packet = buildActiveWorkspacePacket(workspace, archives);
 
-    await navigator.clipboard.writeText(JSON.stringify(snapshot, null, 2));
-    await recordDiagnostic("info", "workspace_snapshot_copied", "Workspace snapshot copied to clipboard.", {
+    await navigator.clipboard.writeText(JSON.stringify(packet, null, 2));
+    await recordDiagnostic("info", "workspace_packet_copied", "Active workspace packet copied to clipboard.", {
       workspaceId: workspace.workspaceId || "",
       tabCount: Array.isArray(workspace.tabs) ? workspace.tabs.length : 0,
       journalCount: Array.isArray(workspace.journal) ? workspace.journal.length : 0,
       timelineCount: Array.isArray(workspace.timeline) ? workspace.timeline.length : 0,
-      archiveCount: archives.length
+      archiveCount: archives.length,
+      schema: packet.extension.schema
     });
-    setStatus("Workspace snapshot copied. Review before sharing because it may include tab titles, URLs, and notes.");
+    setStatus("Active workspace packet copied. Review before sharing because it may include tab titles, URLs, and notes.");
   } catch (error) {
-    await recordDiagnostic("error", "workspace_snapshot_copy_failed", "Workspace snapshot copy failed.", {
+    await recordDiagnostic("error", "workspace_packet_copy_failed", "Active workspace packet copy failed.", {
       error: summarizeError(error)
     });
-    setStatus("Could not copy workspace snapshot. Check clipboard permissions or browser console.");
+    setStatus("Could not copy active workspace packet. Check clipboard permissions or browser console.");
   }
+}
+
+async function copySelectedArchivePacket() {
+  try {
+    const archiveSelect = document.getElementById("archiveWorkspaceSelect");
+    const archives = await getArchivedWorkspaces();
+    const selectedArchive = archives.find((archive) => archive.archiveId === archiveSelect?.value);
+
+    if (!selectedArchive) {
+      setStatus("No archived workspace selected.");
+      await recordDiagnostic("warn", "archive_packet_copy_skipped", "No archived workspace was selected for packet copy.", {
+        archiveCount: archives.length
+      });
+      return;
+    }
+
+    const packet = buildSelectedArchivePacket(selectedArchive, archives);
+    await navigator.clipboard.writeText(JSON.stringify(packet, null, 2));
+    await recordDiagnostic("info", "archive_packet_copied", "Selected archived workspace packet copied to clipboard.", {
+      archiveId: selectedArchive.archiveId,
+      archiveName: selectedArchive.archiveName,
+      summary: selectedArchive.summary,
+      schema: packet.extension.schema
+    });
+    setStatus("Archive packet copied for: " + selectedArchive.archiveName + ". Review before sharing because it may include tab titles, URLs, notes, and system events.");
+  } catch (error) {
+    await recordDiagnostic("error", "archive_packet_copy_failed", "Selected archived workspace packet copy failed.", {
+      error: summarizeError(error)
+    });
+    setStatus("Could not copy selected archive packet. Check clipboard permissions or browser console.");
+  }
+}
+
+function buildActiveWorkspacePacket(workspace, archives) {
+  return {
+    packetType: "Chrome Flow Workspace Packet",
+    createdAt: new Date().toISOString(),
+    extension: {
+      name: "Chrome Flow",
+      schema: "workspace-packet-v0.2"
+    },
+    source: {
+      type: "active_workspace",
+      workspaceId: workspace.workspaceId || ""
+    },
+    activeWorkspace: workspace,
+    archiveSummary: createArchiveSummaryList(archives),
+    notes: createPacketNotes("active workspace")
+  };
+}
+
+function buildSelectedArchivePacket(selectedArchive, archives) {
+  return {
+    packetType: "Chrome Flow Archived Workspace Packet",
+    createdAt: new Date().toISOString(),
+    extension: {
+      name: "Chrome Flow",
+      schema: "archived-workspace-packet-v0.1"
+    },
+    source: {
+      type: "archived_workspace",
+      archiveId: selectedArchive.archiveId,
+      archivedAt: selectedArchive.archivedAt,
+      reason: selectedArchive.reason || "unknown"
+    },
+    selectedArchive: {
+      archiveId: selectedArchive.archiveId,
+      archiveName: selectedArchive.archiveName,
+      archivedAt: selectedArchive.archivedAt,
+      reason: selectedArchive.reason,
+      summary: selectedArchive.summary,
+      workspace: selectedArchive.workspace
+    },
+    archiveSummary: createArchiveSummaryList(archives),
+    notes: createPacketNotes("archived workspace")
+  };
+}
+
+function createArchiveSummaryList(archives) {
+  return archives.map((archive) => ({
+    archiveId: archive.archiveId,
+    archiveName: archive.archiveName,
+    archivedAt: archive.archivedAt,
+    reason: archive.reason,
+    summary: archive.summary
+  }));
+}
+
+function createPacketNotes(sourceLabel) {
+  return [
+    "This packet is generated locally by Chrome Flow.",
+    "This is a " + sourceLabel + " packet prepared for debugging or build validation.",
+    "It may include workspace names, tab titles, URLs, User Journal notes, System Journal events, and Recovery Journal data.",
+    "Review before sharing if workspace data is sensitive."
+  ];
 }
 
 async function archiveWorkspace(workspace, reason) {
@@ -287,5 +474,15 @@ function setStatus(message) {
 
   if (status) {
     status.textContent = message;
+  }
+}
+
+function clearElement(element) {
+  if (!element) {
+    return;
+  }
+
+  while (element.firstChild) {
+    element.removeChild(element.firstChild);
   }
 }
