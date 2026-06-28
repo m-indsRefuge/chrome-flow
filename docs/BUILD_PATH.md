@@ -55,7 +55,7 @@ Done when:
 - User can remove an individual tab from the workspace without closing the browser tab
 - User can refresh workspace tab metadata from open browser tabs
 - Refresh preserves custom aliases, tab roles, and first-seen timestamps
-- Refresh updates current title, URL, display URL, window ID, group ID, tab ID, and last-seen timestamp when a match is found
+- Refresh updates current title, URL/display URL, tab ID, window ID, group ID, and last-seen timestamp when a match is found
 - Refresh reports tabs that are no longer found in the browser
 - Remove and refresh actions are recorded in the timeline
 
@@ -202,6 +202,22 @@ Done when:
 - Action result diagnostics include action name, button identity, observed event, and tab status
 - Diagnostic packets use schema diagnostic-packet-v0.2
 - Diagnostic packets include recentActionResultDiagnostics and pendingActionTraces
+
+## V0.2J Patch 2 — Multi-Step Action Diagnostics
+
+Done when:
+
+- Diagnostics distinguishes intermediate action events from terminal action outcomes
+- Multi-step traces record action_intermediate for intermediate System Journal events
+- Multi-step traces wait for terminal success, skipped, or failed events before resolving
+- Recreate Chrome Groups treats timeline_chrome_groups_recreate_requested as intermediate
+- Recreate Chrome Groups treats chrome_tab_groups_created as terminal success
+- Recreate Chrome Groups treats chrome_tab_grouping_skipped as terminal skipped
+- Recreate Chrome Groups treats chrome_tab_grouping_failed as terminal failed
+- action_no_result_observed reports missing terminal events rather than missing any event
+- Pending action traces include intermediate event types, terminal event types, and observed intermediate event IDs
+- Diagnostic packets use schema diagnostic-packet-v0.3
+- Diagnostic packets explain that multi-step diagnostics separate intermediate events from terminal outcomes
 
 ## AI Command Contract
 
