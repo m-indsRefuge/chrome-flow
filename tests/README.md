@@ -162,3 +162,24 @@
 15. Confirm the timeline records the ungroup action.
 16. Click Create Chrome Tab Groups again.
 17. Confirm workspace-named groups can be recreated.
+
+## V0.2G patch 2 role-first grouping and per-group ungroup checklist
+
+1. Open Chrome Flow.
+2. Save a Workspace Name with multiple words, such as Chrome Workflow Test.
+3. Add several open tabs to the workspace.
+4. Assign tabs to at least two different roles.
+5. Click Create Chrome Tab Groups.
+6. Confirm native group labels show role first, such as Source · CWT or Video · CWT.
+7. Confirm the role/subgroup name remains visible in the Chrome tab strip.
+8. Confirm each role subgroup in Chrome Flow has a Remove Chrome Group button.
+9. Click Remove Chrome Group for one role only.
+10. Confirm Chrome asks for confirmation.
+11. Confirm browser tabs stay open.
+12. Confirm Chrome Flow workspace records stay unchanged.
+13. Confirm only that role's native Chrome group is removed.
+14. Confirm other native Chrome groups remain intact.
+15. Confirm the timeline records the per-group ungroup action.
+16. Click Remove All Chrome Tab Groups.
+17. Confirm only current-workspace native groups are removed.
+18. Confirm browser tabs stay open and workspace records remain unchanged.
