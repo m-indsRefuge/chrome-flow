@@ -42,6 +42,37 @@
       <h2>Workspace Tabs</h2>
       <p class="section-help">These are the tabs currently included in this Chrome Flow workspace.</p>
 
+      <div class="tab-status-panel">
+        <h3>Workspace Tab Status</h3>
+        <div class="tab-status-grid">
+          <div class="tab-status-card">
+            <strong id="statusTotalTabs">0</strong>
+            <span>Total</span>
+          </div>
+          <div class="tab-status-card">
+            <strong id="statusOpenTabs">0</strong>
+            <span>Open</span>
+          </div>
+          <div class="tab-status-card">
+            <strong id="statusMissingTabs">0</strong>
+            <span>Missing</span>
+          </div>
+          <div class="tab-status-card">
+            <strong id="statusGroupedTabs">0</strong>
+            <span>Grouped</span>
+          </div>
+          <div class="tab-status-card">
+            <strong id="statusUngroupedTabs">0</strong>
+            <span>Ungrouped</span>
+          </div>
+          <div class="tab-status-card">
+            <strong id="statusUnassignedTabs">0</strong>
+            <span>Unassigned</span>
+          </div>
+        </div>
+        <button id="refreshTabStatusButton" class="secondary-button">Refresh Tab Status</button>
+      </div>
+
       <label for="searchQuery">Open Search Tab</label>
       <input id="searchQuery" type="text" placeholder="Search the web from this workspace..." />
       <button id="openSearchTabButton" class="secondary-button">Open Search Tab</button>
