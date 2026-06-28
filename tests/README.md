@@ -142,3 +142,23 @@
 11. Confirm the timeline records the native grouping action.
 12. Click Refresh Workspace Tab Metadata.
 13. Confirm workspace metadata still refreshes after native grouping.
+
+## V0.2G patch workspace-named grouping and ungroup checklist
+
+1. Open Chrome Flow.
+2. Save a clear Workspace Name.
+3. Add several open tabs to the workspace.
+4. Assign tabs to at least two different roles.
+5. Click Create Chrome Tab Groups.
+6. Confirm native Chrome tab group names follow Workspace Name: Role.
+7. Change one tab's role in Chrome Flow.
+8. Click Create Chrome Tab Groups again.
+9. Confirm the changed tab moves into the new native role group.
+10. Click Remove Chrome Tab Groups.
+11. Confirm Chrome asks before removing native grouping.
+12. Confirm browser tabs stay open.
+13. Confirm Chrome Flow workspace records stay unchanged.
+14. Confirm native Chrome groups for the current workspace name are removed.
+15. Confirm the timeline records the ungroup action.
+16. Click Create Chrome Tab Groups again.
+17. Confirm workspace-named groups can be recreated.
