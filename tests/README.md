@@ -126,3 +126,19 @@
 24. Confirm the tab snapshot is restored to the workspace.
 25. Click Reopen URL from that same timeline event.
 26. Confirm the saved URL opens in a browser tab.
+
+## V0.2G Native Chrome tab grouping checklist
+
+1. Pull the latest repo and reload the extension in chrome://extensions.
+2. Accept the new tabGroups permission if Chrome prompts for it.
+3. Open several tabs and add them to the workspace.
+4. Assign at least two different roles to workspace tabs.
+5. Click Create Chrome Tab Groups.
+6. Confirm Chrome creates native tab groups using Chrome Flow role labels.
+7. Confirm tabs assigned to the same role are grouped together.
+8. Confirm tabs assigned to different roles are grouped separately.
+9. Confirm closed or missing workspace tabs are skipped safely.
+10. Confirm the status message reports created groups, grouped tabs, and skipped tabs.
+11. Confirm the timeline records the native grouping action.
+12. Click Refresh Workspace Tab Metadata.
+13. Confirm workspace metadata still refreshes after native grouping.
