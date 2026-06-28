@@ -355,10 +355,14 @@ function createArchiveSummaryList(archives) {
 function createPacketNotes(sourceLabel) {
   return [
     "This packet is generated locally by Chrome Flow.",
-    "This is a " + sourceLabel + " packet prepared for debugging or build validation.",
+    "This is " + getIndefiniteArticle(sourceLabel) + " " + sourceLabel + " packet prepared for debugging or build validation.",
     "It may include workspace names, tab titles, URLs, User Journal notes, System Journal events, and Recovery Journal data.",
     "Review before sharing if workspace data is sensitive."
   ];
+}
+
+function getIndefiniteArticle(label) {
+  return /^[aeiou]/i.test(label || "") ? "an" : "a";
 }
 
 async function archiveWorkspace(workspace, reason) {
