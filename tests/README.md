@@ -285,6 +285,23 @@
 17. Cancel a confirmation prompt on a mapped action if practical.
 18. Wait at least 30 seconds and confirm action_no_result_observed appears, indicating no matching System Journal event was produced.
 
+## V0.2J patch 2 multi-step action diagnostics checklist
+
+1. Open Chrome Flow.
+2. Add at least two tabs to the workspace.
+3. Assign roles to those tabs.
+4. Click Create Chrome Tab Groups if no groups currently exist.
+5. Remove one Chrome group so Recovery Journal exposes Recreate Chrome Groups.
+6. Click Recreate Chrome Groups from Recovery Journal.
+7. Wait a few seconds, then click Refresh Diagnostics.
+8. Confirm diagnostics include action_started for Recreate Chrome Groups.
+9. Confirm diagnostics include action_intermediate for timeline_chrome_groups_recreate_requested.
+10. Confirm diagnostics include action_success only after chrome_tab_groups_created.
+11. Click Copy Diagnostic Packet.
+12. Confirm the packet schema is diagnostic-packet-v0.3.
+13. Confirm pendingActionTraces include intermediateEventTypes and terminalEventTypes when an action is still being watched.
+14. Confirm action_no_result_observed refers to no terminal System Journal event when a multi-step action does not complete.
+
 ## AI command contract checklist
 
 1. Confirm docs/AI_COMMAND_CONTRACT.md exists.
