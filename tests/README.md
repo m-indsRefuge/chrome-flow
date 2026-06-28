@@ -207,6 +207,29 @@
 19. Confirm Chrome Flow reports that no open tabs were found for that role.
 20. Confirm the timeline records the skipped focus attempt.
 
+## V0.2I Journal / System Timeline separation and Recovery View checklist
+
+1. Open Chrome Flow.
+2. Confirm the old Journal section is now User Journal.
+3. Confirm User Journal has a note tag field.
+4. Confirm User Journal has a related group dropdown.
+5. Add a user journal note with a tag and related group.
+6. Confirm the note appears in User Journal with metadata badges.
+7. Confirm the system records only a simple user_journal_added event in System Timeline.
+8. Confirm System Timeline appears as its own section.
+9. Confirm Recovery View appears as its own section.
+10. Remove a tab from workspace and provide a reason.
+11. Confirm the reason appears in System Timeline.
+12. Confirm the removed tab appears in Recovery View.
+13. Confirm Re-add to Workspace appears in Recovery View.
+14. Confirm Reopen URL appears in Recovery View.
+15. Confirm no system-generated removal note is added to User Journal.
+16. Close a browser tab from Chrome Flow and provide a reason.
+17. Confirm the closed tab appears in Recovery View with Reopen URL and Re-add to Workspace.
+18. Remove one Chrome group.
+19. Confirm Recovery View shows Recreate Chrome Groups for the group-removal event.
+20. Click a Recovery View restore action and confirm the system timeline records the recovery.
+
 ## AI command contract checklist
 
 1. Confirm docs/AI_COMMAND_CONTRACT.md exists.
