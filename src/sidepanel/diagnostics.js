@@ -137,19 +137,31 @@ async function startActionTrace(traceDefinition, clickContext) {
   const timelineLength = Array.isArray(workspace?.timeline) ? workspace.timeline.length : 0;
   const traceId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
+  const successTypes = traceDefinition.successTypes || [];
+  const skippedTypes = traceDefinition.skippedTypes || [];
+  const failedTypes = traceDefinition.failedTypes || [];
+  const intermediateTypes = traceDefinition.intermediateTypes || [];
 
   pendingActionTraces.set(traceId, {
     traceId: traceId,
     actionName: traceDefinition.actionName,
     label: traceDefinition.label,
-    successTypes: traceDefinition.successTypes || [],
-    skippedTypes: traceDefinition.skippedTypes || [],
-    failedTypes: traceDefinition.failedTypes || [],
-    allObservedTypes: [
-      ...(traceDefinition.successTypes || []),
-      ...(traceDefinition.skippedTypes || []),
-      ...(traceDefinition.failedTypes || [])
+    successTypes: successTypes,
+    skippedTypes: skippedTypes,
+    failedTypes: failedTypes,
+    intermediateTypes: intermediateTypes,
+    terminalTypes: [
+      ...successTypes,
+      ...skippedTypes,
+      ...failedTypes
     ],
+    allObservedTypes: [
+      ...intermediateTypes,
+      ...successTypes,
+      ...skippedTypes,
+      ...failedTypes
+    ],
+    observedIntermediateEventIds: [],
     clickContext: clickContext,
     startedAt: startedAt,
     startedAtMs: Date.now(),
@@ -161,7 +173,13 @@ async function startActionTrace(traceDefinition, clickContext) {
     actionName: traceDefinition.actionName,
     buttonId: clickContext.buttonId,
     buttonText: clickContext.buttonText,
-    timelineLength: timelineLength
+    timelineLength: timelineLength,
+    intermediateEventTypes: intermediateTypes,
+    terminalEventTypes: [
+      ...successTypes,
+      ...skippedTypes,
+      ...failedTypes
+    ]
   });
 
   scheduleActionTracePoll(traceId);
@@ -182,11 +200,18 @@ async function pollActionTrace(traceId) {
 
   const workspace = await getWorkspace();
   const timeline = Array.isArray(workspace?.timeline) ? workspace.timeline : [];
-  const observedEvent = findObservedActionEvent(trace, timeline);
+  const intermediateEvents = findNewIntermediateEvents(trace, timeline);
 
-  if (observedEvent) {
+  for (const intermediateEvent of intermediateEvents) {
+    trace.observedIntermediateEventIds.push(intermediateEvent.eventId || intermediateEvent.createdAt || intermediateEvent.type);
+    await recordActionIntermediate(trace, intermediateEvent);
+  }
+
+  const terminalEvent = findTerminalActionEvent(trace, timeline);
+
+  if (terminalEvent) {
     pendingActionTraces.delete(traceId);
-    await recordActionResult(trace, observedEvent, workspace);
+    await recordActionResult(trace, terminalEvent, workspace);
     await renderDiagnostics();
     return;
   }
@@ -195,14 +220,16 @@ async function pollActionTrace(traceId) {
 
   if (elapsedMs >= ACTION_TRACE_TIMEOUT_MS) {
     pendingActionTraces.delete(traceId);
-    await recordDiagnostic("warn", "action_no_result_observed", "No matching System Journal event was observed for: " + trace.label + ".", {
+    await recordDiagnostic("warn", "action_no_result_observed", "No terminal System Journal event was observed for: " + trace.label + ".", {
       traceId: trace.traceId,
       actionName: trace.actionName,
       buttonId: trace.clickContext.buttonId,
       buttonText: trace.clickContext.buttonText,
       waitedMs: elapsedMs,
-      expectedEventTypes: trace.allObservedTypes,
-      note: "This can happen if the user cancelled a confirmation/prompt, the action did not produce a system event, or the event type is not mapped yet."
+      intermediateEventTypes: trace.intermediateTypes,
+      terminalEventTypes: trace.terminalTypes,
+      observedIntermediateEventIds: trace.observedIntermediateEventIds,
+      note: "This can happen if the user cancelled a confirmation/prompt, the action did not produce a terminal system event, or the event type is not mapped yet."
     });
     await renderDiagnostics();
     return;
@@ -211,11 +238,32 @@ async function pollActionTrace(traceId) {
   scheduleActionTracePoll(traceId);
 }
 
-function findObservedActionEvent(trace, timeline) {
+function findNewIntermediateEvents(trace, timeline) {
+  if (!trace.intermediateTypes.length) {
+    return [];
+  }
+
+  return timeline
+    .slice(trace.timelineLength)
+    .filter((event) => {
+      if (!event || !trace.intermediateTypes.includes(event.type)) {
+        return false;
+      }
+
+      if (event.createdAt && Date.parse(event.createdAt) < Date.parse(trace.startedAt)) {
+        return false;
+      }
+
+      const eventKey = event.eventId || event.createdAt || event.type;
+      return !trace.observedIntermediateEventIds.includes(eventKey);
+    });
+}
+
+function findTerminalActionEvent(trace, timeline) {
   return timeline
     .slice(trace.timelineLength)
     .find((event) => {
-      if (!event || !trace.allObservedTypes.includes(event.type)) {
+      if (!event || !trace.terminalTypes.includes(event.type)) {
         return false;
       }
 
@@ -225,6 +273,16 @@ function findObservedActionEvent(trace, timeline) {
 
       return Date.parse(event.createdAt) >= Date.parse(trace.startedAt);
     });
+}
+
+async function recordActionIntermediate(trace, intermediateEvent) {
+  await recordDiagnostic("info", "action_intermediate", "Action intermediate event observed: " + trace.label + ".", {
+    traceId: trace.traceId,
+    actionName: trace.actionName,
+    buttonId: trace.clickContext.buttonId,
+    buttonText: trace.clickContext.buttonText,
+    observedEvent: createObservedEventSummary(intermediateEvent)
+  });
 }
 
 async function recordActionResult(trace, observedEvent, workspace) {
@@ -238,14 +296,19 @@ async function recordActionResult(trace, observedEvent, workspace) {
     actionName: trace.actionName,
     buttonId: trace.clickContext.buttonId,
     buttonText: trace.clickContext.buttonText,
-    observedEvent: {
-      eventId: observedEvent.eventId || "",
-      type: observedEvent.type || "unknown",
-      message: observedEvent.message || "",
-      createdAt: observedEvent.createdAt || ""
-    },
+    observedEvent: createObservedEventSummary(observedEvent),
+    observedIntermediateEventIds: trace.observedIntermediateEventIds,
     tabStatus: tabStatus
   });
+}
+
+function createObservedEventSummary(event) {
+  return {
+    eventId: event.eventId || "",
+    type: event.type || "unknown",
+    message: event.message || "",
+    createdAt: event.createdAt || ""
+  };
 }
 
 function getActionResultType(trace, observedEvent) {
@@ -329,19 +392,27 @@ function getActionTraceDefinition(clickContext) {
   }
 
   if (buttonText === "Recreate Chrome Groups") {
-    return createActionTraceDefinition("recreateChromeGroupsFromRecovery", "Recreate Chrome Groups", ["timeline_chrome_groups_recreate_requested", "chrome_tab_groups_created"], ["chrome_tab_grouping_skipped"], ["chrome_tab_grouping_failed"]);
+    return createActionTraceDefinition(
+      "recreateChromeGroupsFromRecovery",
+      "Recreate Chrome Groups",
+      ["chrome_tab_groups_created"],
+      ["chrome_tab_grouping_skipped"],
+      ["chrome_tab_grouping_failed"],
+      ["timeline_chrome_groups_recreate_requested"]
+    );
   }
 
   return null;
 }
 
-function createActionTraceDefinition(actionName, label, successTypes = [], skippedTypes = [], failedTypes = []) {
+function createActionTraceDefinition(actionName, label, successTypes = [], skippedTypes = [], failedTypes = [], intermediateTypes = []) {
   return {
     actionName: actionName,
     label: label,
     successTypes: successTypes,
     skippedTypes: skippedTypes,
-    failedTypes: failedTypes
+    failedTypes: failedTypes,
+    intermediateTypes: intermediateTypes
   };
 }
 
@@ -436,7 +507,7 @@ async function buildDiagnosticPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "diagnostic-packet-v0.2"
+      schema: "diagnostic-packet-v0.3"
     },
     workspace: {
       workspaceId: workspace?.workspaceId || "unknown",
@@ -454,6 +525,9 @@ async function buildDiagnosticPacket() {
       startedAt: trace.startedAt,
       buttonId: trace.clickContext.buttonId,
       buttonText: trace.clickContext.buttonText,
+      intermediateEventTypes: trace.intermediateTypes,
+      terminalEventTypes: trace.terminalTypes,
+      observedIntermediateEventIds: trace.observedIntermediateEventIds,
       expectedEventTypes: trace.allObservedTypes
     })),
     recentDiagnostics: recentDiagnostics,
@@ -464,7 +538,8 @@ async function buildDiagnosticPacket() {
       "This packet is generated locally by Chrome Flow.",
       "It does not intentionally include page content.",
       "Review before sharing if workspace names, tab titles, and URLs are sensitive.",
-      "Action result diagnostics link known button clicks to observed System Journal outcomes."
+      "Action result diagnostics link known button clicks to observed System Journal outcomes.",
+      "Multi-step diagnostics separate intermediate events from terminal success, skipped, or failed events."
     ]
   };
 
