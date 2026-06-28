@@ -15,11 +15,9 @@ import {
   DEFAULT_WORKSPACE_TYPE,
   WORKSPACE_TYPES,
   getWorkspaceRoleLabel,
-  getWorkspaceType,
   getWorkspaceTypeDescription,
   getWorkspaceTypeLabel,
-  getWorkspaceRoles,
-  isValidWorkspaceRole
+  getWorkspaceRoles
 } from "../core/workspace-role-sets.js";
 
 const workspaceNameInput = document.getElementById("workspaceName");
@@ -28,6 +26,9 @@ const workspaceTypeSelect = document.getElementById("workspaceType");
 const workspaceTypeDescription = document.getElementById("workspaceTypeDescription");
 const saveWorkspaceButton = document.getElementById("saveWorkspaceButton");
 const scanTabsButton = document.getElementById("scanTabsButton");
+const addActiveTabButton = document.getElementById("addActiveTabButton");
+const selectAllScannedTabsButton = document.getElementById("selectAllScannedTabsButton");
+const deselectAllScannedTabsButton = document.getElementById("deselectAllScannedTabsButton");
 const addSelectedTabsButton = document.getElementById("addSelectedTabsButton");
 const clearScannedTabsButton = document.getElementById("clearScannedTabsButton");
 const intakeStatus = document.getElementById("intakeStatus");
@@ -63,6 +64,9 @@ function attachEventHandlers() {
   saveWorkspaceButton?.addEventListener("click", saveWorkspaceDetails);
   workspaceTypeSelect?.addEventListener("change", updateWorkspaceType);
   scanTabsButton?.addEventListener("click", scanCurrentWindowTabs);
+  addActiveTabButton?.addEventListener("click", addActiveTabToWorkspace);
+  selectAllScannedTabsButton?.addEventListener("click", selectAllScannedTabs);
+  deselectAllScannedTabsButton?.addEventListener("click", deselectAllScannedTabs);
   addSelectedTabsButton?.addEventListener("click", addSelectedTabsToWorkspace);
   clearScannedTabsButton?.addEventListener("click", clearScannedTabs);
   openSearchTabButton?.addEventListener("click", openSearchTab);
@@ -92,6 +96,7 @@ function populateWorkspaceTypeSelect() {
 async function renderWorkspace() {
   const workspace = await getWorkspace();
   await ensureWorkspaceTabIds(workspace);
+  const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
 
   workspaceNameInput.value = workspace.name || "";
   workspaceAimInput.value = workspace.aim || "";
@@ -100,12 +105,10 @@ async function renderWorkspace() {
   renderWorkspaceTypeDescription(workspace);
   renderJournalRelatedRoleOptions(workspace);
   renderAvailableTabs(workspace);
-  renderWorkspaceTabs(workspace);
+  renderWorkspaceTabs(workspace, resolution.results);
   renderUserJournal(workspace);
   renderRecoveryJournal(workspace);
   renderSystemTimeline(workspace);
-
-  const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
   renderTabStatus(calculateStableTabStatus(workspace, resolution.results));
 }
 
@@ -158,6 +161,65 @@ async function scanCurrentWindowTabs() {
   await renderWorkspace();
 }
 
+async function addActiveTabToWorkspace() {
+  const activeTabs = await chrome.tabs.query({ active: true, currentWindow: true });
+  const activeTab = activeTabs[0];
+
+  if (!activeTab) {
+    await addTimelineEvent("active_tab_add_skipped", "No active browser tab was found to add to the workspace.");
+    setStatus("No active browser tab was found.");
+    return;
+  }
+
+  const tabSnapshot = createBrowserTabSnapshot(activeTab);
+  const workspace = await getWorkspace();
+  await ensureWorkspaceTabIds(workspace);
+
+  if (findExactWorkspaceTabMatch(workspace, tabSnapshot)) {
+    await addTimelineEvent("active_tab_add_skipped", "Active tab is already in the workspace: " + (tabSnapshot.title || createDisplayUrl(tabSnapshot.url || "")) + ".", {
+      tabId: tabSnapshot.id,
+      url: tabSnapshot.url
+    });
+    setStatus("Active tab is already in the workspace.");
+    return;
+  }
+
+  const sameUrlMatch = findSameUrlWorkspaceTabMatch(workspace, tabSnapshot);
+  const workspaceTab = createWorkspaceTab(tabSnapshot);
+  workspace.tabs.push(workspaceTab);
+  workspace.updatedAt = new Date().toISOString();
+  await saveWorkspace(workspace);
+  await addTimelineEvent("active_tab_added", "Added active tab to workspace: " + getTabName(workspaceTab) + ".", {
+    workspaceTabId: workspaceTab.workspaceTabId,
+    tabId: workspaceTab.tabId,
+    url: workspaceTab.url,
+    sameUrlDuplicate: Boolean(sameUrlMatch)
+  });
+  setStatus("Added active tab to workspace: " + getTabName(workspaceTab) + ".");
+  await renderWorkspace();
+}
+
+function selectAllScannedTabs() {
+  const checkboxes = Array.from(document.querySelectorAll(".available-tab-checkbox"))
+    .filter((checkbox) => !checkbox.disabled);
+
+  checkboxes.forEach((checkbox) => {
+    checkbox.checked = true;
+  });
+
+  setStatus("Selected " + checkboxes.length + " scanned tab(s).");
+}
+
+function deselectAllScannedTabs() {
+  const checkboxes = Array.from(document.querySelectorAll(".available-tab-checkbox"));
+
+  checkboxes.forEach((checkbox) => {
+    checkbox.checked = false;
+  });
+
+  setStatus("Deselected scanned tabs.");
+}
+
 function clearScannedTabs() {
   availableTabs = [];
   clearElement(availableTabsList);
@@ -196,14 +258,22 @@ function renderAvailableTabs(workspace) {
     card.appendChild(checkbox);
 
     const content = document.createElement("div");
+    content.className = "available-tab-content";
+
     const title = document.createElement("strong");
+    title.className = "available-tab-title";
     title.textContent = tab.title || "Untitled tab";
     content.appendChild(title);
 
     const url = document.createElement("span");
-    url.className = "tab-url";
+    url.className = "tab-url available-tab-url";
     url.textContent = createDisplayUrl(tab.url || "");
     content.appendChild(url);
+
+    const meta = document.createElement("span");
+    meta.className = "tab-meta";
+    meta.textContent = "Window " + tab.windowId + " | Tab " + tab.id;
+    content.appendChild(meta);
 
     if (exactMatch) {
       content.appendChild(createBadge("Already in workspace", "exact-instance-badge"));
@@ -290,7 +360,7 @@ async function openSearchTab() {
   setStatus("Opened search tab for: " + query + ".");
 }
 
-function renderWorkspaceTabs(workspace) {
+function renderWorkspaceTabs(workspace, resolutionResults = []) {
   if (!tabsList) {
     return;
   }
@@ -326,14 +396,15 @@ function renderWorkspaceTabs(workspace) {
     section.appendChild(header);
 
     group.tabs.forEach((tab) => {
-      section.appendChild(createWorkspaceTabCard(workspace, tab));
+      const resolutionResult = resolutionResults.find((result) => result.workspaceTab.workspaceTabId === tab.workspaceTabId);
+      section.appendChild(createWorkspaceTabCard(workspace, tab, resolutionResult));
     });
 
     tabsList.appendChild(section);
   });
 }
 
-function createWorkspaceTabCard(workspace, tab) {
+function createWorkspaceTabCard(workspace, tab, resolutionResult) {
   const card = document.createElement("article");
   card.className = "tab-card";
   card.dataset.workspaceTabId = tab.workspaceTabId || "";
@@ -352,9 +423,10 @@ function createWorkspaceTabCard(workspace, tab) {
   url.textContent = tab.displayUrl || createDisplayUrl(tab.url || "");
   card.appendChild(url);
 
-  const recordBadge = createBadge("Record " + (tab.workspaceTabId || "unknown").slice(0, 8), "workspace-tab-id-badge");
-  recordBadge.title = "Chrome Flow workspaceTabId: " + (tab.workspaceTabId || "missing");
-  card.appendChild(recordBadge);
+  const badges = document.createElement("div");
+  badges.className = "tab-state-badges";
+  createWorkspaceTabStateBadges(tab, resolutionResult).forEach((badge) => badges.appendChild(badge));
+  card.appendChild(badges);
 
   const aliasLabel = document.createElement("label");
   aliasLabel.textContent = "Alias";
@@ -384,6 +456,37 @@ function createWorkspaceTabCard(workspace, tab) {
   card.appendChild(actions);
 
   return card;
+}
+
+function createWorkspaceTabStateBadges(tab, resolutionResult) {
+  const badges = [];
+  const role = tab.role || "unassigned";
+
+  badges.push(createBadge("Record " + (tab.workspaceTabId || "unknown").slice(0, 8), "workspace-tab-id-badge"));
+
+  if (resolutionResult?.liveTab) {
+    badges.push(createBadge("Open", "browser-status-badge open"));
+
+    if (isValidChromeGroupId(resolutionResult.liveTab.groupId)) {
+      badges.push(createBadge("Grouped", "group-status-badge grouped"));
+    } else {
+      badges.push(createBadge("Ungrouped", "group-status-badge ungrouped"));
+    }
+  } else if (resolutionResult?.matchStatus?.startsWith("ambiguous")) {
+    badges.push(createBadge("Ambiguous", "browser-status-badge ambiguous"));
+  } else {
+    badges.push(createBadge("Missing", "browser-status-badge closed"));
+  }
+
+  if (role === "unassigned") {
+    badges.push(createBadge("Unassigned", "role-status-badge unassigned"));
+  }
+
+  if (resolutionResult?.matchStatus) {
+    badges.push(createBadge(resolutionResult.matchStatus, "match-status-badge"));
+  }
+
+  return badges;
 }
 
 function populateRoleSelect(select, workspace, selectedRoleId) {
@@ -1073,6 +1176,7 @@ async function readdWorkspaceTabFromTimeline(eventId) {
   const restoredTabRecord = existing || createWorkspaceTabFromSnapshot(tabSnapshot);
   let browserTabReopened = false;
   let browserTabAlreadyOpen = false;
+  let browserTabReused = false;
   let restoreMode = wasClosedTabEvent ? "readd_and_reopen_closed_tab" : "readd_workspace_record";
 
   if (wasClosedTabEvent) {
@@ -1086,15 +1190,28 @@ async function readdWorkspaceTabFromTimeline(eventId) {
         lastOpenedAt: new Date().toISOString()
       });
       restoreMode = existing ? "existing_record_already_open" : restoreMode;
-    } else if (tabSnapshot.url) {
-      const createdTab = await chrome.tabs.create({ url: tabSnapshot.url, active: true });
-      const browserTab = createBrowserTabSnapshotWithFallback(createdTab, tabSnapshot);
-      updateWorkspaceTabFromBrowserTab(restoredTabRecord, browserTab, {
-        isOpen: true,
-        lastSeenAt: new Date().toISOString(),
-        lastOpenedAt: new Date().toISOString()
-      });
-      browserTabReopened = true;
+    } else {
+      const reopenedTab = await findPreviouslyReopenedTabForRecovery(workspace, eventId, tabSnapshot);
+
+      if (reopenedTab.liveTab) {
+        browserTabReused = true;
+        updateWorkspaceTabFromBrowserTab(restoredTabRecord, reopenedTab.liveTab, {
+          isOpen: true,
+          lastSeenAt: new Date().toISOString(),
+          lastOpenedAt: new Date().toISOString(),
+          lastMatchStatus: reopenedTab.matchStatus
+        });
+        restoreMode = "readd_reused_reopened_url";
+      } else if (tabSnapshot.url) {
+        const createdTab = await chrome.tabs.create({ url: tabSnapshot.url, active: true });
+        const browserTab = createBrowserTabSnapshotWithFallback(createdTab, tabSnapshot);
+        updateWorkspaceTabFromBrowserTab(restoredTabRecord, browserTab, {
+          isOpen: true,
+          lastSeenAt: new Date().toISOString(),
+          lastOpenedAt: new Date().toISOString()
+        });
+        browserTabReopened = true;
+      }
     }
   } else {
     const liveTab = await resolveSingleWorkspaceTabForAction(restoredTabRecord);
@@ -1125,6 +1242,7 @@ async function readdWorkspaceTabFromTimeline(eventId) {
     existing: Boolean(existing),
     browserTabReopened,
     browserTabAlreadyOpen,
+    browserTabReused,
     wasClosedTabEvent
   });
 
@@ -1134,11 +1252,37 @@ async function readdWorkspaceTabFromTimeline(eventId) {
     workspaceTabId: restoredTabRecord.workspaceTabId,
     browserTabReopened,
     browserTabAlreadyOpen,
+    browserTabReused,
     restoredExistingWorkspaceRecord: Boolean(existing),
     restoreMode
   });
   setStatus(message);
   await renderWorkspace();
+}
+
+async function findPreviouslyReopenedTabForRecovery(workspace, eventId, tabSnapshot) {
+  const reopenedEvents = workspace.timeline
+    .filter((item) => item.type === "timeline_url_reopened" && item.recoverySourceEventId === eventId && Number.isInteger(item.tabId))
+    .reverse();
+  const browserTabs = await getAllBrowserTabs();
+
+  for (const reopenedEvent of reopenedEvents) {
+    const liveTab = browserTabs.find((tab) => tab.id === reopenedEvent.tabId);
+
+    if (liveTab && (!tabSnapshot.url || liveTab.url === tabSnapshot.url)) {
+      return {
+        liveTab,
+        matchStatus: "reused_reopened_url_tab",
+        candidateCount: 1
+      };
+    }
+  }
+
+  return {
+    liveTab: null,
+    matchStatus: "no_reopened_url_tab_found",
+    candidateCount: reopenedEvents.length
+  };
 }
 
 async function recreateChromeGroupsFromTimeline(eventId) {
@@ -1150,6 +1294,10 @@ async function recreateChromeGroupsFromTimeline(eventId) {
 
 function buildRecoveryReaddMessage(tabSnapshot, result) {
   const name = snapshotName(tabSnapshot);
+
+  if (result.browserTabReused) {
+    return "Re-added " + name + " to workspace and reused the browser tab already reopened from Recovery View.";
+  }
 
   if (result.browserTabReopened) {
     return "Re-added " + name + " to workspace and reopened the browser tab from Recovery View.";
