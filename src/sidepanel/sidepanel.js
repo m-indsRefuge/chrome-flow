@@ -308,8 +308,21 @@ function renderTabs() {
 
     const groupHeader = document.createElement("div");
     groupHeader.className = "tab-role-group-header";
-    appendTextHeading(groupHeader, "h3", group.label);
-    appendTextSpan(groupHeader, "tab-role-group-count", group.tabs.length + " tab" + (group.tabs.length === 1 ? "" : "s"));
+
+    const groupHeading = document.createElement("div");
+    groupHeading.className = "tab-role-group-heading";
+    appendTextHeading(groupHeading, "h3", group.label);
+    appendTextSpan(groupHeading, "tab-role-group-count", group.tabs.length + " tab" + (group.tabs.length === 1 ? "" : "s"));
+    groupHeader.appendChild(groupHeading);
+
+    const removeChromeGroupButton = document.createElement("button");
+    removeChromeGroupButton.type = "button";
+    removeChromeGroupButton.className = "remove-chrome-group-button secondary-button";
+    removeChromeGroupButton.dataset.roleId = group.roleId;
+    removeChromeGroupButton.dataset.roleLabel = group.label;
+    removeChromeGroupButton.textContent = "Remove Chrome Group";
+    groupHeader.appendChild(removeChromeGroupButton);
+
     groupSection.appendChild(groupHeader);
 
     group.tabs.forEach((tab) => {
@@ -355,6 +368,15 @@ function attachWorkspaceTabHandlers() {
       await addTimelineEvent("tab_role_updated", "Assigned " + getTabName(tab) + " to " + roleLabel + " subgroup.");
       workspace = await getWorkspace();
       renderWorkspace();
+    });
+  });
+
+  document.querySelectorAll(".remove-chrome-group-button").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      await removeChromeTabGroupForRole(
+        event.currentTarget.dataset.roleId,
+        event.currentTarget.dataset.roleLabel
+      );
     });
   });
 
@@ -607,36 +629,53 @@ async function removeChromeTabGroupsForWorkspace() {
     return;
   }
 
-  const workspacePrefix = getWorkspaceGroupPrefix();
-  const confirmed = window.confirm("Remove native Chrome tab groups for " + workspacePrefix + "? Browser tabs will stay open and Chrome Flow workspace records will be kept.");
+  const workspaceToken = getWorkspaceGroupToken();
+  const confirmed = window.confirm("Remove all native Chrome tab groups for this workspace? Browser tabs will stay open and Chrome Flow workspace records will be kept.");
 
   if (!confirmed) {
     return;
   }
 
   try {
-    const chromeGroups = await chrome.tabGroups.query({});
-    const workspaceGroups = chromeGroups.filter((group) => isWorkspaceChromeGroupTitle(group.title));
+    const allTabs = await getAllBrowserTabs();
+    const liveWorkspaceTabs = getLiveWorkspaceTabs(allTabs);
+    const workspaceGroupIds = new Set(
+      liveWorkspaceTabs
+        .map((item) => item.liveTab.groupId)
+        .filter(isValidChromeGroupId)
+    );
 
-    if (!workspaceGroups.length) {
-      await addTimelineEvent("chrome_tab_groups_remove_skipped", "No native Chrome tab groups were found for workspace prefix: " + workspacePrefix + ".");
+    if (!workspaceGroupIds.size) {
+      await addTimelineEvent("chrome_tab_groups_remove_skipped", "No native Chrome tab groups were found for workspace token: " + workspaceToken + ".");
       workspace = await getWorkspace();
-      setIntakeStatus("No Chrome tab groups found for " + workspacePrefix + ".");
+      setIntakeStatus("No Chrome tab groups found for this workspace.");
       renderTimeline();
       return;
     }
 
-    const workspaceGroupIds = new Set(workspaceGroups.map((group) => group.id));
-    const allTabs = await getAllBrowserTabs();
+    const chromeGroups = await chrome.tabGroups.query({});
+    const workspaceGroups = chromeGroups.filter((group) =>
+      workspaceGroupIds.has(group.id) && isWorkspaceChromeGroupTitle(group.title)
+    );
+
+    if (!workspaceGroups.length) {
+      await addTimelineEvent("chrome_tab_groups_remove_skipped", "No matching Chrome Flow tab groups were found for workspace token: " + workspaceToken + ".");
+      workspace = await getWorkspace();
+      setIntakeStatus("No matching Chrome Flow tab groups found for this workspace.");
+      renderTimeline();
+      return;
+    }
+
+    const confirmedGroupIds = new Set(workspaceGroups.map((group) => group.id));
     const tabIdsToUngroup = allTabs
-      .filter((tab) => workspaceGroupIds.has(tab.groupId))
+      .filter((tab) => confirmedGroupIds.has(tab.groupId))
       .map((tab) => tab.id)
       .filter((tabId) => Number.isInteger(tabId));
 
     if (!tabIdsToUngroup.length) {
-      await addTimelineEvent("chrome_tab_groups_remove_skipped", "Found " + workspaceGroups.length + " Chrome tab group(s) for " + workspacePrefix + ", but no tabs were available to ungroup.");
+      await addTimelineEvent("chrome_tab_groups_remove_skipped", "Found " + workspaceGroups.length + " Chrome tab group(s), but no tabs were available to ungroup.");
       workspace = await getWorkspace();
-      setIntakeStatus("Found Chrome groups for " + workspacePrefix + ", but no tabs were available to ungroup.");
+      setIntakeStatus("Found Chrome groups, but no tabs were available to ungroup.");
       renderTimeline();
       return;
     }
@@ -644,11 +683,11 @@ async function removeChromeTabGroupsForWorkspace() {
     await chrome.tabs.ungroup(tabIdsToUngroup);
     await addTimelineEvent(
       "chrome_tab_groups_removed",
-      "Removed " + workspaceGroups.length + " native Chrome tab group(s) for " + workspacePrefix + ". Kept " + tabIdsToUngroup.length + " browser tab(s) open."
+      "Removed " + workspaceGroups.length + " native Chrome tab group(s) for this workspace. Kept " + tabIdsToUngroup.length + " browser tab(s) open."
     );
 
     workspace = await getWorkspace();
-    setIntakeStatus("Removed " + workspaceGroups.length + " Chrome tab group(s) for " + workspacePrefix + ". Kept " + tabIdsToUngroup.length + " browser tab(s) open.");
+    setIntakeStatus("Removed " + workspaceGroups.length + " Chrome tab group(s) for this workspace. Kept " + tabIdsToUngroup.length + " browser tab(s) open.");
     renderWorkspace();
     renderAvailableTabs();
   } catch (error) {
@@ -656,6 +695,83 @@ async function removeChromeTabGroupsForWorkspace() {
     await addTimelineEvent("chrome_tab_groups_remove_failed", "Chrome tab group removal failed: " + (error.message || "Unknown error") + ".");
     workspace = await getWorkspace();
     setIntakeStatus("Chrome tab group removal failed. Reload the extension and check permission access.");
+    renderTimeline();
+  }
+}
+
+async function removeChromeTabGroupForRole(roleId, roleLabel) {
+  if (!chrome.tabGroups || !chrome.tabs.ungroup) {
+    setIntakeStatus("Chrome tab ungrouping is not available yet. Reload the extension and check permission access.");
+    return;
+  }
+
+  const safeRoleId = roleId || "unassigned";
+  const safeRoleLabel = roleLabel || getWorkspaceRoleLabel(workspace.workspaceType, safeRoleId);
+  const confirmed = window.confirm("Remove the native Chrome tab group for " + safeRoleLabel + "? Browser tabs will stay open and Chrome Flow workspace records will be kept.");
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const allTabs = await getAllBrowserTabs();
+    const liveRoleTabs = getLiveWorkspaceTabsForRole(safeRoleId, allTabs);
+    const roleGroupIds = new Set(
+      liveRoleTabs
+        .map((item) => item.liveTab.groupId)
+        .filter(isValidChromeGroupId)
+    );
+
+    if (!roleGroupIds.size) {
+      await addTimelineEvent("chrome_tab_group_remove_skipped", "No native Chrome tab group was found for role: " + safeRoleLabel + ".");
+      workspace = await getWorkspace();
+      setIntakeStatus("No Chrome tab group found for " + safeRoleLabel + ".");
+      renderTimeline();
+      return;
+    }
+
+    const chromeGroups = await chrome.tabGroups.query({});
+    const roleGroups = chromeGroups.filter((group) =>
+      roleGroupIds.has(group.id) && isChromeGroupTitleForRole(group.title, safeRoleLabel)
+    );
+
+    if (!roleGroups.length) {
+      await addTimelineEvent("chrome_tab_group_remove_skipped", "No matching Chrome Flow tab group was found for role: " + safeRoleLabel + ".");
+      workspace = await getWorkspace();
+      setIntakeStatus("No matching Chrome Flow tab group found for " + safeRoleLabel + ".");
+      renderTimeline();
+      return;
+    }
+
+    const confirmedGroupIds = new Set(roleGroups.map((group) => group.id));
+    const tabIdsToUngroup = allTabs
+      .filter((tab) => confirmedGroupIds.has(tab.groupId))
+      .map((tab) => tab.id)
+      .filter((tabId) => Number.isInteger(tabId));
+
+    if (!tabIdsToUngroup.length) {
+      await addTimelineEvent("chrome_tab_group_remove_skipped", "Found a Chrome tab group for " + safeRoleLabel + ", but no tabs were available to ungroup.");
+      workspace = await getWorkspace();
+      setIntakeStatus("Found a Chrome group for " + safeRoleLabel + ", but no tabs were available to ungroup.");
+      renderTimeline();
+      return;
+    }
+
+    await chrome.tabs.ungroup(tabIdsToUngroup);
+    await addTimelineEvent(
+      "chrome_tab_group_removed",
+      "Removed native Chrome tab group for " + safeRoleLabel + ". Kept " + tabIdsToUngroup.length + " browser tab(s) open."
+    );
+
+    workspace = await getWorkspace();
+    setIntakeStatus("Removed Chrome tab group for " + safeRoleLabel + ". Kept " + tabIdsToUngroup.length + " browser tab(s) open.");
+    renderWorkspace();
+    renderAvailableTabs();
+  } catch (error) {
+    console.error("Chrome role tab ungrouping failed:", error);
+    await addTimelineEvent("chrome_tab_group_remove_failed", "Chrome tab group removal failed for " + safeRoleLabel + ": " + (error.message || "Unknown error") + ".");
+    workspace = await getWorkspace();
+    setIntakeStatus("Chrome tab group removal failed for " + safeRoleLabel + ".");
     renderTimeline();
   }
 }
@@ -978,6 +1094,25 @@ async function findLiveBrowserTabForWorkspaceTab(workspaceTab) {
   return findCurrentTabForWorkspaceTab(workspaceTab, allTabs);
 }
 
+function getLiveWorkspaceTabs(allTabs) {
+  return workspace.tabs
+    .map((workspaceTab) => ({
+      workspaceTab: workspaceTab,
+      liveTab: findCurrentTabForWorkspaceTab(workspaceTab, allTabs)
+    }))
+    .filter((item) => Boolean(item.liveTab));
+}
+
+function getLiveWorkspaceTabsForRole(roleId, allTabs) {
+  return getLiveWorkspaceTabs(allTabs).filter((item) =>
+    (item.workspaceTab.role || "unassigned") === roleId
+  );
+}
+
+function isValidChromeGroupId(groupId) {
+  return Number.isInteger(groupId) && groupId >= 0;
+}
+
 function findWorkspaceTabByKey(tabKey) {
   return workspace.tabs.find((item) => item.tabKey === tabKey);
 }
@@ -1078,7 +1213,44 @@ function getWorkspaceGroupPrefix() {
   return rawName.slice(0, 25) + "...";
 }
 
+function getWorkspaceGroupToken() {
+  const rawName = (workspace.name || "").trim();
+
+  if (!rawName) {
+    return "CF";
+  }
+
+  const words = rawName.split(/\s+/).filter(Boolean);
+  const initials = words
+    .map((word) => word.replace(/[^a-zA-Z0-9]/g, ""))
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+
+  if (initials) {
+    return initials.slice(0, 4);
+  }
+
+  const compactName = rawName.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  return compactName ? compactName.slice(0, 4) : "CF";
+}
+
 function createChromeGroupTitle(roleLabel) {
+  const role = roleLabel || "Unassigned";
+  const suffix = " · " + getWorkspaceGroupToken();
+  const maxLength = 32;
+  const availableRoleLength = maxLength - suffix.length;
+
+  if (availableRoleLength <= 3) {
+    return (role + suffix).slice(0, maxLength - 3) + "...";
+  }
+
+  const trimmedRole = role.length <= availableRoleLength ? role : role.slice(0, availableRoleLength - 3) + "...";
+  return trimmedRole + suffix;
+}
+
+function createLegacyChromeGroupTitle(roleLabel) {
   const prefix = getWorkspaceGroupPrefix();
   const role = roleLabel || "Unassigned";
   const separator = ": ";
@@ -1094,8 +1266,18 @@ function createChromeGroupTitle(roleLabel) {
 }
 
 function isWorkspaceChromeGroupTitle(groupTitle) {
+  const suffix = " · " + getWorkspaceGroupToken();
   const prefix = getWorkspaceGroupPrefix();
-  return typeof groupTitle === "string" && groupTitle.startsWith(prefix + ": ");
+
+  return typeof groupTitle === "string" && (
+    groupTitle.endsWith(suffix) ||
+    groupTitle.startsWith(prefix + ": ")
+  );
+}
+
+function isChromeGroupTitleForRole(groupTitle, roleLabel) {
+  return groupTitle === createChromeGroupTitle(roleLabel) ||
+    groupTitle === createLegacyChromeGroupTitle(roleLabel);
 }
 
 function promptForActionReason(actionLabel, tabName) {
