@@ -1,0 +1,61 @@
+.advanced-tab-controls-section {
+  margin-bottom: 20px;
+}
+
+.advanced-tab-actions-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.advanced-tab-actions-grid button {
+  margin-bottom: 0;
+}
+
+.duplicate-url-review-panel {
+  margin-top: 12px;
+  padding: 10px;
+  border: 1px solid #e1e1e1;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.duplicate-url-card {
+  padding: 10px;
+  margin-top: 10px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #ffffff;
+}
+
+.duplicate-url-card h4 {
+  margin: 0 0 8px 0;
+  font-size: 13px;
+  word-break: break-all;
+}
+
+.duplicate-url-row {
+  padding: 8px;
+  margin-top: 8px;
+  border: 1px dashed #ccc;
+  border-radius: 6px;
+  background: #fafafa;
+}
+
+.duplicate-url-row p {
+  margin: 0 0 8px 0;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.duplicate-url-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.duplicate-url-actions button {
+  margin-bottom: 0;
+  font-size: 12px;
+}
