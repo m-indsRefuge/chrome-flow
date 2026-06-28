@@ -1,10 +1,10 @@
 # Chrome Flow AI Command Contract
 
-Status: Draft v0.1
+Status: Draft v0.2
 
 This document defines how a future AI layer may understand, propose, and request Chrome Flow actions.
 
-The current Chrome Flow product remains deterministic and user-controlled. AI providers, local models, adapters, transformers, or browser agents must attach above this control surface. They must not bypass Chrome Flow state, Chrome permission boundaries, confirmation gates, timeline records, or recovery requirements.
+The current Chrome Flow product remains deterministic and user-controlled. AI providers, local models, adapters, transformers, or browser agents must attach above this control surface. They must not bypass Chrome Flow state, Chrome permission boundaries, confirmation gates, timeline records, recovery requirements, or user-authored journal boundaries.
 
 ## Core Rule
 
@@ -18,32 +18,67 @@ User or AI suggestion
 → permission / confirmation gate
 → deterministic Chrome Flow function
 → storage update
-→ timeline evidence
+→ system timeline evidence
 → recovery path where required
+```
+
+## Record Surfaces
+
+### User Journal
+
+The User Journal is for human-authored notes, reminders, research thoughts, and organizational notes.
+
+The AI layer may later help summarize or filter the User Journal, but it must not mix system-generated operational events into the User Journal.
+
+User Journal entries may include:
+
+```text
+text
+tag
+relatedRoleId
+relatedRoleLabel
+createdAt
+```
+
+### System Timeline
+
+The System Timeline is the operational audit trail. It records what Chrome Flow did, including browser actions, workspace actions, status refreshes, role changes, destructive actions, and recovery actions.
+
+### Recovery View
+
+Recovery View is a filtered view derived from System Timeline events that include `recoveryActions`.
+
+The future AI layer may answer questions such as:
+
+```text
+Show me all recoverable tab closures.
+Show me all removed workspace tabs.
+Show me all Chrome group removals that can be recreated.
 ```
 
 ## Authority Levels
 
 ### read_only
 
-The command reads Chrome Flow state or browser state. It does not change browser tabs, Chrome groups, workspace records, journal, or timeline unless explicitly defined as a status-refresh event.
+The command reads Chrome Flow state or browser state. It does not change browser tabs, Chrome groups, workspace records, User Journal, or System Timeline unless explicitly defined as a status-refresh event.
 
 Examples:
 
 - Get workspace summary
 - Get tab status
 - Inspect role distribution
+- List recoverable events
 
 ### soft_write
 
-The command writes to Chrome Flow workspace state but does not close browser tabs or alter destructive browser state.
+The command writes to Chrome Flow workspace state or the User Journal but does not close browser tabs or alter destructive browser state.
 
 Examples:
 
 - Save workspace name
 - Save workspace aim
 - Assign tab role
-- Add journal entry
+- Add user journal entry
 - Add selected tabs to workspace
 
 ### browser_organization
@@ -57,6 +92,7 @@ Examples:
 - Focus role group
 - Remove one Chrome group
 - Remove all current-workspace Chrome groups
+- Recreate Chrome groups from Recovery View
 
 ### destructive_browser
 
@@ -81,8 +117,8 @@ preconditions
 requires_user_confirmation
 requires_reason
 writes_workspace_storage
-writes_journal
-writes_timeline
+writes_user_journal
+writes_system_timeline
 affects_browser_tabs
 affects_chrome_groups
 closes_browser_tabs
@@ -101,17 +137,15 @@ Authority level: read_only
 
 Inputs: none
 
-Preconditions: Chrome tabs permission available.
-
 Requires user confirmation: no
 
 Requires reason: no
 
 Writes workspace storage: no
 
-Writes journal: no
+Writes user journal: no
 
-Writes timeline: only when the user explicitly clicks Refresh Tab Status.
+Writes system timeline: only when the user explicitly clicks Refresh Tab Status.
 
 Affects browser tabs: no
 
@@ -132,6 +166,65 @@ Ungrouped tabs
 Unassigned tabs
 ```
 
+### workspace.addUserJournalEntry
+
+Purpose: Add a human-authored note to the User Journal.
+
+Authority level: soft_write
+
+Inputs:
+
+```text
+text
+tag
+relatedRoleId
+relatedRoleLabel
+```
+
+Requires user confirmation: no for current deterministic UI action.
+
+Requires reason: no
+
+Writes workspace storage: yes
+
+Writes user journal: yes
+
+Writes system timeline: yes, as a simple user_journal_added event.
+
+Affects browser tabs: no
+
+Affects Chrome groups: no
+
+Closes browser tabs: no
+
+Recovery available: not required
+
+### workspace.listRecoverableEvents
+
+Purpose: Show System Timeline events that expose recovery actions.
+
+Authority level: read_only
+
+Inputs: optional filters such as event type or recovery action type.
+
+Requires user confirmation: no
+
+Requires reason: no
+
+Writes workspace storage: no
+
+Writes user journal: no
+
+Writes system timeline: no
+
+Affects browser tabs: no
+
+Affects Chrome groups: no
+
+Closes browser tabs: no
+
+Recovery available: not required
+
 ### workspace.focusTab
 
 Purpose: Focus a specific open browser tab from its workspace record.
@@ -144,17 +237,15 @@ Inputs:
 tabKey
 ```
 
-Preconditions: The workspace tab must exist and a live browser tab match must be found.
-
 Requires user confirmation: no
 
 Requires reason: no
 
 Writes workspace storage: yes, updates live tab metadata when needed.
 
-Writes journal: no
+Writes user journal: no
 
-Writes timeline: yes
+Writes system timeline: yes
 
 Affects browser tabs: yes, focuses window/tab.
 
@@ -177,17 +268,15 @@ roleId
 roleLabel
 ```
 
-Preconditions: At least one live workspace tab must exist for the role.
-
 Requires user confirmation: no
 
 Requires reason: no
 
 Writes workspace storage: no
 
-Writes journal: no
+Writes user journal: no
 
-Writes timeline: yes
+Writes system timeline: yes
 
 Affects browser tabs: yes, focuses window/tab.
 
@@ -205,17 +294,15 @@ Authority level: browser_organization
 
 Inputs: none
 
-Preconditions: Workspace tabs exist; live browser tabs can be found; tabGroups permission is available.
-
 Requires user confirmation: no for current deterministic UI action.
 
 Requires reason: no
 
 Writes workspace storage: yes, refreshes tab metadata after grouping.
 
-Writes journal: no
+Writes user journal: no
 
-Writes timeline: yes
+Writes system timeline: yes
 
 Affects browser tabs: yes, groups tabs.
 
@@ -223,7 +310,7 @@ Affects Chrome groups: yes
 
 Closes browser tabs: no
 
-Recovery available: native ungroup actions are available.
+Recovery available: native ungroup actions are available; group-removal events can expose Recreate Chrome Groups.
 
 ### workspace.removeChromeGroup
 
@@ -238,17 +325,15 @@ roleId
 roleLabel
 ```
 
-Preconditions: Matching live workspace tabs must exist; matching native Chrome group must exist.
-
 Requires user confirmation: yes
 
 Requires reason: no
 
 Writes workspace storage: no
 
-Writes journal: no
+Writes user journal: no
 
-Writes timeline: yes
+Writes system timeline: yes, with recoveryActions.canRecreateChromeGroups.
 
 Affects browser tabs: yes, ungroups tabs while keeping them open.
 
@@ -256,7 +341,7 @@ Affects Chrome groups: yes
 
 Closes browser tabs: no
 
-Recovery available: Create Chrome Tab Groups can recreate the grouping.
+Recovery available: yes, Recreate Chrome Groups.
 
 ### workspace.removeAllChromeGroups
 
@@ -266,17 +351,15 @@ Authority level: browser_organization
 
 Inputs: none
 
-Preconditions: Matching live workspace tabs and native Chrome groups must exist.
-
 Requires user confirmation: yes
 
 Requires reason: no
 
 Writes workspace storage: no
 
-Writes journal: no
+Writes user journal: no
 
-Writes timeline: yes
+Writes system timeline: yes, with recoveryActions.canRecreateChromeGroups.
 
 Affects browser tabs: yes, ungroups tabs while keeping them open.
 
@@ -284,7 +367,7 @@ Affects Chrome groups: yes
 
 Closes browser tabs: no
 
-Recovery available: Create Chrome Tab Groups can recreate the grouping.
+Recovery available: yes, Recreate Chrome Groups.
 
 ### workspace.removeTabFromWorkspace
 
@@ -299,17 +382,15 @@ tabKey
 reason
 ```
 
-Preconditions: Workspace tab exists.
-
 Requires user confirmation: yes
 
 Requires reason: yes
 
 Writes workspace storage: yes
 
-Writes journal: yes
+Writes user journal: no
 
-Writes timeline: yes, with tab snapshot and recovery actions.
+Writes system timeline: yes, with tab snapshot and recovery actions.
 
 Affects browser tabs: no
 
@@ -317,7 +398,7 @@ Affects Chrome groups: indirectly no
 
 Closes browser tabs: no
 
-Recovery available: yes, Re-add to Workspace from timeline.
+Recovery available: yes, Re-add to Workspace and Reopen URL from Recovery View.
 
 ### workspace.closeBrowserTabAndRemoveFromWorkspace
 
@@ -332,17 +413,15 @@ tabKey
 reason
 ```
 
-Preconditions: Workspace tab exists; matching live browser tab exists.
-
 Requires user confirmation: yes
 
 Requires reason: yes
 
 Writes workspace storage: yes
 
-Writes journal: yes
+Writes user journal: no
 
-Writes timeline: yes, with tab snapshot and recovery actions.
+Writes system timeline: yes, with tab snapshot and recovery actions.
 
 Affects browser tabs: yes
 
@@ -350,11 +429,11 @@ Affects Chrome groups: indirectly yes, because Chrome may update or remove nativ
 
 Closes browser tabs: yes
 
-Recovery available: yes, Reopen URL and Re-add to Workspace from timeline.
+Recovery available: yes, Reopen URL and Re-add to Workspace from Recovery View.
 
-### workspace.reopenUrlFromTimeline
+### workspace.reopenUrlFromRecovery
 
-Purpose: Reopen a saved URL from a structured timeline event.
+Purpose: Reopen a saved URL from a recoverable System Timeline event.
 
 Authority level: browser_organization
 
@@ -364,17 +443,15 @@ Inputs:
 eventId
 ```
 
-Preconditions: Timeline event must contain a tab snapshot with URL.
-
 Requires user confirmation: no for current deterministic UI action.
 
 Requires reason: no
 
 Writes workspace storage: yes if a matching workspace tab already exists and metadata is refreshed.
 
-Writes journal: no
+Writes user journal: no
 
-Writes timeline: yes
+Writes system timeline: yes
 
 Affects browser tabs: yes, opens a browser tab.
 
@@ -384,9 +461,9 @@ Closes browser tabs: no
 
 Recovery available: not required
 
-### workspace.readdTabFromTimeline
+### workspace.readdTabFromRecovery
 
-Purpose: Restore a removed workspace tab record from a timeline snapshot.
+Purpose: Restore a removed workspace tab record from a recoverable System Timeline event.
 
 Authority level: soft_write
 
@@ -396,17 +473,15 @@ Inputs:
 eventId
 ```
 
-Preconditions: Timeline event must contain a tab snapshot.
-
 Requires user confirmation: no for current deterministic UI action.
 
 Requires reason: no
 
 Writes workspace storage: yes
 
-Writes journal: no
+Writes user journal: no
 
-Writes timeline: yes
+Writes system timeline: yes
 
 Affects browser tabs: no
 
@@ -425,7 +500,8 @@ The future AI layer must not:
 - Close tabs without explicit user confirmation.
 - Remove workspace records without explicit user confirmation.
 - Bypass reason capture for destructive actions.
-- Bypass timeline evidence for state-changing actions.
+- Write system-generated events into the User Journal.
+- Bypass System Timeline evidence for state-changing actions.
 - Treat suggestions as executed actions.
 
 The future AI layer may:
@@ -434,39 +510,10 @@ The future AI layer may:
 - Suggest tab roles.
 - Suggest grouping or cleanup actions.
 - Identify missing or ungrouped tabs.
+- Summarize the User Journal separately from the System Timeline.
+- List recoverable events.
 - Draft a plan for browser organization.
 - Prepare command objects for user approval.
-
-## Command Object Shape Draft
-
-```json
-{
-  "command": "workspace.focusGroup",
-  "authority_level": "browser_organization",
-  "inputs": {
-    "roleId": "source",
-    "roleLabel": "Source"
-  },
-  "requires_user_confirmation": false,
-  "user_facing_explanation": "Focus the first open tab in the Source group."
-}
-```
-
-Destructive commands must include a proposed reason and must still require the user to confirm or revise it.
-
-```json
-{
-  "command": "workspace.closeBrowserTabAndRemoveFromWorkspace",
-  "authority_level": "destructive_browser",
-  "inputs": {
-    "tabKey": "example-tab-key",
-    "reason": "No longer relevant to the current research path."
-  },
-  "requires_user_confirmation": true,
-  "requires_reason": true,
-  "user_facing_explanation": "Close this browser tab and remove it from the workspace, while preserving timeline recovery."
-}
-```
 
 ## Current Policy Decision
 
