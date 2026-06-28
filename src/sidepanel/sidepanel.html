@@ -30,9 +30,14 @@
       <h2>Workspace Intake</h2>
       <p class="section-help">Scan the current Chrome window, select the tabs that belong to this workspace, then add only those selected tabs.</p>
 
-      <button id="scanTabsButton">Scan Current Window Tabs</button>
-      <button id="addSelectedTabsButton">Add Selected Tabs to Workspace</button>
-      <button id="clearScannedTabsButton" class="secondary-button">Clear Scanned Tabs</button>
+      <div class="intake-actions-grid">
+        <button id="scanTabsButton">Scan Current Window Tabs</button>
+        <button id="addActiveTabButton" class="secondary-button">Add Current Active Tab</button>
+        <button id="selectAllScannedTabsButton" class="secondary-button">Select All Scanned Tabs</button>
+        <button id="deselectAllScannedTabsButton" class="secondary-button">Deselect All Scanned Tabs</button>
+        <button id="addSelectedTabsButton">Add Selected Tabs to Workspace</button>
+        <button id="clearScannedTabsButton" class="secondary-button">Clear Scanned Tabs</button>
+      </div>
 
       <p id="intakeStatus" class="status-message"></p>
       <div id="availableTabsList"></div>
