@@ -143,6 +143,22 @@ Done when:
 - Focus Group prefers a tab already inside a native Chrome group when available
 - Focus Group records success, skipped, or failed outcomes in the timeline
 
+## V0.2I Journal / System Timeline Separation and Recovery View
+
+Done when:
+
+- Human-authored notes live in a User Journal section
+- User Journal supports note tags
+- User Journal supports an optional related group / role metadata field
+- System-generated operational events live in a System Timeline section
+- Destructive tab actions no longer write system notes into the User Journal
+- Destructive tab action reasons are preserved in System Timeline events
+- Recovery View shows only restore-capable system events
+- Recovery View shows Reopen URL and Re-add to Workspace for tab snapshots
+- Chrome group ungroup events are marked as recoverable through Recreate Chrome Groups
+- System Timeline still shows operational events and recoverable badges
+- Recovery View and System Timeline both use the same deterministic recovery handlers
+
 ## AI Command Contract
 
 Current draft:
