@@ -110,6 +110,22 @@ Done when:
 - Only groups matching the current workspace group prefix are removed
 - Ungroup results are recorded in the timeline
 
+## V0.2G Patch 2 — Role-First Group Names and Per-Group Ungroup
+
+Done when:
+
+- Native Chrome group labels prioritize role/subgroup name first
+- Native Chrome group labels follow the pattern Role · WorkspaceInitials
+- Workspace initials are generated from the saved workspace name
+- Empty workspace names fall back to CF as the group token
+- Existing workspace-name-prefixed legacy groups remain removable
+- Each Chrome Flow role subgroup has a Remove Chrome Group action
+- Per-group removal ungroups only the matching native Chrome role group
+- Global removal is clearly labeled Remove All Chrome Tab Groups
+- Global removal is scoped to groups containing current workspace tabs
+- Browser tabs remain open and workspace records remain unchanged after ungrouping
+- Per-group and global ungroup results are recorded in the timeline
+
 ## V0.3 Deterministic Helpers and Export
 
 Planned:
