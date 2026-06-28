@@ -248,6 +248,22 @@
 14. Click Recovery Journal and confirm the restore actions appear.
 15. Click System Journal and confirm the system event appears in the audit trail.
 
+## V0.2J Developer diagnostics checklist
+
+1. Open Chrome Flow.
+2. Confirm Developer Diagnostics appears below the Journal section.
+3. Confirm the diagnostics summary shows workspace, type, tab, open, grouped, and diagnostics counts.
+4. Click several Chrome Flow buttons.
+5. Click Refresh Diagnostics.
+6. Confirm recent button clicks appear as diagnostic events.
+7. Click Copy Diagnostic Packet.
+8. Paste the clipboard contents into a temporary text editor and confirm it is JSON.
+9. Confirm the packet includes workspace metadata, tab status, recent diagnostics, recent system events, and recent recoverable events.
+10. Confirm the packet notes that workspace names, tab titles, and URLs may be included.
+11. Click Clear Diagnostics.
+12. Confirm diagnostics clear without clearing workspace tabs, User Journal, System Journal, or Recovery Journal.
+13. Reproduce any button issue, then copy the diagnostic packet for debugging.
+
 ## AI command contract checklist
 
 1. Confirm docs/AI_COMMAND_CONTRACT.md exists.
