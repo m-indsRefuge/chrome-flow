@@ -38,12 +38,15 @@ export async function saveWorkspace(workspace) {
   });
 }
 
-export async function addJournalEntry(text) {
+export async function addJournalEntry(text, details = {}) {
   const workspace = await getWorkspace();
 
   workspace.journal.push({
     entryId: crypto.randomUUID(),
     text: text,
+    tag: details.tag || "",
+    relatedRoleId: details.relatedRoleId || "",
+    relatedRoleLabel: details.relatedRoleLabel || "",
     createdAt: new Date().toISOString()
   });
 
