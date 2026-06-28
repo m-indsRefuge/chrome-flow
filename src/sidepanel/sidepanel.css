@@ -40,6 +40,11 @@ h2 {
   font-size: 16px;
 }
 
+h3 {
+  margin-top: 0;
+  font-size: 14px;
+}
+
 label {
   display: block;
   margin-top: 10px;
@@ -177,6 +182,63 @@ button {
 
 .legacy-role-group {
   border-style: dashed;
+}
+
+.journal-tab-input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.journal-view-tabs {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  margin: 12px 0;
+}
+
+.journal-view-tab {
+  display: block;
+  margin: 0;
+  padding: 8px;
+  border: 1px solid #ccc;
+  border-radius: 6px;
+  background: #f1f1f1;
+  text-align: center;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.journal-view-tab:hover {
+  background: #e9e9e9;
+}
+
+.journal-view-panels {
+  margin-top: 10px;
+}
+
+.journal-view-panel {
+  display: none;
+}
+
+#journalTabUser:checked ~ .journal-view-tabs label[for="journalTabUser"],
+#journalTabRecovery:checked ~ .journal-view-tabs label[for="journalTabRecovery"],
+#journalTabSystem:checked ~ .journal-view-tabs label[for="journalTabSystem"] {
+  border-color: #999;
+  background: #ffffff;
+  box-shadow: inset 0 -2px 0 #555;
+}
+
+#journalTabUser:checked ~ .journal-view-panels #userJournalPanel,
+#journalTabRecovery:checked ~ .journal-view-panels #recoveryJournalPanel,
+#journalTabSystem:checked ~ .journal-view-panels #systemJournalPanel {
+  display: block;
 }
 
 .journal-controls-grid {
