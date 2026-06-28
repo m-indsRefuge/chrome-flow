@@ -94,6 +94,17 @@ button {
   margin-bottom: 10px;
 }
 
+.intake-actions-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.intake-actions-grid button {
+  margin-bottom: 0;
+}
+
 .tab-status-panel {
   margin: 12px 0;
   padding: 10px;
@@ -352,7 +363,8 @@ button {
 }
 
 .tab-card-actions,
-.timeline-actions {
+.timeline-actions,
+.timeline-recovery-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 8px;
@@ -360,7 +372,8 @@ button {
 }
 
 .tab-card-actions button,
-.timeline-actions button {
+.timeline-actions button,
+.timeline-recovery-actions button {
   margin-bottom: 0;
 }
 
@@ -410,20 +423,38 @@ button {
   cursor: not-allowed;
 }
 
-.tab-title {
-  font-weight: bold;
+.available-tab-content {
+  min-width: 0;
 }
 
+.available-tab-title,
+.tab-title {
+  display: block;
+  margin-bottom: 4px;
+  font-weight: bold;
+  line-height: 1.25;
+}
+
+.available-tab-url,
 .tab-url {
+  display: block;
+  margin-top: 2px;
   font-size: 12px;
   color: #666;
+  line-height: 1.25;
   word-break: break-all;
 }
 
 .tab-meta {
+  display: block;
   margin-top: 4px;
   font-size: 12px;
   color: #666;
+}
+
+.tab-state-badges {
+  margin-top: 6px;
+  margin-bottom: 8px;
 }
 
 .badge {
@@ -444,8 +475,42 @@ button {
   color: #244d7a;
 }
 
-.browser-status-badge.closed {
+.exact-instance-badge,
+.workspace-tab-id-badge {
+  border-color: #ccc;
+  background: #ffffff;
+  color: #555;
+}
+
+.duplicate-url-badge {
+  border-color: #d6c48a;
+  background: #fffbed;
+  color: #6a5314;
+}
+
+.browser-status-badge.open {
+  border-color: #b8d8c2;
+  background: #f3fff6;
+  color: #226138;
+}
+
+.browser-status-badge.closed,
+.browser-status-badge.ambiguous {
   border-color: #e0b4b4;
   background: #fff5f5;
   color: #8a1f1f;
+}
+
+.group-status-badge.grouped {
+  border-color: #a9c4e8;
+  background: #eef6ff;
+  color: #244d7a;
+}
+
+.group-status-badge.ungrouped,
+.role-status-badge.unassigned,
+.match-status-badge {
+  border-color: #e4d59a;
+  background: #fffdf3;
+  color: #6a5314;
 }
