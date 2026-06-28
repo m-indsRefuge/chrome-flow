@@ -35,6 +35,7 @@ const availableTabsList = document.getElementById("availableTabsList");
 const searchQueryInput = document.getElementById("searchQuery");
 const openSearchTabButton = document.getElementById("openSearchTabButton");
 const createChromeGroupsButton = document.getElementById("createChromeGroupsButton");
+const removeChromeGroupsButton = document.getElementById("removeChromeGroupsButton");
 const refreshWorkspaceTabsButton = document.getElementById("refreshWorkspaceTabsButton");
 const clearWorkspaceTabsButton = document.getElementById("clearWorkspaceTabsButton");
 const tabsList = document.getElementById("tabsList");
@@ -134,6 +135,10 @@ searchQueryInput.addEventListener("keydown", async (event) => {
 
 createChromeGroupsButton.addEventListener("click", async () => {
   await createChromeTabGroupsFromWorkspace();
+});
+
+removeChromeGroupsButton.addEventListener("click", async () => {
+  await removeChromeTabGroupsForWorkspace();
 });
 
 refreshWorkspaceTabsButton.addEventListener("click", async () => {
@@ -596,6 +601,65 @@ async function createChromeTabGroupsFromWorkspace() {
   }
 }
 
+async function removeChromeTabGroupsForWorkspace() {
+  if (!chrome.tabGroups || !chrome.tabs.ungroup) {
+    setIntakeStatus("Chrome tab ungrouping is not available yet. Reload the extension and check permission access.");
+    return;
+  }
+
+  const workspacePrefix = getWorkspaceGroupPrefix();
+  const confirmed = window.confirm("Remove native Chrome tab groups for " + workspacePrefix + "? Browser tabs will stay open and Chrome Flow workspace records will be kept.");
+
+  if (!confirmed) {
+    return;
+  }
+
+  try {
+    const chromeGroups = await chrome.tabGroups.query({});
+    const workspaceGroups = chromeGroups.filter((group) => isWorkspaceChromeGroupTitle(group.title));
+
+    if (!workspaceGroups.length) {
+      await addTimelineEvent("chrome_tab_groups_remove_skipped", "No native Chrome tab groups were found for workspace prefix: " + workspacePrefix + ".");
+      workspace = await getWorkspace();
+      setIntakeStatus("No Chrome tab groups found for " + workspacePrefix + ".");
+      renderTimeline();
+      return;
+    }
+
+    const workspaceGroupIds = new Set(workspaceGroups.map((group) => group.id));
+    const allTabs = await getAllBrowserTabs();
+    const tabIdsToUngroup = allTabs
+      .filter((tab) => workspaceGroupIds.has(tab.groupId))
+      .map((tab) => tab.id)
+      .filter((tabId) => Number.isInteger(tabId));
+
+    if (!tabIdsToUngroup.length) {
+      await addTimelineEvent("chrome_tab_groups_remove_skipped", "Found " + workspaceGroups.length + " Chrome tab group(s) for " + workspacePrefix + ", but no tabs were available to ungroup.");
+      workspace = await getWorkspace();
+      setIntakeStatus("Found Chrome groups for " + workspacePrefix + ", but no tabs were available to ungroup.");
+      renderTimeline();
+      return;
+    }
+
+    await chrome.tabs.ungroup(tabIdsToUngroup);
+    await addTimelineEvent(
+      "chrome_tab_groups_removed",
+      "Removed " + workspaceGroups.length + " native Chrome tab group(s) for " + workspacePrefix + ". Kept " + tabIdsToUngroup.length + " browser tab(s) open."
+    );
+
+    workspace = await getWorkspace();
+    setIntakeStatus("Removed " + workspaceGroups.length + " Chrome tab group(s) for " + workspacePrefix + ". Kept " + tabIdsToUngroup.length + " browser tab(s) open.");
+    renderWorkspace();
+    renderAvailableTabs();
+  } catch (error) {
+    console.error("Chrome tab ungrouping failed:", error);
+    await addTimelineEvent("chrome_tab_groups_remove_failed", "Chrome tab group removal failed: " + (error.message || "Unknown error") + ".");
+    workspace = await getWorkspace();
+    setIntakeStatus("Chrome tab group removal failed. Reload the extension and check permission access.");
+    renderTimeline();
+  }
+}
+
 async function focusWorkspaceTab(tabKey) {
   const tab = findWorkspaceTabByKey(tabKey);
 
@@ -1004,14 +1068,34 @@ function snapshotName(tabSnapshot) {
   return tabSnapshot.alias || tabSnapshot.originalTitle || tabSnapshot.displayUrl || "Untitled tab";
 }
 
-function createChromeGroupTitle(roleLabel) {
-  const title = "CF: " + (roleLabel || "Unassigned");
+function getWorkspaceGroupPrefix() {
+  const rawName = (workspace.name || "").trim() || "Chrome Flow";
 
-  if (title.length <= 48) {
-    return title;
+  if (rawName.length <= 28) {
+    return rawName;
   }
 
-  return title.slice(0, 45) + "...";
+  return rawName.slice(0, 25) + "...";
+}
+
+function createChromeGroupTitle(roleLabel) {
+  const prefix = getWorkspaceGroupPrefix();
+  const role = roleLabel || "Unassigned";
+  const separator = ": ";
+  const maxLength = 48;
+  const availableRoleLength = maxLength - prefix.length - separator.length;
+
+  if (availableRoleLength <= 3) {
+    return (prefix + separator + role).slice(0, maxLength - 3) + "...";
+  }
+
+  const trimmedRole = role.length <= availableRoleLength ? role : role.slice(0, availableRoleLength - 3) + "...";
+  return prefix + separator + trimmedRole;
+}
+
+function isWorkspaceChromeGroupTitle(groupTitle) {
+  const prefix = getWorkspaceGroupPrefix();
+  return typeof groupTitle === "string" && groupTitle.startsWith(prefix + ": ");
 }
 
 function promptForActionReason(actionLabel, tabName) {
