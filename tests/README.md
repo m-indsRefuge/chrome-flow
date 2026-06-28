@@ -183,3 +183,35 @@
 16. Click Remove All Chrome Tab Groups.
 17. Confirm only current-workspace native groups are removed.
 18. Confirm browser tabs stay open and workspace records remain unchanged.
+
+## V0.2H Workspace tab status and group focus checklist
+
+1. Open Chrome Flow.
+2. Confirm Workspace Tab Status appears above the search controls.
+3. Confirm status shows Total, Open, Missing, Grouped, Ungrouped, and Unassigned counters.
+4. Add several tabs to the workspace.
+5. Confirm Total and Open counters update.
+6. Assign roles to some tabs and leave at least one tab unassigned.
+7. Confirm the Unassigned counter reflects unassigned workspace tabs.
+8. Click Create Chrome Tab Groups.
+9. Confirm Grouped increases and Ungrouped decreases.
+10. Close one browser tab outside Chrome Flow or remove it from the browser.
+11. Click Refresh Tab Status.
+12. Confirm Missing increases.
+13. Confirm the timeline records the explicit status refresh.
+14. Confirm each role subgroup has a Focus Group button.
+15. Click Focus Group for a role with open tabs.
+16. Confirm Chrome activates a tab from that role subgroup.
+17. Confirm the timeline records the group focus action.
+18. Click Focus Group for a role whose tabs are missing or closed.
+19. Confirm Chrome Flow reports that no open tabs were found for that role.
+20. Confirm the timeline records the skipped focus attempt.
+
+## AI command contract checklist
+
+1. Confirm docs/AI_COMMAND_CONTRACT.md exists.
+2. Confirm the document defines authority levels.
+3. Confirm the document lists current Chrome Flow command surfaces.
+4. Confirm destructive browser actions require confirmation and reason capture.
+5. Confirm browser organization actions are separated from destructive actions.
+6. Confirm the AI layer is documented as future-only and not wired into V0.2.
