@@ -96,6 +96,20 @@ Done when:
 - Workspace tab metadata is refreshed after grouping
 - Native grouping results are recorded in the timeline
 
+## V0.2G Patch — Workspace-Named Chrome Groups and Ungroup Control
+
+Done when:
+
+- Native Chrome group labels use the current workspace name as the prefix
+- Native Chrome group labels follow the pattern Workspace Name: Role
+- Empty workspace names fall back to Chrome Flow as the group prefix
+- Long workspace names and role labels are safely shortened
+- User can explicitly remove native Chrome tab groups for the current workspace
+- Removing Chrome tab groups ungroups tabs but keeps browser tabs open
+- Removing Chrome tab groups keeps Chrome Flow workspace records unchanged
+- Only groups matching the current workspace group prefix are removed
+- Ungroup results are recorded in the timeline
+
 ## V0.3 Deterministic Helpers and Export
 
 Planned:
