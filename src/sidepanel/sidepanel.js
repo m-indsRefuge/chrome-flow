@@ -47,9 +47,12 @@ const statusUngroupedTabs = document.getElementById("statusUngroupedTabs");
 const statusUnassignedTabs = document.getElementById("statusUnassignedTabs");
 const tabsList = document.getElementById("tabsList");
 const journalEntryInput = document.getElementById("journalEntry");
+const journalTagInput = document.getElementById("journalTag");
+const journalRelatedRoleSelect = document.getElementById("journalRelatedRole");
 const addJournalButton = document.getElementById("addJournalButton");
 const journalList = document.getElementById("journalList");
-const timelineList = document.getElementById("timelineList");
+const recoveryList = document.getElementById("recoveryList");
+const systemTimelineList = document.getElementById("systemTimelineList");
 
 let workspace = await getWorkspace();
 let availableTabs = [];
@@ -85,7 +88,7 @@ scanTabsButton.addEventListener("click", async () => {
   workspace = await getWorkspace();
   setIntakeStatus("Scanned " + availableTabs.length + " tabs. Select the tabs you want to add to this workspace.");
   renderAvailableTabs();
-  renderTimeline();
+  renderSystemTimeline();
 });
 
 addSelectedTabsButton.addEventListener("click", async () => {
@@ -196,7 +199,7 @@ clearWorkspaceTabsButton.addEventListener("click", async () => {
     return;
   }
 
-  const confirmed = window.confirm("Clear all workspace tabs? This will remove tab aliases and roles from this workspace, but it will keep the workspace name, aim, journal, and timeline.");
+  const confirmed = window.confirm("Clear all workspace tabs? This will remove tab aliases and roles from this workspace, but it will keep the workspace name, aim, journal, and system timeline.");
 
   if (!confirmed) {
     return;
@@ -220,9 +223,18 @@ addJournalButton.addEventListener("click", async () => {
     return;
   }
 
-  await addJournalEntry(text);
-  await addTimelineEvent("journal_added", "Journal entry added.");
+  const relatedRoleId = journalRelatedRoleSelect.value || "";
+  const relatedRoleLabel = relatedRoleId ? getWorkspaceRoleLabel(workspace.workspaceType, relatedRoleId) : "";
+
+  await addJournalEntry(text, {
+    tag: journalTagInput.value.trim(),
+    relatedRoleId: relatedRoleId,
+    relatedRoleLabel: relatedRoleLabel
+  });
+  await addTimelineEvent("user_journal_added", "User journal entry added.");
   journalEntryInput.value = "";
+  journalTagInput.value = "";
+  journalRelatedRoleSelect.value = "";
   workspace = await getWorkspace();
   renderWorkspace();
 });
@@ -237,6 +249,22 @@ function populateWorkspaceTypeSelect() {
   });
 }
 
+function populateJournalRelatedRoleSelect() {
+  clearElement(journalRelatedRoleSelect);
+
+  const defaultOption = document.createElement("option");
+  defaultOption.value = "";
+  defaultOption.textContent = "General / no group";
+  journalRelatedRoleSelect.appendChild(defaultOption);
+
+  getWorkspaceRoles(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE).forEach((role) => {
+    const option = document.createElement("option");
+    option.value = role.id;
+    option.textContent = role.label;
+    journalRelatedRoleSelect.appendChild(option);
+  });
+}
+
 function renderWorkspace() {
   const workspaceType = getWorkspaceType(workspace.workspaceType);
   workspace.workspaceType = workspaceType.id;
@@ -244,9 +272,11 @@ function renderWorkspace() {
   workspaceAimInput.value = workspace.aim || "";
   workspaceTypeSelect.value = workspaceType.id;
   workspaceTypeDescription.textContent = getWorkspaceTypeDescription(workspaceType.id);
+  populateJournalRelatedRoleSelect();
   renderTabs();
   renderJournal();
-  renderTimeline();
+  renderRecoveryView();
+  renderSystemTimeline();
   void refreshWorkspaceTabStatus(false);
 }
 
@@ -549,14 +579,14 @@ async function refreshWorkspaceTabStatus(recordTimeline) {
       );
       workspace = await getWorkspace();
       setIntakeStatus("Tab status refreshed: " + status.openTabs + " open, " + status.missingTabs + " missing, " + status.groupedTabs + " grouped.");
-      renderTimeline();
+      renderSystemTimeline();
     }
   } catch (error) {
     console.error("Workspace tab status refresh failed:", error);
     if (recordTimeline) {
       await addTimelineEvent("workspace_tab_status_refresh_failed", "Workspace tab status refresh failed: " + (error.message || "Unknown error") + ".");
       workspace = await getWorkspace();
-      renderTimeline();
+      renderSystemTimeline();
     }
     setIntakeStatus("Could not refresh tab status.");
   }
@@ -603,10 +633,10 @@ async function openSearchTabFromWorkspace() {
   searchQueryInput.value = "";
   workspace = await getWorkspace();
   setIntakeStatus("Opened search tab for: " + query + ". Scan current window if you want to add it to this workspace.");
-  renderTimeline();
+  renderSystemTimeline();
 }
 
-async function createChromeTabGroupsFromWorkspace() {
+async function createChromeTabGroupsFromWorkspace(details = {}) {
   if (!workspace.tabs.length) {
     setIntakeStatus("Workspace has no tabs to group.");
     return;
@@ -649,7 +679,7 @@ async function createChromeTabGroupsFromWorkspace() {
       await addTimelineEvent("chrome_tab_grouping_skipped", "No open workspace tabs were available for native Chrome grouping. Skipped " + skippedCount + " missing tab(s).");
       workspace = await getWorkspace();
       setIntakeStatus("No open workspace tabs were available for grouping. Skipped " + skippedCount + " missing tab(s).");
-      renderTimeline();
+      renderSystemTimeline();
       return;
     }
 
@@ -691,9 +721,12 @@ async function createChromeTabGroupsFromWorkspace() {
 
     workspace.updatedAt = now;
     await saveWorkspace(workspace);
+
+    const eventDetails = details.recoverySourceEventId ? { recoverySourceEventId: details.recoverySourceEventId } : {};
     await addTimelineEvent(
       "chrome_tab_groups_created",
-      "Created " + createdGroupCount + " native Chrome tab group(s) from " + groupedTabCount + " open workspace tab(s). Skipped " + skippedCount + " missing tab(s)."
+      "Created " + createdGroupCount + " native Chrome tab group(s) from " + groupedTabCount + " open workspace tab(s). Skipped " + skippedCount + " missing tab(s).",
+      eventDetails
     );
 
     workspace = await getWorkspace();
@@ -705,7 +738,7 @@ async function createChromeTabGroupsFromWorkspace() {
     await addTimelineEvent("chrome_tab_grouping_failed", "Chrome tab grouping failed: " + (error.message || "Unknown error") + ".");
     workspace = await getWorkspace();
     setIntakeStatus("Chrome tab grouping failed. Reload the extension and check permission access.");
-    renderTimeline();
+    renderSystemTimeline();
   }
 }
 
@@ -721,7 +754,7 @@ async function focusChromeGroupForRole(roleId, roleLabel) {
       await addTimelineEvent("chrome_tab_group_focus_skipped", "Could not focus " + safeRoleLabel + " because no open workspace tabs were found for that role.");
       workspace = await getWorkspace();
       setIntakeStatus("No open workspace tabs found for " + safeRoleLabel + ".");
-      renderTimeline();
+      renderSystemTimeline();
       return;
     }
 
@@ -734,7 +767,7 @@ async function focusChromeGroupForRole(roleId, roleLabel) {
 
     await addTimelineEvent(
       "chrome_tab_group_focused",
-      "Focused " + safeRoleLabel + " group using tab: " + (targetItem.workspaceTab.alias || targetItem.workspaceTab.originalTitle || targetItem.workspaceTab.displayUrl || "Untitled tab") + "."
+      "Focused " + safeRoleLabel + " group using tab: " + getTabName(targetItem.workspaceTab) + "."
     );
 
     workspace = await getWorkspace();
@@ -745,7 +778,7 @@ async function focusChromeGroupForRole(roleId, roleLabel) {
     await addTimelineEvent("chrome_tab_group_focus_failed", "Chrome group focus failed for " + safeRoleLabel + ": " + (error.message || "Unknown error") + ".");
     workspace = await getWorkspace();
     setIntakeStatus("Could not focus " + safeRoleLabel + " group.");
-    renderTimeline();
+    renderSystemTimeline();
   }
 }
 
@@ -775,7 +808,7 @@ async function removeChromeTabGroupsForWorkspace() {
       await addTimelineEvent("chrome_tab_groups_remove_skipped", "No native Chrome tab groups were found for workspace token: " + workspaceToken + ".");
       workspace = await getWorkspace();
       setIntakeStatus("No Chrome tab groups found for this workspace.");
-      renderTimeline();
+      renderSystemTimeline();
       return;
     }
 
@@ -788,7 +821,7 @@ async function removeChromeTabGroupsForWorkspace() {
       await addTimelineEvent("chrome_tab_groups_remove_skipped", "No matching Chrome Flow tab groups were found for workspace token: " + workspaceToken + ".");
       workspace = await getWorkspace();
       setIntakeStatus("No matching Chrome Flow tab groups found for this workspace.");
-      renderTimeline();
+      renderSystemTimeline();
       return;
     }
 
@@ -802,14 +835,15 @@ async function removeChromeTabGroupsForWorkspace() {
       await addTimelineEvent("chrome_tab_groups_remove_skipped", "Found " + workspaceGroups.length + " Chrome tab group(s), but no tabs were available to ungroup.");
       workspace = await getWorkspace();
       setIntakeStatus("Found Chrome groups, but no tabs were available to ungroup.");
-      renderTimeline();
+      renderSystemTimeline();
       return;
     }
 
     await chrome.tabs.ungroup(tabIdsToUngroup);
     await addTimelineEvent(
       "chrome_tab_groups_removed",
-      "Removed " + workspaceGroups.length + " native Chrome tab group(s) for this workspace. Kept " + tabIdsToUngroup.length + " browser tab(s) open."
+      "Removed " + workspaceGroups.length + " native Chrome tab group(s) for this workspace. Kept " + tabIdsToUngroup.length + " browser tab(s) open.",
+      { recoveryActions: { canRecreateChromeGroups: true } }
     );
 
     workspace = await getWorkspace();
@@ -821,7 +855,7 @@ async function removeChromeTabGroupsForWorkspace() {
     await addTimelineEvent("chrome_tab_groups_remove_failed", "Chrome tab group removal failed: " + (error.message || "Unknown error") + ".");
     workspace = await getWorkspace();
     setIntakeStatus("Chrome tab group removal failed. Reload the extension and check permission access.");
-    renderTimeline();
+    renderSystemTimeline();
   }
 }
 
@@ -852,7 +886,7 @@ async function removeChromeTabGroupForRole(roleId, roleLabel) {
       await addTimelineEvent("chrome_tab_group_remove_skipped", "No native Chrome tab group was found for role: " + safeRoleLabel + ".");
       workspace = await getWorkspace();
       setIntakeStatus("No Chrome tab group found for " + safeRoleLabel + ".");
-      renderTimeline();
+      renderSystemTimeline();
       return;
     }
 
@@ -865,7 +899,7 @@ async function removeChromeTabGroupForRole(roleId, roleLabel) {
       await addTimelineEvent("chrome_tab_group_remove_skipped", "No matching Chrome Flow tab group was found for role: " + safeRoleLabel + ".");
       workspace = await getWorkspace();
       setIntakeStatus("No matching Chrome Flow tab group found for " + safeRoleLabel + ".");
-      renderTimeline();
+      renderSystemTimeline();
       return;
     }
 
@@ -879,14 +913,15 @@ async function removeChromeTabGroupForRole(roleId, roleLabel) {
       await addTimelineEvent("chrome_tab_group_remove_skipped", "Found a Chrome tab group for " + safeRoleLabel + ", but no tabs were available to ungroup.");
       workspace = await getWorkspace();
       setIntakeStatus("Found a Chrome group for " + safeRoleLabel + ", but no tabs were available to ungroup.");
-      renderTimeline();
+      renderSystemTimeline();
       return;
     }
 
     await chrome.tabs.ungroup(tabIdsToUngroup);
     await addTimelineEvent(
       "chrome_tab_group_removed",
-      "Removed native Chrome tab group for " + safeRoleLabel + ". Kept " + tabIdsToUngroup.length + " browser tab(s) open."
+      "Removed native Chrome tab group for " + safeRoleLabel + ". Kept " + tabIdsToUngroup.length + " browser tab(s) open.",
+      { recoveryActions: { canRecreateChromeGroups: true } }
     );
 
     workspace = await getWorkspace();
@@ -898,7 +933,7 @@ async function removeChromeTabGroupForRole(roleId, roleLabel) {
     await addTimelineEvent("chrome_tab_group_remove_failed", "Chrome tab group removal failed for " + safeRoleLabel + ": " + (error.message || "Unknown error") + ".");
     workspace = await getWorkspace();
     setIntakeStatus("Chrome tab group removal failed for " + safeRoleLabel + ".");
-    renderTimeline();
+    renderSystemTimeline();
   }
 }
 
@@ -918,7 +953,7 @@ async function focusWorkspaceTab(tabKey) {
     await saveWorkspace(workspace);
     await addTimelineEvent("browser_tab_focus_failed", "Could not focus " + getTabName(tab) + " because it was not found in the browser.");
     workspace = await getWorkspace();
-    setIntakeStatus("Could not find " + getTabName(tab) + " in the browser. Use timeline recovery if a saved action exists.");
+    setIntakeStatus("Could not find " + getTabName(tab) + " in the browser. Use Recovery View if a saved action exists.");
     renderWorkspace();
     return;
   }
@@ -956,7 +991,7 @@ async function closeBrowserTabForWorkspaceTab(tabKey) {
     return;
   }
 
-  const confirmed = window.confirm("Close this browser tab and remove it from the workspace? The timeline will keep a recovery record.");
+  const confirmed = window.confirm("Close this browser tab and remove it from the workspace? Recovery will be available from the Recovery View.");
 
   if (!confirmed) {
     return;
@@ -974,14 +1009,13 @@ async function closeBrowserTabForWorkspaceTab(tabKey) {
   workspace.tabs.splice(tabIndex, 1);
   workspace.updatedAt = new Date().toISOString();
   await saveWorkspace(workspace);
-  await addActionJournalEntry("Closed browser tab and removed from workspace", tabSnapshot, reason);
   await addTimelineEvent("browser_tab_closed_and_removed", "Closed browser tab and removed from workspace: " + snapshotName(tabSnapshot) + ".", {
     reason: reason,
     tabSnapshot: tabSnapshot,
     recoveryActions: { canReopenUrl: true, canReaddToWorkspace: true }
   });
   workspace = await getWorkspace();
-  setIntakeStatus("Closed browser tab and removed " + snapshotName(tabSnapshot) + " from workspace. Recovery is available from the timeline.");
+  setIntakeStatus("Closed browser tab and removed " + snapshotName(tabSnapshot) + " from workspace. Recovery is available from Recovery View.");
   renderWorkspace();
   renderAvailableTabs();
 }
@@ -996,7 +1030,7 @@ async function removeWorkspaceTabWithTrail(tabKey) {
 
   const tab = workspace.tabs[tabIndex];
   const tabSnapshot = createTabSnapshot(tab);
-  const confirmed = window.confirm("Remove this tab from the workspace? The browser tab itself will not be closed and the timeline will include recovery.");
+  const confirmed = window.confirm("Remove this tab from the workspace? The browser tab itself will not be closed and Recovery View will include recovery.");
 
   if (!confirmed) {
     return;
@@ -1012,14 +1046,13 @@ async function removeWorkspaceTabWithTrail(tabKey) {
   workspace.tabs.splice(tabIndex, 1);
   workspace.updatedAt = new Date().toISOString();
   await saveWorkspace(workspace);
-  await addActionJournalEntry("Removed tab from workspace", tabSnapshot, reason);
   await addTimelineEvent("workspace_tab_removed", "Removed " + snapshotName(tabSnapshot) + " from workspace.", {
     reason: reason,
     tabSnapshot: tabSnapshot,
     recoveryActions: { canReopenUrl: true, canReaddToWorkspace: true }
   });
   workspace = await getWorkspace();
-  setIntakeStatus("Removed " + snapshotName(tabSnapshot) + " from workspace. Recovery is available from the timeline.");
+  setIntakeStatus("Removed " + snapshotName(tabSnapshot) + " from workspace. Recovery is available from Recovery View.");
   renderWorkspace();
   renderAvailableTabs();
 }
@@ -1029,17 +1062,39 @@ function renderJournal() {
 
   if (!workspace.journal.length) {
     const empty = document.createElement("p");
-    empty.textContent = "No journal entries yet.";
+    empty.textContent = "No user journal entries yet.";
     journalList.appendChild(empty);
     return;
   }
 
-  workspace.journal.forEach((entry) => {
+  workspace.journal.slice().reverse().forEach((entry) => {
     const card = document.createElement("div");
     card.className = "journal-card";
     const text = document.createElement("p");
     text.textContent = entry.text;
     card.appendChild(text);
+
+    if (entry.tag || entry.relatedRoleLabel) {
+      const meta = document.createElement("div");
+      meta.className = "journal-meta";
+
+      if (entry.tag) {
+        const tagBadge = document.createElement("span");
+        tagBadge.className = "badge";
+        tagBadge.textContent = "Tag: " + entry.tag;
+        meta.appendChild(tagBadge);
+      }
+
+      if (entry.relatedRoleLabel) {
+        const roleBadge = document.createElement("span");
+        roleBadge.className = "badge";
+        roleBadge.textContent = "Group: " + entry.relatedRoleLabel;
+        meta.appendChild(roleBadge);
+      }
+
+      card.appendChild(meta);
+    }
+
     const time = document.createElement("small");
     time.textContent = entry.createdAt;
     card.appendChild(time);
@@ -1047,69 +1102,115 @@ function renderJournal() {
   });
 }
 
-function renderTimeline() {
-  clearElement(timelineList);
+function renderSystemTimeline() {
+  clearElement(systemTimelineList);
 
   if (!workspace.timeline.length) {
     const empty = document.createElement("p");
-    empty.textContent = "No timeline events yet.";
-    timelineList.appendChild(empty);
+    empty.textContent = "No system timeline events yet.";
+    systemTimelineList.appendChild(empty);
     return;
   }
 
   workspace.timeline.slice().reverse().forEach((event) => {
-    const card = document.createElement("div");
-    card.className = "timeline-card";
-    const type = document.createElement("strong");
-    type.textContent = event.type;
-    card.appendChild(type);
-    const message = document.createElement("p");
-    message.textContent = event.message;
-    card.appendChild(message);
-
-    if (event.reason) {
-      const reason = document.createElement("p");
-      reason.className = "timeline-reason";
-      reason.textContent = "Reason: " + event.reason;
-      card.appendChild(reason);
-    }
-
-    if (event.tabSnapshot) {
-      card.appendChild(createTimelineTabSnapshot(event.tabSnapshot));
-    }
-
-    if (event.recoveryActions && event.tabSnapshot) {
-      const actions = document.createElement("div");
-      actions.className = "timeline-actions";
-
-      if (event.recoveryActions.canReopenUrl) {
-        const reopenButton = document.createElement("button");
-        reopenButton.type = "button";
-        reopenButton.className = "timeline-reopen-url-button secondary-button";
-        reopenButton.dataset.eventId = event.eventId;
-        reopenButton.textContent = "Reopen URL";
-        actions.appendChild(reopenButton);
-      }
-
-      if (event.recoveryActions.canReaddToWorkspace) {
-        const readdButton = document.createElement("button");
-        readdButton.type = "button";
-        readdButton.className = "timeline-readd-workspace-button secondary-button";
-        readdButton.dataset.eventId = event.eventId;
-        readdButton.textContent = "Re-add to Workspace";
-        actions.appendChild(readdButton);
-      }
-
-      card.appendChild(actions);
-    }
-
-    const time = document.createElement("small");
-    time.textContent = event.createdAt;
-    card.appendChild(time);
-    timelineList.appendChild(card);
+    systemTimelineList.appendChild(createTimelineEventCard(event, "timeline-card"));
   });
 
   attachTimelineRecoveryHandlers();
+}
+
+function renderRecoveryView() {
+  clearElement(recoveryList);
+  const recoverableEvents = workspace.timeline.filter((event) => event.recoveryActions);
+
+  if (!recoverableEvents.length) {
+    const empty = document.createElement("p");
+    empty.textContent = "No recoverable system events yet.";
+    recoveryList.appendChild(empty);
+    return;
+  }
+
+  recoverableEvents.slice().reverse().forEach((event) => {
+    recoveryList.appendChild(createTimelineEventCard(event, "recovery-card"));
+  });
+
+  attachTimelineRecoveryHandlers();
+}
+
+function createTimelineEventCard(event, className) {
+  const card = document.createElement("div");
+  card.className = className;
+
+  if (event.recoveryActions) {
+    card.classList.add("is-recoverable");
+  }
+
+  const type = document.createElement("strong");
+  type.textContent = event.type;
+  card.appendChild(type);
+
+  if (event.recoveryActions) {
+    const badge = document.createElement("span");
+    badge.className = "badge recovery-badge";
+    badge.textContent = "Recoverable";
+    card.appendChild(badge);
+  }
+
+  const message = document.createElement("p");
+  message.textContent = event.message;
+  card.appendChild(message);
+
+  if (event.reason) {
+    const reason = document.createElement("p");
+    reason.className = "timeline-reason";
+    reason.textContent = "Reason: " + event.reason;
+    card.appendChild(reason);
+  }
+
+  if (event.tabSnapshot) {
+    card.appendChild(createTimelineTabSnapshot(event.tabSnapshot));
+  }
+
+  if (event.recoveryActions) {
+    const actions = document.createElement("div");
+    actions.className = "timeline-actions";
+
+    if (event.recoveryActions.canReopenUrl && event.tabSnapshot) {
+      const reopenButton = document.createElement("button");
+      reopenButton.type = "button";
+      reopenButton.className = "timeline-reopen-url-button secondary-button";
+      reopenButton.dataset.eventId = event.eventId;
+      reopenButton.textContent = "Reopen URL";
+      actions.appendChild(reopenButton);
+    }
+
+    if (event.recoveryActions.canReaddToWorkspace && event.tabSnapshot) {
+      const readdButton = document.createElement("button");
+      readdButton.type = "button";
+      readdButton.className = "timeline-readd-workspace-button secondary-button";
+      readdButton.dataset.eventId = event.eventId;
+      readdButton.textContent = "Re-add to Workspace";
+      actions.appendChild(readdButton);
+    }
+
+    if (event.recoveryActions.canRecreateChromeGroups) {
+      const recreateButton = document.createElement("button");
+      recreateButton.type = "button";
+      recreateButton.className = "timeline-recreate-groups-button secondary-button";
+      recreateButton.dataset.eventId = event.eventId;
+      recreateButton.textContent = "Recreate Chrome Groups";
+      actions.appendChild(recreateButton);
+    }
+
+    if (actions.childElementCount) {
+      card.appendChild(actions);
+    }
+  }
+
+  const time = document.createElement("small");
+  time.textContent = event.createdAt;
+  card.appendChild(time);
+  return card;
 }
 
 function createTimelineTabSnapshot(tabSnapshot) {
@@ -1121,20 +1222,26 @@ function createTimelineTabSnapshot(tabSnapshot) {
   url.textContent = tabSnapshot.displayUrl || createDisplayUrl(tabSnapshot.url || "");
   url.title = tabSnapshot.url || "";
   snapshot.appendChild(url);
-  appendTextDiv(snapshot, "tab-meta", "Role: " + (tabSnapshot.role || "unassigned") + " | Workspace type: " + (tabSnapshot.workspaceType || "unknown"));
+  appendTextDiv(snapshot, "tab-meta", "Role: " + getWorkspaceRoleLabel(tabSnapshot.workspaceType || workspace.workspaceType, tabSnapshot.role || "unassigned") + " | Workspace type: " + (tabSnapshot.workspaceType || "unknown"));
   return snapshot;
 }
 
 function attachTimelineRecoveryHandlers() {
   document.querySelectorAll(".timeline-reopen-url-button").forEach((button) => {
     button.addEventListener("click", async (event) => {
-      await reopenUrlFromTimeline(event.target.dataset.eventId);
+      await reopenUrlFromTimeline(event.currentTarget.dataset.eventId);
     });
   });
 
   document.querySelectorAll(".timeline-readd-workspace-button").forEach((button) => {
     button.addEventListener("click", async (event) => {
-      await readdWorkspaceTabFromTimeline(event.target.dataset.eventId);
+      await readdWorkspaceTabFromTimeline(event.currentTarget.dataset.eventId);
+    });
+  });
+
+  document.querySelectorAll(".timeline-recreate-groups-button").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      await recreateChromeGroupsFromTimeline(event.currentTarget.dataset.eventId);
     });
   });
 }
@@ -1143,7 +1250,7 @@ async function reopenUrlFromTimeline(eventId) {
   const timelineEvent = findTimelineEventById(eventId);
 
   if (!timelineEvent || !timelineEvent.tabSnapshot || !timelineEvent.tabSnapshot.url) {
-    setIntakeStatus("Could not find a saved URL for this timeline event.");
+    setIntakeStatus("Could not find a saved URL for this recovery event.");
     return;
   }
 
@@ -1161,12 +1268,12 @@ async function reopenUrlFromTimeline(eventId) {
     await saveWorkspace(workspace);
   }
 
-  await addTimelineEvent("timeline_url_reopened", "Reopened URL from timeline for: " + snapshotName(timelineEvent.tabSnapshot) + ".", {
+  await addTimelineEvent("timeline_url_reopened", "Reopened URL from recovery event for: " + snapshotName(timelineEvent.tabSnapshot) + ".", {
     tabSnapshot: timelineEvent.tabSnapshot,
     recoverySourceEventId: eventId
   });
   workspace = await getWorkspace();
-  setIntakeStatus("Reopened URL from timeline for: " + snapshotName(timelineEvent.tabSnapshot) + ".");
+  setIntakeStatus("Reopened URL from Recovery View for: " + snapshotName(timelineEvent.tabSnapshot) + ".");
   renderWorkspace();
   renderAvailableTabs();
 }
@@ -1175,7 +1282,7 @@ async function readdWorkspaceTabFromTimeline(eventId) {
   const timelineEvent = findTimelineEventById(eventId);
 
   if (!timelineEvent || !timelineEvent.tabSnapshot) {
-    setIntakeStatus("Could not find a saved tab snapshot for this timeline event.");
+    setIntakeStatus("Could not find a saved tab snapshot for this recovery event.");
     return;
   }
 
@@ -1190,14 +1297,22 @@ async function readdWorkspaceTabFromTimeline(eventId) {
   workspace.tabs.push(createWorkspaceTabFromSnapshot(tabSnapshot));
   workspace.updatedAt = new Date().toISOString();
   await saveWorkspace(workspace);
-  await addTimelineEvent("workspace_tab_readded", "Re-added " + snapshotName(tabSnapshot) + " to workspace from timeline recovery.", {
+  await addTimelineEvent("workspace_tab_readded", "Re-added " + snapshotName(tabSnapshot) + " to workspace from Recovery View.", {
     tabSnapshot: tabSnapshot,
     recoverySourceEventId: eventId
   });
   workspace = await getWorkspace();
-  setIntakeStatus("Re-added " + snapshotName(tabSnapshot) + " to workspace from timeline recovery.");
+  setIntakeStatus("Re-added " + snapshotName(tabSnapshot) + " to workspace from Recovery View.");
   renderWorkspace();
   renderAvailableTabs();
+}
+
+async function recreateChromeGroupsFromTimeline(eventId) {
+  await addTimelineEvent("timeline_chrome_groups_recreate_requested", "Recreate Chrome Groups requested from Recovery View.", {
+    recoverySourceEventId: eventId
+  });
+  workspace = await getWorkspace();
+  await createChromeTabGroupsFromWorkspace({ recoverySourceEventId: eventId });
 }
 
 function getSelectedAvailableTabIndexes() {
@@ -1415,17 +1530,13 @@ function isChromeGroupTitleForRole(groupTitle, roleLabel) {
 }
 
 function promptForActionReason(actionLabel, tabName) {
-  const reason = window.prompt("Reason for " + actionLabel + "? This will be recorded in the journal and timeline.\n\nTab: " + tabName, "");
+  const reason = window.prompt("Reason for " + actionLabel + "? This will be recorded in the System Timeline and Recovery View.\n\nTab: " + tabName, "");
 
   if (reason === null) {
     return null;
   }
 
   return reason.trim() || "No reason recorded.";
-}
-
-async function addActionJournalEntry(actionLabel, tabSnapshot, reason) {
-  await addJournalEntry(actionLabel + ": " + snapshotName(tabSnapshot) + "\nReason: " + reason + "\nURL: " + (tabSnapshot.url || "No URL recorded."));
 }
 
 function createActionButton(text, className, tabKey) {
