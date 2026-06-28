@@ -230,6 +230,24 @@
 19. Confirm Recovery View shows Recreate Chrome Groups for the group-removal event.
 20. Click a Recovery View restore action and confirm the system timeline records the recovery.
 
+## V0.2I patch journal tabbed views checklist
+
+1. Open Chrome Flow.
+2. Confirm there is one top-level Journal section.
+3. Confirm the Journal section has User Journal, Recovery Journal, and System Journal view tabs.
+4. Confirm User Journal is selected by default.
+5. Add a user note with a tag and related group.
+6. Confirm the note appears in User Journal.
+7. Click Recovery Journal.
+8. Confirm recovery cards are shown without user notes or normal system events mixed in.
+9. Click System Journal.
+10. Confirm system events are shown without user notes mixed in.
+11. Switch back to User Journal.
+12. Confirm the user note remains visible and the tab switch did not alter stored data.
+13. Remove a workspace tab and provide a reason.
+14. Click Recovery Journal and confirm the restore actions appear.
+15. Click System Journal and confirm the system event appears in the audit trail.
+
 ## AI command contract checklist
 
 1. Confirm docs/AI_COMMAND_CONTRACT.md exists.
