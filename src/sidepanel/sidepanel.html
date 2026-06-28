@@ -132,8 +132,24 @@
         </div>
       </div>
     </section>
+
+    <section class="diagnostics-section">
+      <h2>Developer Diagnostics</h2>
+      <p class="section-help">Local testing surface for runtime errors, button clicks, workspace state, and shareable diagnostic packets.</p>
+
+      <div class="diagnostics-actions">
+        <button id="refreshDiagnosticsButton" class="secondary-button">Refresh Diagnostics</button>
+        <button id="copyDiagnosticPacketButton" class="secondary-button">Copy Diagnostic Packet</button>
+        <button id="clearDiagnosticsButton" class="danger-button">Clear Diagnostics</button>
+      </div>
+
+      <p id="diagnosticsStatus" class="status-message"></p>
+      <div id="diagnosticsSummary"></div>
+      <div id="diagnosticsList"></div>
+    </section>
   </main>
 
+  <script type="module" src="./diagnostics.js"></script>
   <script type="module" src="./sidepanel.js"></script>
 </body>
 </html>
