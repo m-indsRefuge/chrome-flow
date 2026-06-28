@@ -89,6 +89,46 @@ button {
   margin-bottom: 10px;
 }
 
+.tab-status-panel {
+  margin: 12px 0;
+  padding: 10px;
+  border: 1px solid #e1e1e1;
+  border-radius: 8px;
+  background: #fafafa;
+}
+
+.tab-status-panel h3 {
+  margin: 0 0 8px 0;
+  font-size: 14px;
+}
+
+.tab-status-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.tab-status-card {
+  padding: 8px;
+  border: 1px solid #ddd;
+  border-radius: 6px;
+  background: #ffffff;
+  text-align: center;
+}
+
+.tab-status-card strong {
+  display: block;
+  font-size: 18px;
+}
+
+.tab-status-card span {
+  display: block;
+  margin-top: 2px;
+  color: #666;
+  font-size: 11px;
+}
+
 .tab-role-group {
   margin-top: 12px;
   padding: 10px;
@@ -119,12 +159,20 @@ button {
   color: #666;
 }
 
+.tab-role-group-actions {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+}
+
+.focus-chrome-group-button,
 .remove-chrome-group-button {
   align-self: start;
   width: auto;
   margin-bottom: 0;
   padding: 4px 8px;
   font-size: 12px;
+  white-space: nowrap;
 }
 
 .legacy-role-group {
