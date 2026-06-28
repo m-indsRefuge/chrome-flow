@@ -188,6 +188,21 @@ Done when:
 - Diagnostic packet includes workspace metadata, tab status, recent diagnostics, recent system events, and recent recoverable events
 - Diagnostic packet avoids intentionally capturing page content, but may include workspace names, tab titles, and URLs for debugging
 
+## V0.2J Patch — Action Result Diagnostics
+
+Done when:
+
+- Diagnostics maps known UI buttons to expected System Journal event types
+- Diagnostics records action_started when a known action begins
+- Diagnostics watches the System Journal for matching action outcomes
+- Diagnostics records action_success when a matching success event is observed
+- Diagnostics records action_skipped when a matching skip event is observed
+- Diagnostics records action_failed when a matching failure event is observed
+- Diagnostics records action_no_result_observed when no matching event appears within the trace window
+- Action result diagnostics include action name, button identity, observed event, and tab status
+- Diagnostic packets use schema diagnostic-packet-v0.2
+- Diagnostic packets include recentActionResultDiagnostics and pendingActionTraces
+
 ## AI Command Contract
 
 Current draft:
