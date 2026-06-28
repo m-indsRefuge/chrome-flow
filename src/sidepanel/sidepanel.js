@@ -38,6 +38,13 @@ const createChromeGroupsButton = document.getElementById("createChromeGroupsButt
 const removeChromeGroupsButton = document.getElementById("removeChromeGroupsButton");
 const refreshWorkspaceTabsButton = document.getElementById("refreshWorkspaceTabsButton");
 const clearWorkspaceTabsButton = document.getElementById("clearWorkspaceTabsButton");
+const refreshTabStatusButton = document.getElementById("refreshTabStatusButton");
+const statusTotalTabs = document.getElementById("statusTotalTabs");
+const statusOpenTabs = document.getElementById("statusOpenTabs");
+const statusMissingTabs = document.getElementById("statusMissingTabs");
+const statusGroupedTabs = document.getElementById("statusGroupedTabs");
+const statusUngroupedTabs = document.getElementById("statusUngroupedTabs");
+const statusUnassignedTabs = document.getElementById("statusUnassignedTabs");
 const tabsList = document.getElementById("tabsList");
 const journalEntryInput = document.getElementById("journalEntry");
 const addJournalButton = document.getElementById("addJournalButton");
@@ -141,6 +148,10 @@ removeChromeGroupsButton.addEventListener("click", async () => {
   await removeChromeTabGroupsForWorkspace();
 });
 
+refreshTabStatusButton.addEventListener("click", async () => {
+  await refreshWorkspaceTabStatus(true);
+});
+
 refreshWorkspaceTabsButton.addEventListener("click", async () => {
   if (!workspace.tabs.length) {
     setIntakeStatus("Workspace has no tabs to refresh.");
@@ -236,6 +247,7 @@ function renderWorkspace() {
   renderTabs();
   renderJournal();
   renderTimeline();
+  void refreshWorkspaceTabStatus(false);
 }
 
 function renderAvailableTabs() {
@@ -315,14 +327,26 @@ function renderTabs() {
     appendTextSpan(groupHeading, "tab-role-group-count", group.tabs.length + " tab" + (group.tabs.length === 1 ? "" : "s"));
     groupHeader.appendChild(groupHeading);
 
+    const groupActions = document.createElement("div");
+    groupActions.className = "tab-role-group-actions";
+
+    const focusChromeGroupButton = document.createElement("button");
+    focusChromeGroupButton.type = "button";
+    focusChromeGroupButton.className = "focus-chrome-group-button secondary-button";
+    focusChromeGroupButton.dataset.roleId = group.roleId;
+    focusChromeGroupButton.dataset.roleLabel = group.label;
+    focusChromeGroupButton.textContent = "Focus Group";
+    groupActions.appendChild(focusChromeGroupButton);
+
     const removeChromeGroupButton = document.createElement("button");
     removeChromeGroupButton.type = "button";
     removeChromeGroupButton.className = "remove-chrome-group-button secondary-button";
     removeChromeGroupButton.dataset.roleId = group.roleId;
     removeChromeGroupButton.dataset.roleLabel = group.label;
     removeChromeGroupButton.textContent = "Remove Chrome Group";
-    groupHeader.appendChild(removeChromeGroupButton);
+    groupActions.appendChild(removeChromeGroupButton);
 
+    groupHeader.appendChild(groupActions);
     groupSection.appendChild(groupHeader);
 
     group.tabs.forEach((tab) => {
@@ -368,6 +392,15 @@ function attachWorkspaceTabHandlers() {
       await addTimelineEvent("tab_role_updated", "Assigned " + getTabName(tab) + " to " + roleLabel + " subgroup.");
       workspace = await getWorkspace();
       renderWorkspace();
+    });
+  });
+
+  document.querySelectorAll(".focus-chrome-group-button").forEach((button) => {
+    button.addEventListener("click", async (event) => {
+      await focusChromeGroupForRole(
+        event.currentTarget.dataset.roleId,
+        event.currentTarget.dataset.roleLabel
+      );
     });
   });
 
@@ -503,6 +536,59 @@ function renderRoleOptions(roleSelect, currentRole) {
   roleSelect.value = currentRole || "unassigned";
 }
 
+async function refreshWorkspaceTabStatus(recordTimeline) {
+  try {
+    const allTabs = await getAllBrowserTabs();
+    const status = calculateWorkspaceTabStatus(allTabs);
+    renderTabStatus(status);
+
+    if (recordTimeline) {
+      await addTimelineEvent(
+        "workspace_tab_status_refreshed",
+        "Tab status refreshed: " + status.openTabs + " open, " + status.missingTabs + " missing, " + status.groupedTabs + " grouped, " + status.ungroupedTabs + " ungrouped, " + status.unassignedTabs + " unassigned."
+      );
+      workspace = await getWorkspace();
+      setIntakeStatus("Tab status refreshed: " + status.openTabs + " open, " + status.missingTabs + " missing, " + status.groupedTabs + " grouped.");
+      renderTimeline();
+    }
+  } catch (error) {
+    console.error("Workspace tab status refresh failed:", error);
+    if (recordTimeline) {
+      await addTimelineEvent("workspace_tab_status_refresh_failed", "Workspace tab status refresh failed: " + (error.message || "Unknown error") + ".");
+      workspace = await getWorkspace();
+      renderTimeline();
+    }
+    setIntakeStatus("Could not refresh tab status.");
+  }
+}
+
+function calculateWorkspaceTabStatus(allTabs) {
+  const liveWorkspaceTabs = getLiveWorkspaceTabs(allTabs);
+  const groupedTabs = liveWorkspaceTabs.filter((item) => isValidChromeGroupId(item.liveTab.groupId));
+  const totalTabs = workspace.tabs.length;
+  const openTabs = liveWorkspaceTabs.length;
+  const missingTabs = Math.max(totalTabs - openTabs, 0);
+  const unassignedTabs = workspace.tabs.filter((tab) => (tab.role || "unassigned") === "unassigned").length;
+
+  return {
+    totalTabs: totalTabs,
+    openTabs: openTabs,
+    missingTabs: missingTabs,
+    groupedTabs: groupedTabs.length,
+    ungroupedTabs: Math.max(openTabs - groupedTabs.length, 0),
+    unassignedTabs: unassignedTabs
+  };
+}
+
+function renderTabStatus(status) {
+  statusTotalTabs.textContent = String(status.totalTabs);
+  statusOpenTabs.textContent = String(status.openTabs);
+  statusMissingTabs.textContent = String(status.missingTabs);
+  statusGroupedTabs.textContent = String(status.groupedTabs);
+  statusUngroupedTabs.textContent = String(status.ungroupedTabs);
+  statusUnassignedTabs.textContent = String(status.unassignedTabs);
+}
+
 async function openSearchTabFromWorkspace() {
   const query = searchQueryInput.value.trim();
 
@@ -619,6 +705,46 @@ async function createChromeTabGroupsFromWorkspace() {
     await addTimelineEvent("chrome_tab_grouping_failed", "Chrome tab grouping failed: " + (error.message || "Unknown error") + ".");
     workspace = await getWorkspace();
     setIntakeStatus("Chrome tab grouping failed. Reload the extension and check permission access.");
+    renderTimeline();
+  }
+}
+
+async function focusChromeGroupForRole(roleId, roleLabel) {
+  const safeRoleId = roleId || "unassigned";
+  const safeRoleLabel = roleLabel || getWorkspaceRoleLabel(workspace.workspaceType, safeRoleId);
+
+  try {
+    const allTabs = await getAllBrowserTabs();
+    const liveRoleTabs = getLiveWorkspaceTabsForRole(safeRoleId, allTabs).sort(compareLiveWorkspaceTabs);
+
+    if (!liveRoleTabs.length) {
+      await addTimelineEvent("chrome_tab_group_focus_skipped", "Could not focus " + safeRoleLabel + " because no open workspace tabs were found for that role.");
+      workspace = await getWorkspace();
+      setIntakeStatus("No open workspace tabs found for " + safeRoleLabel + ".");
+      renderTimeline();
+      return;
+    }
+
+    const groupedRoleTabs = liveRoleTabs.filter((item) => isValidChromeGroupId(item.liveTab.groupId));
+    const targetItem = groupedRoleTabs[0] || liveRoleTabs[0];
+    const targetTab = targetItem.liveTab;
+
+    await chrome.windows.update(targetTab.windowId, { focused: true });
+    await chrome.tabs.update(targetTab.id, { active: true });
+
+    await addTimelineEvent(
+      "chrome_tab_group_focused",
+      "Focused " + safeRoleLabel + " group using tab: " + (targetItem.workspaceTab.alias || targetItem.workspaceTab.originalTitle || targetItem.workspaceTab.displayUrl || "Untitled tab") + "."
+    );
+
+    workspace = await getWorkspace();
+    setIntakeStatus("Focused " + safeRoleLabel + " group.");
+    renderWorkspace();
+  } catch (error) {
+    console.error("Chrome group focus failed:", error);
+    await addTimelineEvent("chrome_tab_group_focus_failed", "Chrome group focus failed for " + safeRoleLabel + ": " + (error.message || "Unknown error") + ".");
+    workspace = await getWorkspace();
+    setIntakeStatus("Could not focus " + safeRoleLabel + " group.");
     renderTimeline();
   }
 }
@@ -1107,6 +1233,14 @@ function getLiveWorkspaceTabsForRole(roleId, allTabs) {
   return getLiveWorkspaceTabs(allTabs).filter((item) =>
     (item.workspaceTab.role || "unassigned") === roleId
   );
+}
+
+function compareLiveWorkspaceTabs(left, right) {
+  if (left.liveTab.windowId !== right.liveTab.windowId) {
+    return left.liveTab.windowId - right.liveTab.windowId;
+  }
+
+  return left.liveTab.index - right.liveTab.index;
 }
 
 function isValidChromeGroupId(groupId) {
