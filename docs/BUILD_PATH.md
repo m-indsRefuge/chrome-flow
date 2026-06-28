@@ -126,6 +126,36 @@ Done when:
 - Browser tabs remain open and workspace records remain unchanged after ungrouping
 - Per-group and global ungroup results are recorded in the timeline
 
+## V0.2H Workspace Tab Status and Group Focus Controls
+
+Done when:
+
+- Workspace Tabs includes a compact tab-status panel
+- Status panel shows total workspace tabs
+- Status panel shows open browser tabs
+- Status panel shows missing or closed workspace tabs
+- Status panel shows grouped and ungrouped open tabs
+- Status panel shows unassigned workspace tabs
+- User can explicitly refresh tab status
+- Explicit status refresh writes a timeline event
+- Each Chrome Flow role subgroup has a Focus Group action
+- Focus Group activates the first open tab in that role subgroup
+- Focus Group prefers a tab already inside a native Chrome group when available
+- Focus Group records success, skipped, or failed outcomes in the timeline
+
+## AI Command Contract
+
+Current draft:
+
+- `docs/AI_COMMAND_CONTRACT.md`
+
+Purpose:
+
+- Define the future AI/adapter command surface before wiring in any model
+- Keep AI above the deterministic Chrome Flow control layer
+- Classify actions by authority level
+- Preserve confirmation, reason capture, timeline evidence, and recovery rules
+
 ## V0.3 Deterministic Helpers and Export
 
 Planned:
