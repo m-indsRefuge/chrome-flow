@@ -34,6 +34,7 @@ const intakeStatus = document.getElementById("intakeStatus");
 const availableTabsList = document.getElementById("availableTabsList");
 const searchQueryInput = document.getElementById("searchQuery");
 const openSearchTabButton = document.getElementById("openSearchTabButton");
+const createChromeGroupsButton = document.getElementById("createChromeGroupsButton");
 const refreshWorkspaceTabsButton = document.getElementById("refreshWorkspaceTabsButton");
 const clearWorkspaceTabsButton = document.getElementById("clearWorkspaceTabsButton");
 const tabsList = document.getElementById("tabsList");
@@ -129,6 +130,10 @@ searchQueryInput.addEventListener("keydown", async (event) => {
   if (event.key === "Enter") {
     await openSearchTabFromWorkspace();
   }
+});
+
+createChromeGroupsButton.addEventListener("click", async () => {
+  await createChromeTabGroupsFromWorkspace();
 });
 
 refreshWorkspaceTabsButton.addEventListener("click", async () => {
@@ -486,6 +491,109 @@ async function openSearchTabFromWorkspace() {
   workspace = await getWorkspace();
   setIntakeStatus("Opened search tab for: " + query + ". Scan current window if you want to add it to this workspace.");
   renderTimeline();
+}
+
+async function createChromeTabGroupsFromWorkspace() {
+  if (!workspace.tabs.length) {
+    setIntakeStatus("Workspace has no tabs to group.");
+    return;
+  }
+
+  if (!chrome.tabGroups || !chrome.tabs.group) {
+    setIntakeStatus("Chrome tab grouping is not available yet. Reload the extension and accept the new permission if prompted.");
+    return;
+  }
+
+  try {
+    const allTabs = await getAllBrowserTabs();
+    const groupsByWindowAndRole = new Map();
+    let skippedCount = 0;
+
+    workspace.tabs.forEach((workspaceTab) => {
+      const liveTab = findCurrentTabForWorkspaceTab(workspaceTab, allTabs);
+
+      if (!liveTab) {
+        skippedCount += 1;
+        return;
+      }
+
+      const roleLabel = getWorkspaceRoleLabel(workspace.workspaceType, workspaceTab.role || "unassigned");
+      const groupTitle = createChromeGroupTitle(roleLabel);
+      const groupKey = liveTab.windowId + "::" + groupTitle;
+
+      if (!groupsByWindowAndRole.has(groupKey)) {
+        groupsByWindowAndRole.set(groupKey, {
+          title: groupTitle,
+          windowId: liveTab.windowId,
+          tabIds: []
+        });
+      }
+
+      groupsByWindowAndRole.get(groupKey).tabIds.push(liveTab.id);
+    });
+
+    if (!groupsByWindowAndRole.size) {
+      await addTimelineEvent("chrome_tab_grouping_skipped", "No open workspace tabs were available for native Chrome grouping. Skipped " + skippedCount + " missing tab(s).");
+      workspace = await getWorkspace();
+      setIntakeStatus("No open workspace tabs were available for grouping. Skipped " + skippedCount + " missing tab(s).");
+      renderTimeline();
+      return;
+    }
+
+    let createdGroupCount = 0;
+    let groupedTabCount = 0;
+
+    for (const group of groupsByWindowAndRole.values()) {
+      const groupId = await chrome.tabs.group({
+        tabIds: group.tabIds
+      });
+
+      await chrome.tabGroups.update(groupId, {
+        title: group.title,
+        collapsed: false
+      });
+
+      createdGroupCount += 1;
+      groupedTabCount += group.tabIds.length;
+    }
+
+    const updatedTabs = await getAllBrowserTabs();
+    const now = new Date().toISOString();
+
+    workspace.tabs = workspace.tabs.map((workspaceTab) => {
+      const currentTab = findCurrentTabForWorkspaceTab(workspaceTab, updatedTabs);
+
+      if (!currentTab) {
+        return {
+          ...workspaceTab,
+          isOpen: false
+        };
+      }
+
+      return updateWorkspaceTabFromBrowserTab(workspaceTab, currentTab, {
+        isOpen: true,
+        lastSeenAt: now
+      });
+    });
+
+    workspace.updatedAt = now;
+    await saveWorkspace(workspace);
+    await addTimelineEvent(
+      "chrome_tab_groups_created",
+      "Created " + createdGroupCount + " native Chrome tab group(s) from " + groupedTabCount + " open workspace tab(s). Skipped " + skippedCount + " missing tab(s)."
+    );
+
+    workspace = await getWorkspace();
+    setIntakeStatus("Created " + createdGroupCount + " Chrome tab group(s) from " + groupedTabCount + " open workspace tab(s). Skipped " + skippedCount + " missing tab(s).");
+    renderWorkspace();
+    renderAvailableTabs();
+  } catch (error) {
+    console.error("Chrome tab grouping failed:", error);
+    await addTimelineEvent("chrome_tab_grouping_failed", "Chrome tab grouping failed: " + (error.message || "Unknown error") + ".");
+    workspace = await getWorkspace();
+    setIntakeStatus("Chrome tab grouping failed. Reload the extension and check permission access.");
+    renderTimeline();
+  }
 }
 
 async function focusWorkspaceTab(tabKey) {
@@ -894,6 +1002,16 @@ function getTabName(tab) {
 
 function snapshotName(tabSnapshot) {
   return tabSnapshot.alias || tabSnapshot.originalTitle || tabSnapshot.displayUrl || "Untitled tab";
+}
+
+function createChromeGroupTitle(roleLabel) {
+  const title = "CF: " + (roleLabel || "Unassigned");
+
+  if (title.length <= 48) {
+    return title;
+  }
+
+  return title.slice(0, 45) + "...";
 }
 
 function promptForActionReason(actionLabel, tabName) {
