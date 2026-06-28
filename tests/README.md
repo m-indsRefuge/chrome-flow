@@ -264,6 +264,27 @@
 12. Confirm diagnostics clear without clearing workspace tabs, User Journal, System Journal, or Recovery Journal.
 13. Reproduce any button issue, then copy the diagnostic packet for debugging.
 
+## V0.2J patch action result diagnostics checklist
+
+1. Open Chrome Flow.
+2. Add at least two tabs to the workspace.
+3. Assign roles to those tabs.
+4. Click Create Chrome Tab Groups.
+5. Wait a few seconds, then click Refresh Diagnostics.
+6. Confirm diagnostics include action_started and action_success for Create Chrome Tab Groups.
+7. Click Remove All Chrome Tab Groups.
+8. Wait a few seconds, then click Refresh Diagnostics.
+9. Confirm diagnostics include action_started and action_success for Remove All Chrome Tab Groups.
+10. Click Remove All Chrome Tab Groups again when no groups remain.
+11. Wait a few seconds, then click Refresh Diagnostics.
+12. Confirm diagnostics include action_skipped for Remove All Chrome Tab Groups.
+13. Click Copy Diagnostic Packet.
+14. Confirm the packet schema is diagnostic-packet-v0.2.
+15. Confirm the packet includes recentActionResultDiagnostics.
+16. Confirm the packet includes pendingActionTraces when an action is still being watched.
+17. Cancel a confirmation prompt on a mapped action if practical.
+18. Wait at least 30 seconds and confirm action_no_result_observed appears, indicating no matching System Journal event was produced.
+
 ## AI command contract checklist
 
 1. Confirm docs/AI_COMMAND_CONTRACT.md exists.
