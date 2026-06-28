@@ -18,6 +18,7 @@ export function createBrowserTabSnapshot(tab) {
     tabKey: createTabKey(tab),
     windowId: tab.windowId,
     groupId: tab.groupId,
+    index: tab.index,
     title: tab.title,
     url: tab.url,
     active: tab.active,
