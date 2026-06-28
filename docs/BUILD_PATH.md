@@ -159,6 +159,19 @@ Done when:
 - System Timeline still shows operational events and recoverable badges
 - Recovery View and System Timeline both use the same deterministic recovery handlers
 
+## V0.2I Patch — Journal Tabbed Views
+
+Done when:
+
+- Journal is one top-level feature area
+- User Journal, Recovery Journal, and System Journal are subordinate switchable views
+- User Journal is the default selected journal view
+- User Journal records are visually separated from system operational records
+- Recovery Journal keeps restore-capable events available without sharing the same view as user notes
+- System Journal keeps the operational audit trail available without forcing it into the default reading surface
+- Existing User Journal, Recovery View, and System Timeline data/rendering remain intact
+- Switching journal views does not require rewriting the underlying storage model
+
 ## AI Command Contract
 
 Current draft:
