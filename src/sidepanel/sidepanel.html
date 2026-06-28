@@ -85,35 +85,52 @@
     </section>
 
     <section class="journal-section">
-      <h2>User Journal</h2>
-      <p class="section-help">Human notes, reminders, research thoughts, and organisation notes. System actions are recorded separately below.</p>
-      <textarea id="journalEntry" rows="4" placeholder="Add a note about this research journey..."></textarea>
+      <h2>Journal</h2>
+      <p class="section-help">Switch between human notes, recovery actions, and the system audit trail without mixing the three record types.</p>
 
-      <div class="journal-controls-grid">
-        <div>
-          <label for="journalTag">Note Tag</label>
-          <input id="journalTag" type="text" placeholder="Example: question, decision, reminder" />
-        </div>
-        <div>
-          <label for="journalRelatedRole">Related Group</label>
-          <select id="journalRelatedRole"></select>
-        </div>
+      <input class="journal-tab-input" type="radio" name="journalView" id="journalTabUser" checked />
+      <input class="journal-tab-input" type="radio" name="journalView" id="journalTabRecovery" />
+      <input class="journal-tab-input" type="radio" name="journalView" id="journalTabSystem" />
+
+      <div class="journal-view-tabs" role="tablist" aria-label="Journal views">
+        <label class="journal-view-tab" for="journalTabUser" role="tab">User Journal</label>
+        <label class="journal-view-tab" for="journalTabRecovery" role="tab">Recovery Journal</label>
+        <label class="journal-view-tab" for="journalTabSystem" role="tab">System Journal</label>
       </div>
 
-      <button id="addJournalButton">Add Journal Entry</button>
-      <div id="journalList"></div>
-    </section>
+      <div class="journal-view-panels">
+        <div id="userJournalPanel" class="journal-view-panel">
+          <h3>User Journal</h3>
+          <p class="section-help">Human notes, reminders, research thoughts, and organisation notes. System actions are recorded separately.</p>
+          <textarea id="journalEntry" rows="4" placeholder="Add a note about this research journey..."></textarea>
 
-    <section class="recovery-section">
-      <h2>Recovery View</h2>
-      <p class="section-help">Restore-capable system events are collected here so closed, removed, or ungrouped items are easier to recover.</p>
-      <div id="recoveryList"></div>
-    </section>
+          <div class="journal-controls-grid">
+            <div>
+              <label for="journalTag">Note Tag</label>
+              <input id="journalTag" type="text" placeholder="Example: question, decision, reminder" />
+            </div>
+            <div>
+              <label for="journalRelatedRole">Related Group</label>
+              <select id="journalRelatedRole"></select>
+            </div>
+          </div>
 
-    <section class="system-timeline-section">
-      <h2>System Timeline</h2>
-      <p class="section-help">Operational history recorded by Chrome Flow. This is the browser journey evidence trail.</p>
-      <div id="systemTimelineList"></div>
+          <button id="addJournalButton">Add Journal Entry</button>
+          <div id="journalList"></div>
+        </div>
+
+        <div id="recoveryJournalPanel" class="journal-view-panel">
+          <h3>Recovery Journal</h3>
+          <p class="section-help">Restore-capable system events are collected here so closed, removed, or ungrouped items are easier to recover.</p>
+          <div id="recoveryList"></div>
+        </div>
+
+        <div id="systemJournalPanel" class="journal-view-panel">
+          <h3>System Journal</h3>
+          <p class="section-help">Operational history recorded by Chrome Flow. This is the browser journey evidence trail.</p>
+          <div id="systemTimelineList"></div>
+        </div>
+      </div>
     </section>
   </main>
 
