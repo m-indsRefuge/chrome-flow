@@ -1,3 +1,8 @@
+import {
+  DEFAULT_WORKSPACE_TYPE,
+  getWorkspaceRoleLabel
+} from "../core/workspace-role-sets.js";
+
 const WORKSPACE_KEY = "chromeFlowWorkspace";
 const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const MAX_DIAGNOSTICS = 200;
@@ -46,16 +51,30 @@ async function restoreRecoveredTabToRoleGroup(recoverySourceEventId) {
     return;
   }
 
-  const liveTabs = await chrome.tabs.query({});
-  const liveTab = resolveLiveTabForWorkspaceTab(workspaceTab, liveTabs);
+  let liveTabs = await chrome.tabs.query({});
+  let liveTab = resolveLiveTabForWorkspaceTab(workspaceTab, liveTabs);
+  let browserTabReopenedByHelper = false;
+  let browserTabReusedByHelper = false;
 
   if (!liveTab) {
-    await addTimelineEvent(workspace, "recovered_tab_group_restore_skipped", "Could not restore recovered tab to a Chrome group because the live browser tab was not found.", {
+    const reopenedTab = findPreviouslyReopenedTabForRecovery(workspace, recoverySourceEventId, readdEvent.tabSnapshot || workspaceTab, liveTabs);
+
+    if (reopenedTab) {
+      liveTab = reopenedTab;
+      browserTabReusedByHelper = true;
+    } else if (workspaceTab.url) {
+      liveTab = await chrome.tabs.create({ url: workspaceTab.url, active: true });
+      browserTabReopenedByHelper = true;
+    }
+  }
+
+  if (!liveTab) {
+    await addTimelineEvent(workspace, "recovered_tab_group_restore_skipped", "Could not restore recovered tab to a Chrome group because the live browser tab was not found and no URL could be reopened.", {
       recoverySourceEventId,
       workspaceTabId: workspaceTab.workspaceTabId,
       role: workspaceTab.role || "unassigned"
     });
-    await recordDiagnostic("warn", "recovery_group_restore_skipped", "Live browser tab was not found for recovered workspace tab.", {
+    await recordDiagnostic("warn", "recovery_group_restore_skipped", "Live browser tab was not found for recovered workspace tab and no URL could be reopened.", {
       recoverySourceEventId,
       workspaceTabId: workspaceTab.workspaceTabId,
       tabId: workspaceTab.tabId
@@ -63,7 +82,14 @@ async function restoreRecoveredTabToRoleGroup(recoverySourceEventId) {
     return;
   }
 
+  updateWorkspaceTabFromLiveTab(workspaceTab, liveTab);
+  workspace.updatedAt = new Date().toISOString();
+  await saveWorkspace(workspace);
+
+  liveTabs = await chrome.tabs.query({});
   const roleId = workspaceTab.role || "unassigned";
+  const roleLabel = getWorkspaceRoleLabel(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE, roleId);
+  const groupTitle = createChromeGroupTitle(workspace, roleLabel);
   const sameRoleGroupedTabs = workspace.tabs
     .filter((tab) => tab.workspaceTabId !== workspaceTab.workspaceTabId)
     .filter((tab) => (tab.role || "unassigned") === roleId)
@@ -75,20 +101,32 @@ async function restoreRecoveredTabToRoleGroup(recoverySourceEventId) {
   let restoreMode = "added_to_existing_role_group";
 
   if (isValidChromeGroupId(liveTab.groupId)) {
-    await updateWorkspaceFromLiveTabs(workspace, await chrome.tabs.query({}));
-    await addTimelineEvent(workspace, "recovered_tab_group_restore_skipped", "Recovered tab was already in a native Chrome group.", {
-      recoverySourceEventId,
-      workspaceTabId: workspaceTab.workspaceTabId,
-      tabId: liveTab.id,
-      groupId: liveTab.groupId,
-      roleId
+    await chrome.tabGroups.update(liveTab.groupId, {
+      title: groupTitle,
+      collapsed: false
     });
-    await recordDiagnostic("info", "recovery_group_restore_skipped", "Recovered tab was already grouped.", {
+    await updateWorkspaceFromLiveTabs(workspace, await chrome.tabs.query({}));
+    await addTimelineEvent(workspace, "recovered_tab_group_restore_skipped", "Recovered tab was already in a native Chrome group. Chrome Flow refreshed the group title.", {
       recoverySourceEventId,
       workspaceTabId: workspaceTab.workspaceTabId,
       tabId: liveTab.id,
       groupId: liveTab.groupId,
-      roleId
+      roleId,
+      roleLabel,
+      groupTitle,
+      browserTabReopenedByHelper,
+      browserTabReusedByHelper
+    });
+    await recordDiagnostic("info", "recovery_group_restore_skipped", "Recovered tab was already grouped. Chrome Flow refreshed the group title.", {
+      recoverySourceEventId,
+      workspaceTabId: workspaceTab.workspaceTabId,
+      tabId: liveTab.id,
+      groupId: liveTab.groupId,
+      roleId,
+      roleLabel,
+      groupTitle,
+      browserTabReopenedByHelper,
+      browserTabReusedByHelper
     });
     return;
   }
@@ -98,12 +136,20 @@ async function restoreRecoveredTabToRoleGroup(recoverySourceEventId) {
       tabIds: [liveTab.id],
       groupId
     });
+    await chrome.tabGroups.update(groupId, {
+      title: groupTitle,
+      collapsed: false
+    });
   } else {
     groupId = await chrome.tabs.group({
       tabIds: [liveTab.id],
       createProperties: {
         windowId: liveTab.windowId
       }
+    });
+    await chrome.tabGroups.update(groupId, {
+      title: groupTitle,
+      collapsed: false
     });
     restoreMode = "created_role_group_for_recovered_tab";
   }
@@ -113,23 +159,31 @@ async function restoreRecoveredTabToRoleGroup(recoverySourceEventId) {
   const refreshedLiveTab = refreshedLiveTabs.find((tab) => tab.id === liveTab.id);
   const finalGroupId = refreshedLiveTab?.groupId ?? groupId;
 
-  await addTimelineEvent(workspace, "recovered_tab_group_restored", "Restored recovered tab to its " + roleId + " Chrome group.", {
+  await addTimelineEvent(workspace, "recovered_tab_group_restored", "Restored recovered tab to its " + roleLabel + " Chrome group.", {
     recoverySourceEventId,
     workspaceTabId: workspaceTab.workspaceTabId,
     tabId: liveTab.id,
     roleId,
+    roleLabel,
+    groupTitle,
     windowId: liveTab.windowId,
     groupId: finalGroupId,
-    restoreMode
+    restoreMode,
+    browserTabReopenedByHelper,
+    browserTabReusedByHelper
   });
-  await recordDiagnostic("info", "recovery_group_restored", "Recovered tab was restored to a role-based Chrome group.", {
+  await recordDiagnostic("info", "recovery_group_restored", "Recovered tab was restored to a titled role-based Chrome group.", {
     recoverySourceEventId,
     workspaceTabId: workspaceTab.workspaceTabId,
     tabId: liveTab.id,
     roleId,
+    roleLabel,
+    groupTitle,
     windowId: liveTab.windowId,
     groupId: finalGroupId,
-    restoreMode
+    restoreMode,
+    browserTabReopenedByHelper,
+    browserTabReusedByHelper
   });
 }
 
@@ -137,6 +191,22 @@ function findLatestReaddEventForRecovery(workspace, recoverySourceEventId) {
   return [...workspace.timeline]
     .reverse()
     .find((event) => event.type === "workspace_tab_readded" && event.recoverySourceEventId === recoverySourceEventId);
+}
+
+function findPreviouslyReopenedTabForRecovery(workspace, recoverySourceEventId, tabSnapshot, liveTabs) {
+  const reopenedEvents = [...workspace.timeline]
+    .reverse()
+    .filter((event) => event.type === "timeline_url_reopened" && event.recoverySourceEventId === recoverySourceEventId && Number.isInteger(event.tabId));
+
+  for (const reopenedEvent of reopenedEvents) {
+    const liveTab = liveTabs.find((tab) => tab.id === reopenedEvent.tabId);
+
+    if (liveTab && (!tabSnapshot?.url || liveTab.url === tabSnapshot.url)) {
+      return liveTab;
+    }
+  }
+
+  return null;
 }
 
 function resolveLiveTabForWorkspaceTab(workspaceTab, liveTabs) {
@@ -166,20 +236,25 @@ async function updateWorkspaceFromLiveTabs(workspace, liveTabs) {
       return;
     }
 
-    workspaceTab.tabId = liveTab.id;
-    workspaceTab.tabKey = createTabKey(liveTab);
-    workspaceTab.windowId = liveTab.windowId;
-    workspaceTab.groupId = liveTab.groupId;
-    workspaceTab.url = liveTab.url || workspaceTab.url;
-    workspaceTab.displayUrl = createDisplayUrl(workspaceTab.url || "");
-    workspaceTab.originalTitle = liveTab.title || workspaceTab.originalTitle;
-    workspaceTab.isOpen = true;
-    workspaceTab.lastSeenAt = new Date().toISOString();
-    workspaceTab.lastMatchStatus = "exact_tab_id";
+    updateWorkspaceTabFromLiveTab(workspaceTab, liveTab);
   });
 
   workspace.updatedAt = new Date().toISOString();
   await saveWorkspace(workspace);
+}
+
+function updateWorkspaceTabFromLiveTab(workspaceTab, liveTab) {
+  workspaceTab.tabId = liveTab.id;
+  workspaceTab.tabKey = createTabKey(liveTab);
+  workspaceTab.windowId = liveTab.windowId;
+  workspaceTab.groupId = liveTab.groupId;
+  workspaceTab.url = liveTab.url || workspaceTab.url;
+  workspaceTab.displayUrl = createDisplayUrl(workspaceTab.url || "");
+  workspaceTab.originalTitle = liveTab.title || workspaceTab.originalTitle;
+  workspaceTab.isOpen = true;
+  workspaceTab.lastSeenAt = new Date().toISOString();
+  workspaceTab.lastOpenedAt = workspaceTab.lastOpenedAt || new Date().toISOString();
+  workspaceTab.lastMatchStatus = "exact_tab_id";
 }
 
 async function getWorkspace() {
@@ -239,7 +314,7 @@ function createFreshWorkspace() {
     workspaceId: crypto.randomUUID(),
     name: "Untitled Workspace",
     aim: "",
-    workspaceType: "research",
+    workspaceType: DEFAULT_WORKSPACE_TYPE,
     createdAt: now,
     updatedAt: now,
     tabs: [],
@@ -250,6 +325,43 @@ function createFreshWorkspace() {
 
 function createTabKey(tab) {
   return (tab.url || "") + "::" + (tab.title || "");
+}
+
+function createChromeGroupTitle(workspace, roleLabel) {
+  const role = roleLabel || "Unassigned";
+  const suffix = " · " + getWorkspaceGroupToken(workspace);
+  const maxLength = 32;
+  const availableRoleLength = maxLength - suffix.length;
+
+  if (availableRoleLength <= 3) {
+    return (role + suffix).slice(0, maxLength - 3) + "...";
+  }
+
+  const trimmedRole = role.length <= availableRoleLength ? role : role.slice(0, availableRoleLength - 3) + "...";
+  return trimmedRole + suffix;
+}
+
+function getWorkspaceGroupToken(workspace) {
+  const rawName = (workspace.name || "").trim();
+
+  if (!rawName) {
+    return "CF";
+  }
+
+  const words = rawName.split(/\s+/).filter(Boolean);
+  const initials = words
+    .map((word) => word.replace(/[^a-zA-Z0-9]/g, ""))
+    .filter(Boolean)
+    .map((word) => word[0])
+    .join("")
+    .toUpperCase();
+
+  if (initials) {
+    return initials.slice(0, 4);
+  }
+
+  const compactName = rawName.replace(/[^a-zA-Z0-9]/g, "").toUpperCase();
+  return compactName ? compactName.slice(0, 4) : "CF";
 }
 
 function createDisplayUrl(rawUrl) {
