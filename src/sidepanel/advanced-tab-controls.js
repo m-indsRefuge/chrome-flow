@@ -39,7 +39,7 @@ function renderAdvancedTabControls() {
 
   const help = document.createElement("p");
   help.className = "section-help";
-  help.textContent = "Deterministic workspace tab operations for grouping, window consolidation, pinning, missing-tab recovery, URL export, and duplicate URL review.";
+  help.textContent = "Deterministic workspace tab operations for group collapse/expand, new-window workspace organisation, role ordering, missing-tab recovery, URL export, and duplicate URL review.";
   section.appendChild(help);
 
   const actions = document.createElement("div");
@@ -47,10 +47,8 @@ function renderAdvancedTabControls() {
 
   actions.appendChild(createButton("collapseWorkspaceGroupsButton", "Collapse Workspace Chrome Groups", "secondary-button"));
   actions.appendChild(createButton("expandWorkspaceGroupsButton", "Expand Workspace Chrome Groups", "secondary-button"));
-  actions.appendChild(createButton("moveWorkspaceTabsToOneWindowButton", "Move Workspace Tabs Into One Window", "secondary-button"));
+  actions.appendChild(createButton("moveWorkspaceTabsToNewWindowButton", "Move Workspace Into New Window", "secondary-button"));
   actions.appendChild(createButton("arrangeWorkspaceTabsByRoleButton", "Arrange Tabs by Role Order", "secondary-button"));
-  actions.appendChild(createButton("pinWorkspaceTabsButton", "Pin Workspace Tabs", "secondary-button"));
-  actions.appendChild(createButton("unpinWorkspaceTabsButton", "Unpin Workspace Tabs", "secondary-button"));
   actions.appendChild(createButton("reopenMissingWorkspaceTabsButton", "Reopen All Missing Tabs", "secondary-button"));
   actions.appendChild(createButton("copyWorkspaceUrlListButton", "Copy Workspace URL List", "secondary-button"));
   actions.appendChild(createButton("refreshDuplicateUrlReviewButton", "Refresh Duplicate URL Review", "secondary-button"));
@@ -61,6 +59,11 @@ function renderAdvancedTabControls() {
   status.id = "advancedTabControlsStatus";
   status.className = "status-message";
   section.appendChild(status);
+
+  const missingNote = document.createElement("p");
+  missingNote.className = "section-help advanced-tab-note";
+  missingNote.textContent = "Missing tabs are workspace records whose live browser tab is gone. Tabs closed through Chrome Flow are removed from the workspace and restored from Recovery Journal instead.";
+  section.appendChild(missingNote);
 
   const duplicatePanel = document.createElement("div");
   duplicatePanel.id = "duplicateUrlReviewPanel";
@@ -86,10 +89,8 @@ function renderAdvancedTabControls() {
 function attachAdvancedTabControlHandlers() {
   document.getElementById("collapseWorkspaceGroupsButton")?.addEventListener("click", () => setWorkspaceChromeGroupsCollapsed(true));
   document.getElementById("expandWorkspaceGroupsButton")?.addEventListener("click", () => setWorkspaceChromeGroupsCollapsed(false));
-  document.getElementById("moveWorkspaceTabsToOneWindowButton")?.addEventListener("click", moveWorkspaceTabsIntoOneWindow);
+  document.getElementById("moveWorkspaceTabsToNewWindowButton")?.addEventListener("click", moveWorkspaceTabsIntoNewWindow);
   document.getElementById("arrangeWorkspaceTabsByRoleButton")?.addEventListener("click", arrangeWorkspaceTabsByRoleOrder);
-  document.getElementById("pinWorkspaceTabsButton")?.addEventListener("click", () => setWorkspaceTabsPinned(true));
-  document.getElementById("unpinWorkspaceTabsButton")?.addEventListener("click", () => setWorkspaceTabsPinned(false));
   document.getElementById("reopenMissingWorkspaceTabsButton")?.addEventListener("click", reopenAllMissingWorkspaceTabs);
   document.getElementById("copyWorkspaceUrlListButton")?.addEventListener("click", copyWorkspaceUrlList);
   document.getElementById("refreshDuplicateUrlReviewButton")?.addEventListener("click", renderDuplicateUrlReview);
@@ -135,38 +136,60 @@ async function setWorkspaceChromeGroupsCollapsed(collapsed) {
   setStatus(actionText + " " + groupIds.length + " workspace Chrome group(s).");
 }
 
-async function moveWorkspaceTabsIntoOneWindow() {
+async function moveWorkspaceTabsIntoNewWindow() {
   const workspace = await getWorkspace();
   const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
   const liveResults = resolution.results.filter((result) => result.liveTab);
 
   if (!liveResults.length) {
-    await addTimelineEvent(workspace, "workspace_tabs_move_window_skipped", "No open workspace tabs were found to move into one window.", {
+    await addTimelineEvent(workspace, "workspace_tabs_new_window_skipped", "No open workspace tabs were found to move into a new Chrome window.", {
       resolutionMode: "stable_one_to_one"
     });
-    setStatus("No open workspace tabs found to move.");
+    await recordDiagnostic("warn", "workspace_tabs_new_window_skipped", "No open workspace tabs were found to move into a new Chrome window.");
+    setStatus("No open workspace tabs found to move into a new window.");
     return;
   }
 
   const sortedResults = sortResultsByRoleOrder(workspace, liveResults);
-  const targetWindowId = sortedResults[0].liveTab.windowId;
+  const primaryResult = sortedResults[0];
+  const remainingResults = sortedResults.slice(1);
   const movedTabIds = sortedResults.map((result) => result.liveTab.id);
+  const workspaceTabIds = sortedResults.map((result) => result.workspaceTab.workspaceTabId);
 
-  await chrome.tabs.move(movedTabIds, { windowId: targetWindowId, index: -1 });
-  await chrome.windows.update(targetWindowId, { focused: true });
+  const newWindow = await chrome.windows.create({
+    tabId: primaryResult.liveTab.id,
+    focused: true
+  });
+
+  const newWindowId = newWindow.id;
+
+  if (remainingResults.length) {
+    await chrome.tabs.move(
+      remainingResults.map((result) => result.liveTab.id),
+      {
+        windowId: newWindowId,
+        index: -1
+      }
+    );
+  }
+
+  await chrome.windows.update(newWindowId, { focused: true });
   await refreshWorkspaceTabMetadataAfterBrowserAction(workspace);
 
-  await addTimelineEvent(workspace, "workspace_tabs_moved_to_one_window", "Moved " + movedTabIds.length + " open workspace tab(s) into one Chrome window.", {
-    targetWindowId,
+  await addTimelineEvent(workspace, "workspace_tabs_moved_to_new_window", "Moved " + movedTabIds.length + " open workspace tab(s) into a new Chrome window. Workspace state was preserved in Chrome Flow storage.", {
+    newWindowId,
+    primaryTabId: primaryResult.liveTab.id,
     tabIds: movedTabIds,
-    workspaceTabIds: sortedResults.map((result) => result.workspaceTab.workspaceTabId),
-    resolutionMode: "stable_one_to_one"
+    workspaceTabIds,
+    resolutionMode: "stable_one_to_one",
+    note: "Chrome Flow workspace state is stored in chrome.storage.local and remains available after moving tabs to a new window. Native Chrome group IDs may need to be recreated after window movement."
   });
-  await recordDiagnostic("info", "workspace_tabs_moved_to_one_window", "Moved workspace tabs into one Chrome window.", {
-    targetWindowId,
-    tabIds: movedTabIds
+  await recordDiagnostic("info", "workspace_tabs_moved_to_new_window", "Moved workspace tabs into a new Chrome window.", {
+    newWindowId,
+    tabIds: movedTabIds,
+    workspaceTabIds
   });
-  setStatus("Moved " + movedTabIds.length + " workspace tab(s) into one Chrome window.");
+  setStatus("Moved " + movedTabIds.length + " workspace tab(s) into a new Chrome window. Use Create Chrome Tab Groups again if group badges need refreshing.");
 }
 
 async function arrangeWorkspaceTabsByRoleOrder() {
@@ -205,38 +228,6 @@ async function arrangeWorkspaceTabsByRoleOrder() {
   setStatus("Arranged " + movedTabIds.length + " workspace tab(s) by role order.");
 }
 
-async function setWorkspaceTabsPinned(pinned) {
-  const workspace = await getWorkspace();
-  const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
-  const liveResults = resolution.results.filter((result) => result.liveTab);
-
-  if (!liveResults.length) {
-    await addTimelineEvent(workspace, "workspace_tabs_pin_skipped", "No open workspace tabs were found to pin or unpin.", {
-      pinned,
-      resolutionMode: "stable_one_to_one"
-    });
-    setStatus("No open workspace tabs found to pin or unpin.");
-    return;
-  }
-
-  for (const result of liveResults) {
-    await chrome.tabs.update(result.liveTab.id, { pinned });
-  }
-
-  const actionText = pinned ? "Pinned" : "Unpinned";
-  await addTimelineEvent(workspace, pinned ? "workspace_tabs_pinned" : "workspace_tabs_unpinned", actionText + " " + liveResults.length + " open workspace tab(s).", {
-    tabIds: liveResults.map((result) => result.liveTab.id),
-    workspaceTabIds: liveResults.map((result) => result.workspaceTab.workspaceTabId),
-    pinned,
-    resolutionMode: "stable_one_to_one"
-  });
-  await recordDiagnostic("info", pinned ? "workspace_tabs_pinned" : "workspace_tabs_unpinned", actionText + " workspace tabs.", {
-    tabIds: liveResults.map((result) => result.liveTab.id),
-    pinned
-  });
-  setStatus(actionText + " " + liveResults.length + " workspace tab(s).");
-}
-
 async function reopenAllMissingWorkspaceTabs() {
   const workspace = await getWorkspace();
   const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
@@ -248,11 +239,12 @@ async function reopenAllMissingWorkspaceTabs() {
   );
 
   if (!missingResults.length) {
-    await addTimelineEvent(workspace, "missing_workspace_tabs_reopen_skipped", "No safely missing workspace tabs were found to reopen.", {
+    await addTimelineEvent(workspace, "missing_workspace_tabs_reopen_skipped", "No safely missing workspace tabs were found to reopen. Missing tabs are records that still exist in the workspace while their live browser tab is gone; tabs closed through Chrome Flow are restored from Recovery Journal instead.", {
       ambiguousSkippedCount: ambiguousResults.length,
-      resolutionMode: "stable_one_to_one"
+      resolutionMode: "stable_one_to_one",
+      missingTabRule: "Close a workspace tab directly in Chrome, then run Refresh Workspace Tab Metadata before testing Reopen All Missing Tabs."
     });
-    setStatus("No safely missing workspace tabs found to reopen.");
+    setStatus("No safely missing workspace tabs found. To test this, close a workspace tab directly in Chrome, then refresh metadata.");
     return;
   }
 
@@ -573,6 +565,7 @@ async function recordDiagnostic(level, action, message, details = {}) {
 
 async function resolveWorkspaceTabsToLiveTabs(workspace) {
   const browserTabs = await chrome.tabs.query({});
+  const browserTabSnapshots = browserTabs.map(createBrowserTabSnapshotWithFallback);
   const consumedLiveTabIds = new Set();
   const results = [];
 
@@ -581,7 +574,7 @@ async function resolveWorkspaceTabsToLiveTabs(workspace) {
       workspaceTab.workspaceTabId = crypto.randomUUID();
     }
 
-    const result = resolveWorkspaceTabAgainstBrowserTabs(workspaceTab, browserTabs.map(createBrowserTabSnapshotWithFallback), consumedLiveTabIds);
+    const result = resolveWorkspaceTabAgainstBrowserTabs(workspaceTab, browserTabSnapshots, consumedLiveTabIds);
 
     if (result.liveTab) {
       consumedLiveTabIds.add(result.liveTab.id);
