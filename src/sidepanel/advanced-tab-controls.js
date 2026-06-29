@@ -7,6 +7,9 @@ import {
 const WORKSPACE_KEY = "chromeFlowWorkspace";
 const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const MAX_DIAGNOSTICS = 200;
+const WINDOW_SETTLE_DELAY_MS = 350;
+
+let moveWorkspaceIntoNewWindowInProgress = false;
 
 installAdvancedTabControls();
 
@@ -62,7 +65,7 @@ function renderAdvancedTabControls() {
 
   const newWindowNote = document.createElement("p");
   newWindowNote.className = "section-help advanced-tab-note";
-  newWindowNote.textContent = "Move Workspace Into New Window now recreates workspace Chrome groups in the new window so role grouping is preserved after the move.";
+  newWindowNote.textContent = "Move Workspace Into New Window creates a normal empty window first, then moves workspace tabs into it and recreates role groups.";
   section.appendChild(newWindowNote);
 
   const missingNote = document.createElement("p");
@@ -142,69 +145,126 @@ async function setWorkspaceChromeGroupsCollapsed(collapsed) {
 }
 
 async function moveWorkspaceTabsIntoNewWindow() {
-  const workspace = await getWorkspace();
-  const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
-  const liveResults = resolution.results.filter((result) => result.liveTab);
-
-  if (!liveResults.length) {
-    await addTimelineEvent(workspace, "workspace_tabs_new_window_skipped", "No open workspace tabs were found to move into a new Chrome window.", {
-      resolutionMode: "stable_one_to_one"
-    });
-    await recordDiagnostic("warn", "workspace_tabs_new_window_skipped", "No open workspace tabs were found to move into a new Chrome window.");
-    setStatus("No open workspace tabs found to move into a new window.");
+  if (moveWorkspaceIntoNewWindowInProgress) {
+    setStatus("Move Workspace Into New Window is already running. Please wait for it to finish.");
+    await recordDiagnostic("warn", "workspace_tabs_new_window_in_progress", "Move Workspace Into New Window was clicked while another move was still in progress.");
     return;
   }
 
-  const sortedResults = sortResultsByRoleOrder(workspace, liveResults);
-  const primaryResult = sortedResults[0];
-  const remainingResults = sortedResults.slice(1);
-  const movedTabIds = sortedResults.map((result) => result.liveTab.id);
-  const workspaceTabIds = sortedResults.map((result) => result.workspaceTab.workspaceTabId);
+  moveWorkspaceIntoNewWindowInProgress = true;
+  const moveButton = document.getElementById("moveWorkspaceTabsToNewWindowButton");
 
-  const newWindow = await chrome.windows.create({
-    tabId: primaryResult.liveTab.id,
-    focused: true
-  });
-
-  const newWindowId = newWindow.id;
-
-  if (remainingResults.length) {
-    await chrome.tabs.move(
-      remainingResults.map((result) => result.liveTab.id),
-      {
-        windowId: newWindowId,
-        index: -1
-      }
-    );
+  if (moveButton) {
+    moveButton.disabled = true;
   }
 
-  await chrome.windows.update(newWindowId, { focused: true });
-  await refreshWorkspaceTabMetadataAfterBrowserAction(workspace);
+  let workspace = null;
 
-  const postMoveResolution = await resolveWorkspaceTabsToLiveTabs(workspace);
-  const groupSummary = await recreateChromeGroupsInWindow(workspace, postMoveResolution.results, newWindowId);
-  await refreshWorkspaceTabMetadataAfterBrowserAction(workspace);
+  try {
+    setStatus("Creating a new Chrome window for this workspace...");
+    workspace = await getWorkspace();
+    const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
+    const liveResults = resolution.results.filter((result) => result.liveTab);
 
-  await addTimelineEvent(workspace, "workspace_tabs_moved_to_new_window", "Moved " + movedTabIds.length + " open workspace tab(s) into a new Chrome window and recreated " + groupSummary.groups.length + " workspace Chrome group(s).", {
-    newWindowId,
-    primaryTabId: primaryResult.liveTab.id,
-    tabIds: movedTabIds,
-    workspaceTabIds,
-    resolutionMode: "stable_one_to_one",
-    recreatedChromeGroups: true,
-    recreatedGroupCount: groupSummary.groups.length,
-    groupedTabCount: groupSummary.groupedTabCount,
-    groups: groupSummary.groups
-  });
-  await recordDiagnostic("info", "workspace_tabs_moved_to_new_window", "Moved workspace tabs into a new Chrome window and recreated workspace Chrome groups.", {
-    newWindowId,
-    tabIds: movedTabIds,
-    workspaceTabIds,
-    recreatedChromeGroups: true,
-    recreatedGroupCount: groupSummary.groups.length,
-    groupedTabCount: groupSummary.groupedTabCount
-  });
-  setStatus("Moved " + movedTabIds.length + " workspace tab(s) into a new Chrome window and recreated " + groupSummary.groups.length + " Chrome group(s).");
+    if (!liveResults.length) {
+      await addTimelineEvent(workspace, "workspace_tabs_new_window_skipped", "No open workspace tabs were found to move into a new Chrome window.", {
+        resolutionMode: "stable_one_to_one"
+      });
+      await recordDiagnostic("warn", "workspace_tabs_new_window_skipped", "No open workspace tabs were found to move into a new Chrome window.");
+      setStatus("No open workspace tabs found to move into a new window.");
+      return;
+    }
+
+    const sortedResults = sortResultsByRoleOrder(workspace, liveResults);
+    const movedTabIds = sortedResults.map((result) => result.liveTab.id);
+    const workspaceTabIds = sortedResults.map((result) => result.workspaceTab.workspaceTabId);
+
+    const newWindow = await chrome.windows.create({
+      focused: true,
+      state: "normal"
+    });
+
+    const newWindowId = newWindow.id;
+    const temporaryTabIds = Array.isArray(newWindow.tabs)
+      ? newWindow.tabs.map((tab) => tab.id).filter(Number.isInteger)
+      : [];
+
+    await chrome.windows.update(newWindowId, { focused: true, state: "normal" });
+    await delay(WINDOW_SETTLE_DELAY_MS);
+
+    await chrome.tabs.move(movedTabIds, {
+      windowId: newWindowId,
+      index: -1
+    });
+
+    await delay(WINDOW_SETTLE_DELAY_MS);
+
+    const removedTemporaryTabIds = [];
+    for (const temporaryTabId of temporaryTabIds) {
+      if (!movedTabIds.includes(temporaryTabId)) {
+        try {
+          await chrome.tabs.remove(temporaryTabId);
+          removedTemporaryTabIds.push(temporaryTabId);
+        } catch (error) {
+          await recordDiagnostic("warn", "temporary_new_window_tab_remove_failed", "Could not remove temporary new-window tab after workspace move.", {
+            temporaryTabId,
+            error: summarizeError(error)
+          });
+        }
+      }
+    }
+
+    await chrome.windows.update(newWindowId, { focused: true, state: "normal" });
+    await refreshWorkspaceTabMetadataAfterBrowserAction(workspace);
+
+    const postMoveResolution = await resolveWorkspaceTabsToLiveTabs(workspace);
+    const groupSummary = await recreateChromeGroupsInWindow(workspace, postMoveResolution.results, newWindowId);
+    await refreshWorkspaceTabMetadataAfterBrowserAction(workspace);
+
+    await addTimelineEvent(workspace, "workspace_tabs_moved_to_new_window", "Moved " + movedTabIds.length + " open workspace tab(s) into a fully opened Chrome window and recreated " + groupSummary.groups.length + " workspace Chrome group(s).", {
+      newWindowId,
+      tabIds: movedTabIds,
+      workspaceTabIds,
+      resolutionMode: "stable_one_to_one",
+      newWindowCreationMode: "empty_window_then_move_all_tabs",
+      temporaryTabIds,
+      removedTemporaryTabIds,
+      recreatedChromeGroups: true,
+      recreatedGroupCount: groupSummary.groups.length,
+      groupedTabCount: groupSummary.groupedTabCount,
+      groups: groupSummary.groups
+    });
+    await recordDiagnostic("info", "workspace_tabs_moved_to_new_window", "Moved workspace tabs into a fully opened Chrome window and recreated workspace Chrome groups.", {
+      newWindowId,
+      tabIds: movedTabIds,
+      workspaceTabIds,
+      newWindowCreationMode: "empty_window_then_move_all_tabs",
+      temporaryTabIds,
+      removedTemporaryTabIds,
+      recreatedChromeGroups: true,
+      recreatedGroupCount: groupSummary.groups.length,
+      groupedTabCount: groupSummary.groupedTabCount
+    });
+    setStatus("Moved " + movedTabIds.length + " workspace tab(s) into a new Chrome window and recreated " + groupSummary.groups.length + " Chrome group(s).");
+  } catch (error) {
+    await recordDiagnostic("error", "workspace_tabs_new_window_failed", "Move Workspace Into New Window failed.", {
+      error: summarizeError(error)
+    });
+
+    if (workspace) {
+      await addTimelineEvent(workspace, "workspace_tabs_new_window_failed", "Move Workspace Into New Window failed before Chrome Flow could complete the tab move.", {
+        error: summarizeError(error)
+      });
+    }
+
+    setStatus("Move Workspace Into New Window failed. Copy the diagnostic packet for review.");
+  } finally {
+    moveWorkspaceIntoNewWindowInProgress = false;
+
+    if (moveButton) {
+      moveButton.disabled = false;
+    }
+  }
 }
 
 async function arrangeWorkspaceTabsByRoleOrder() {
@@ -935,4 +995,20 @@ function setStatus(message) {
   if (status) {
     status.textContent = message;
   }
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
+}
+
+function summarizeError(error) {
+  if (!error) {
+    return { message: "Unknown error" };
+  }
+
+  return {
+    name: error.name || "Error",
+    message: error.message || String(error),
+    stack: typeof error.stack === "string" ? error.stack.slice(0, 2000) : ""
+  };
 }
