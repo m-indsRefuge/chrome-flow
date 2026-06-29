@@ -13,6 +13,12 @@
   margin-bottom: 0;
 }
 
+.advanced-tab-note {
+  padding: 8px;
+  border-left: 3px solid #ccc;
+  background: #ffffff;
+}
+
 .duplicate-url-review-panel {
   margin-top: 12px;
   padding: 10px;
