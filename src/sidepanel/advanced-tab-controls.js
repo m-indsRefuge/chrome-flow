@@ -60,6 +60,11 @@ function renderAdvancedTabControls() {
   status.className = "status-message";
   section.appendChild(status);
 
+  const newWindowNote = document.createElement("p");
+  newWindowNote.className = "section-help advanced-tab-note";
+  newWindowNote.textContent = "Move Workspace Into New Window now recreates workspace Chrome groups in the new window so role grouping is preserved after the move.";
+  section.appendChild(newWindowNote);
+
   const missingNote = document.createElement("p");
   missingNote.className = "section-help advanced-tab-note";
   missingNote.textContent = "Missing tabs are workspace records whose live browser tab is gone. Tabs closed through Chrome Flow are removed from the workspace and restored from Recovery Journal instead.";
@@ -176,20 +181,30 @@ async function moveWorkspaceTabsIntoNewWindow() {
   await chrome.windows.update(newWindowId, { focused: true });
   await refreshWorkspaceTabMetadataAfterBrowserAction(workspace);
 
-  await addTimelineEvent(workspace, "workspace_tabs_moved_to_new_window", "Moved " + movedTabIds.length + " open workspace tab(s) into a new Chrome window. Workspace state was preserved in Chrome Flow storage.", {
+  const postMoveResolution = await resolveWorkspaceTabsToLiveTabs(workspace);
+  const groupSummary = await recreateChromeGroupsInWindow(workspace, postMoveResolution.results, newWindowId);
+  await refreshWorkspaceTabMetadataAfterBrowserAction(workspace);
+
+  await addTimelineEvent(workspace, "workspace_tabs_moved_to_new_window", "Moved " + movedTabIds.length + " open workspace tab(s) into a new Chrome window and recreated " + groupSummary.groups.length + " workspace Chrome group(s).", {
     newWindowId,
     primaryTabId: primaryResult.liveTab.id,
     tabIds: movedTabIds,
     workspaceTabIds,
     resolutionMode: "stable_one_to_one",
-    note: "Chrome Flow workspace state is stored in chrome.storage.local and remains available after moving tabs to a new window. Native Chrome group IDs may need to be recreated after window movement."
+    recreatedChromeGroups: true,
+    recreatedGroupCount: groupSummary.groups.length,
+    groupedTabCount: groupSummary.groupedTabCount,
+    groups: groupSummary.groups
   });
-  await recordDiagnostic("info", "workspace_tabs_moved_to_new_window", "Moved workspace tabs into a new Chrome window.", {
+  await recordDiagnostic("info", "workspace_tabs_moved_to_new_window", "Moved workspace tabs into a new Chrome window and recreated workspace Chrome groups.", {
     newWindowId,
     tabIds: movedTabIds,
-    workspaceTabIds
+    workspaceTabIds,
+    recreatedChromeGroups: true,
+    recreatedGroupCount: groupSummary.groups.length,
+    groupedTabCount: groupSummary.groupedTabCount
   });
-  setStatus("Moved " + movedTabIds.length + " workspace tab(s) into a new Chrome window. Use Create Chrome Tab Groups again if group badges need refreshing.");
+  setStatus("Moved " + movedTabIds.length + " workspace tab(s) into a new Chrome window and recreated " + groupSummary.groups.length + " Chrome group(s).");
 }
 
 async function arrangeWorkspaceTabsByRoleOrder() {
@@ -471,6 +486,60 @@ async function refreshWorkspaceTabMetadataAfterBrowserAction(workspace) {
 
   workspace.updatedAt = new Date().toISOString();
   await saveWorkspace(workspace);
+}
+
+async function recreateChromeGroupsInWindow(workspace, resolutionResults, windowId) {
+  const workspaceType = workspace.workspaceType || DEFAULT_WORKSPACE_TYPE;
+  const groupedResults = groupBy(
+    resolutionResults.filter((result) => result.liveTab && result.liveTab.windowId === windowId),
+    (result) => result.workspaceTab.role || "unassigned"
+  );
+  const roleOrder = createRoleOrderMap(workspaceType);
+  const groups = [];
+  let groupedTabCount = 0;
+
+  const orderedEntries = Array.from(groupedResults.entries()).sort(([leftRole], [rightRole]) => {
+    const leftIndex = roleOrder.get(leftRole) ?? 999;
+    const rightIndex = roleOrder.get(rightRole) ?? 999;
+    return leftIndex - rightIndex;
+  });
+
+  for (const [roleId, results] of orderedEntries) {
+    const sortedResults = sortResultsByRoleOrder(workspace, results);
+    const tabIds = sortedResults.map((result) => result.liveTab.id);
+
+    if (!tabIds.length) {
+      continue;
+    }
+
+    const roleLabel = getWorkspaceRoleLabel(workspaceType, roleId);
+    const groupId = await chrome.tabs.group({ tabIds });
+    await chrome.tabGroups.update(groupId, {
+      title: createChromeGroupTitle(workspace, roleLabel),
+      collapsed: false
+    });
+
+    sortedResults.forEach((result) => {
+      result.workspaceTab.groupId = groupId;
+      result.workspaceTab.windowId = windowId;
+      result.workspaceTab.lastSeenAt = new Date().toISOString();
+      result.workspaceTab.lastMatchStatus = "exact_tab_id";
+    });
+
+    groupedTabCount += tabIds.length;
+    groups.push({
+      groupId,
+      roleId,
+      roleLabel,
+      tabIds,
+      windowId,
+      workspaceTabIds: sortedResults.map((result) => result.workspaceTab.workspaceTabId)
+    });
+  }
+
+  workspace.updatedAt = new Date().toISOString();
+  await saveWorkspace(workspace);
+  return { groups, groupedTabCount };
 }
 
 function buildWorkspaceUrlListMarkdown(workspace) {
@@ -756,6 +825,23 @@ function createFreshWorkspace() {
     journal: [],
     timeline: []
   };
+}
+
+function createChromeGroupTitle(workspace, roleLabel) {
+  const initials = createWorkspaceInitials(workspace.name || "Chrome Flow");
+  const title = roleLabel + " · " + initials;
+  return title.length <= 32 ? title : title.slice(0, 32);
+}
+
+function createWorkspaceInitials(name) {
+  const initials = String(name || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("")
+    .slice(0, 4);
+
+  return initials || "CF";
 }
 
 function createButton(id, text, className) {
