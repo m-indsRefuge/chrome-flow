@@ -4,7 +4,7 @@
 
 This note records the first implementation slices for Chrome Flow Layer 2: Session Continuity and Workspace Session Runtime.
 
-The goal is to introduce the local persistence foundation and a safe active-workspace import bridge without disturbing the validated Layer 1 tab-management runtime.
+The goal is to introduce the local persistence foundation, a safe active-workspace import bridge, and a saved-workspace inspection surface without disturbing the validated Layer 1 tab-management runtime.
 
 ## Branch
 
@@ -18,6 +18,7 @@ layer2-session-db-v0
 src/core/session-db.js
 src/core/session-repository.js
 src/sidepanel/session-db-diagnostics.js
+src/sidepanel/saved-workspace-registry.js
 docs/SESSION_DB_V0_IMPLEMENTATION_NOTE.md
 ```
 
@@ -127,6 +128,42 @@ CHROME_FLOW_PACKET_START
 CHROME_FLOW_PACKET_END
 ```
 
+### saved-workspace-registry.js
+
+Provides the first saved-workspace review surface.
+
+Controls:
+
+```text
+Refresh Saved Workspaces
+Inspect Saved Workspace
+Copy Inspection Packet
+```
+
+This surface reads saved workspace records from Session DB and renders a deterministic inspection card without reopening tabs, creating browser windows, rehydrating projections, or changing the active runtime source of truth.
+
+It can inspect:
+
+```text
+workspace metadata
+lifecycle state
+projection state
+session state
+tab count
+journal entry count
+timeline event count
+summary card
+recent deterministic activity
+links and constellation membership
+available future actions
+```
+
+It can also copy a bounded inspection packet:
+
+```text
+saved-workspace-inspection-packet-v0.1
+```
+
 ## Active Workspace Import Bridge
 
 The active workspace import bridge copies the current active workspace from the existing `chrome.storage.local` runtime path into Session DB v0.
@@ -146,6 +183,31 @@ summary card
 The bridge preserves the active workspace `workspaceId` and stable `workspaceTabId` values where available.
 
 The bridge is copy-only. It does not make Session DB the active runtime source of truth yet.
+
+## Saved Workspace Inspection
+
+Saved workspace inspection is read-only.
+
+It must not:
+
+```text
+open browser tabs
+create browser windows
+recreate Chrome groups
+change active workspace runtime source
+mark Session DB as the runtime source of truth
+```
+
+It may:
+
+```text
+load saved Session DB records
+show deterministic summary-card content
+show lifecycle/projection/session state
+show counts and recent activity
+copy an inspection packet for review
+record diagnostics about inspection actions
+```
 
 ## Safety Boundary
 
@@ -167,6 +229,10 @@ Current validation targets:
 - confirm database persistence across extension reloads
 - import active workspace into Session DB
 - confirm imported workspace tabs, journal entries, timeline events, projection snapshot, and summary card appear in the Session DB packet
+- refresh the Saved Workspace Registry
+- inspect a saved workspace without opening browser tabs
+- confirm the inspection card shows deterministic summary, lifecycle state, projection state, and record counts
+- copy a Saved Workspace Inspection Packet
 ```
 
 ## Why This Comes First
@@ -177,17 +243,17 @@ This implementation sequence creates the persistence foundation early while keep
 
 ## Next Build Slice
 
-Recommended next slice after the import bridge validates:
+Recommended next slice after the saved-workspace registry validates:
 
 ```text
-Saved Workspace Registry / Inspect Saved Workspace
+Saved Workspace Registry Refinement / Cleanup Controls
 ```
 
 Purpose:
 
 ```text
-- show saved Session DB workspaces in a human-readable registry
-- inspect an imported workspace without reopening browser tabs
-- display deterministic summary card content
-- expose available future actions without executing runtime projection changes
+- remove or hide smoke-test records
+- separate test records from imported real workspace records
+- improve saved workspace labels and sorting
+- prepare the registry for future resume/dehydrate controls
 ```
