@@ -175,14 +175,16 @@ async function listWorkspacesForDiagnostics() {
 async function copySessionDbPacket() {
   try {
     const packet = await buildSessionDbPacket();
-    await navigator.clipboard.writeText(JSON.stringify(packet, null, 2));
+    const packetText = formatSessionDbPacketForClipboard(packet);
+    await navigator.clipboard.writeText(packetText);
     setOutput(packet);
-    setStatus("Session DB packet copied. Review before sharing because future records may include workspace names, URLs, notes, and summaries.");
-    await recordDiagnostic("info", "session_db_packet_copied", "Session DB diagnostic packet copied.", {
+    setStatus("Packaged Session DB packet copied. Paste it into chat as a contained text packet for review.");
+    await recordDiagnostic("info", "session_db_packet_copied", "Packaged Session DB diagnostic packet copied.", {
       workspaceCount: packet.sessionDbSummary.workspaceCount,
       constellationCount: packet.sessionDbSummary.constellationCount,
       activeWorkspaceId: packet.sessionDbSummary.activeWorkspaceId,
-      schema: packet.extension.schema
+      schema: packet.extension.schema,
+      clipboardFormat: "chrome_flow_packet_envelope_v0.1"
     });
   } catch (error) {
     await handleSessionDbError("session_db_packet_copy_failed", "Could not copy Session DB packet.", error);
@@ -267,6 +269,21 @@ async function buildSessionDbPacket() {
     },
     notes: createPacketNotes()
   };
+}
+
+function formatSessionDbPacketForClipboard(packet) {
+  return [
+    "CHROME_FLOW_PACKET_START",
+    "packetType: " + (packet.packetType || "Chrome Flow Session DB Packet"),
+    "schema: " + (packet.extension?.schema || "unknown"),
+    "clipboardFormat: chrome_flow_packet_envelope_v0.1",
+    "createdAt: " + (packet.createdAt || new Date().toISOString()),
+    "contentType: application/json",
+    "",
+    JSON.stringify(packet, null, 2),
+    "",
+    "CHROME_FLOW_PACKET_END"
+  ].join("\n");
 }
 
 function createSavedWorkspaceSummary(workspaceDetails) {
