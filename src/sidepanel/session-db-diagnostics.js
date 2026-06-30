@@ -179,9 +179,10 @@ async function copySessionDbPacket() {
     setOutput(packet);
     setStatus("Session DB packet copied. Review before sharing because future records may include workspace names, URLs, notes, and summaries.");
     await recordDiagnostic("info", "session_db_packet_copied", "Session DB diagnostic packet copied.", {
-      workspaceCount: packet.summary.workspaceCount,
-      constellationCount: packet.summary.constellationCount,
-      activeWorkspaceId: packet.summary.activeWorkspaceId
+      workspaceCount: packet.sessionDbSummary.workspaceCount,
+      constellationCount: packet.sessionDbSummary.constellationCount,
+      activeWorkspaceId: packet.sessionDbSummary.activeWorkspaceId,
+      schema: packet.extension.schema
     });
   } catch (error) {
     await handleSessionDbError("session_db_packet_copy_failed", "Could not copy Session DB packet.", error);
@@ -210,6 +211,9 @@ async function buildSessionDbPacket() {
   const constellations = await listConstellationRecords();
   const activeWorkspaceId = await getActiveWorkspaceId();
   const dedicatedWindowThreshold = await getDedicatedWindowThreshold();
+  const expectedStores = Object.values(SESSION_DB_SCHEMA.stores);
+  const actualStores = Array.from(db.objectStoreNames);
+  const missingStores = expectedStores.filter((storeName) => !actualStores.includes(storeName));
   const workspaceDetails = [];
 
   for (const workspace of workspaces) {
@@ -220,32 +224,96 @@ async function buildSessionDbPacket() {
   }
 
   return {
-    packetType: "Chrome Flow Session DB Diagnostic Packet",
+    packetType: "Chrome Flow Session DB Packet",
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "session-db-diagnostic-packet-v0.1"
+      schema: "session-db-packet-v0.2"
     },
-    database: {
+    source: {
+      type: "session_db_diagnostics",
+      runtimeSourceOfTruth: false,
+      databaseName: db.name,
+      databaseVersion: db.version
+    },
+    sessionDb: {
+      status: missingStores.length ? "schema_incomplete" : "ready",
       name: db.name,
       version: db.version,
-      stores: Array.from(db.objectStoreNames)
+      expectedStores,
+      actualStores,
+      missingStores
     },
-    summary: {
+    sessionDbSummary: {
       workspaceCount: workspaces.length,
       constellationCount: constellations.length,
       activeWorkspaceId,
-      dedicatedWindowThreshold
+      dedicatedWindowThreshold,
+      hydratedProjectionCount: countProjectionsByState(workspaceDetails, "hydrated"),
+      dehydratedProjectionCount: countProjectionsByState(workspaceDetails, "dehydrated"),
+      pausedWorkspaceCount: workspaces.filter((workspace) => workspace.lifecycleState === "paused").length,
+      activeWorkspaceCount: workspaces.filter((workspace) => workspace.lifecycleState === "active").length,
+      archivedWorkspaceCount: workspaces.filter((workspace) => workspace.lifecycleState === "archived").length
     },
-    workspaces: workspaceDetails,
+    savedWorkspaceSummary: createSavedWorkspaceSummary(workspaceDetails),
+    constellationSummary: createConstellationSummary(constellations),
+    workspaceDetails,
     constellations,
-    notes: [
-      "This packet is generated locally by Chrome Flow.",
-      "This packet validates the Layer 2 IndexedDB-backed Session DB v0 foundation.",
-      "Session DB is not yet the active workspace runtime source of truth.",
-      "Review before sharing once real workspace records are migrated into Session DB."
-    ]
+    bridgeStatus: {
+      sessionDbRuntimeSourceOfTruth: false,
+      activeWorkspaceRuntimeSource: "chrome.storage.local",
+      migrationStatus: "not_started",
+      layer2Status: "session_db_smoke_test"
+    },
+    notes: createPacketNotes()
   };
+}
+
+function createSavedWorkspaceSummary(workspaceDetails) {
+  return workspaceDetails.map((detail) => ({
+    workspaceId: detail.workspace.workspaceId,
+    name: detail.workspace.name,
+    workspaceType: detail.workspace.workspaceType,
+    lifecycleState: detail.workspace.lifecycleState,
+    sessionCount: detail.sessions.length,
+    projectionCount: detail.projections.length,
+    summaryCardId: detail.summaryCard?.summaryCardId || "",
+    deterministicSummary: detail.summaryCard?.deterministicSummary || "",
+    aiAugmentationStatus: detail.summaryCard?.aiAugmentationStatus || "not_augmented",
+    createdAt: detail.workspace.createdAt,
+    updatedAt: detail.workspace.updatedAt,
+    lastActivatedAt: detail.workspace.lastActivatedAt,
+    lastPausedAt: detail.workspace.lastPausedAt,
+    lastArchivedAt: detail.workspace.lastArchivedAt
+  }));
+}
+
+function createConstellationSummary(constellations) {
+  return constellations.map((constellation) => ({
+    constellationId: constellation.constellationId,
+    name: constellation.name,
+    rootWorkspaceId: constellation.rootWorkspaceId,
+    workspaceCount: Array.isArray(constellation.workspaceIds) ? constellation.workspaceIds.length : 0,
+    updatedAt: constellation.updatedAt
+  }));
+}
+
+function countProjectionsByState(workspaceDetails, projectionState) {
+  return workspaceDetails.reduce((count, detail) => {
+    const projections = Array.isArray(detail.projections) ? detail.projections : [];
+    return count + projections.filter((projection) => projection.projectionState === projectionState).length;
+  }, 0);
+}
+
+function createPacketNotes() {
+  return [
+    "This packet is generated locally by Chrome Flow.",
+    "This is a Session DB packet prepared for debugging or Layer 2 build validation.",
+    "It validates the IndexedDB-backed Session DB v0 foundation and repository boundary.",
+    "Session DB is not yet the active workspace runtime source of truth.",
+    "It does not intentionally include page content.",
+    "Review before sharing once real workspace records are migrated because future records may include workspace names, tab titles, URLs, notes, and summaries."
+  ];
 }
 
 function createButton(id, text, className) {
