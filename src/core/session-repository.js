@@ -185,6 +185,146 @@ export async function createWorkspaceWithSession(details = {}) {
   return { workspace, session, projection, summaryCard };
 }
 
+export async function importLegacyWorkspaceToSessionDb(legacyWorkspace, details = {}) {
+  const now = new Date().toISOString();
+  const sourceWorkspace = normalizeLegacyWorkspace(legacyWorkspace);
+  const workspaceId = sourceWorkspace.workspaceId;
+  const legacyTabs = sourceWorkspace.tabs;
+  const legacyJournal = sourceWorkspace.journal;
+  const legacyTimeline = sourceWorkspace.timeline;
+  const workspace = normalizeWorkspaceRecord({
+    workspaceId,
+    name: sourceWorkspace.name || "Untitled Workspace",
+    aim: sourceWorkspace.aim || "",
+    workspaceType: sourceWorkspace.workspaceType || DEFAULT_WORKSPACE_TYPE,
+    lifecycleState: details.lifecycleState || "paused",
+    createdAt: sourceWorkspace.createdAt || now,
+    updatedAt: now,
+    lastActivatedAt: sourceWorkspace.updatedAt || sourceWorkspace.createdAt || now,
+    lastPausedAt: details.lastPausedAt || now,
+    lastArchivedAt: "",
+    summaryCardId: createStableSummaryCardId(workspaceId),
+    constellationIds: []
+  });
+  const session = createSessionRecord(workspaceId, {
+    sessionState: "imported_snapshot",
+    startedAt: sourceWorkspace.createdAt || now,
+    pausedAt: now,
+    endedAt: now,
+    continuationNote: details.continuationNote || "Imported from active chrome.storage.local workspace into Session DB v0."
+  });
+  const projection = createProjectionRecord(workspaceId, session.sessionId, {
+    projectionState: "dehydrated",
+    projectionMode: "legacy_active_workspace_snapshot",
+    runtimeWindowId: getSingleRuntimeWindowId(legacyTabs),
+    runtimeTabIds: collectUniqueIntegers(legacyTabs.map((tab) => tab.tabId)),
+    runtimeGroupIds: collectUniqueIntegers(legacyTabs.map((tab) => tab.groupId).filter((groupId) => groupId !== -1)),
+    dehydratedAt: now,
+    lastVerifiedAt: now
+  });
+  const workspaceTabs = legacyTabs.map((tab) => createWorkspaceTabRecord(workspaceId, tab, {
+    workspaceTabId: tab.workspaceTabId || crypto.randomUUID(),
+    url: tab.url || "",
+    displayUrl: tab.displayUrl || createDisplayUrl(tab.url || ""),
+    originalTitle: tab.originalTitle || tab.title || "Untitled tab",
+    alias: tab.alias || "",
+    role: tab.role || "unassigned",
+    createdAt: tab.firstSeenAt || sourceWorkspace.createdAt || now,
+    firstSeenAt: tab.firstSeenAt || sourceWorkspace.createdAt || now,
+    lastSeenAt: tab.lastSeenAt || sourceWorkspace.updatedAt || now,
+    lastKnownProjectionState: tab.isOpen === false ? "legacy_missing_at_import" : "legacy_open_at_import"
+  }));
+  const journalEntries = legacyJournal.map((entry) => createJournalEntryRecord(workspaceId, session.sessionId, {
+    journalEntryId: entry.entryId || entry.journalEntryId || crypto.randomUUID(),
+    text: entry.text || "",
+    tag: entry.tag || "",
+    relatedRole: entry.relatedRoleId || entry.relatedRoleLabel || entry.relatedRole || "",
+    createdAt: entry.createdAt || now
+  }));
+  const timelineEvents = legacyTimeline.map((event) => createTimelineEventRecord(
+    workspaceId,
+    session.sessionId,
+    event.type || "legacy_event",
+    event.message || "Imported legacy workspace event.",
+    {
+      eventId: event.eventId || crypto.randomUUID(),
+      createdAt: event.createdAt || now,
+      evidence: createTimelineEvidence(event),
+      recoveryActions: event.recoveryActions || null
+    }
+  ));
+  const importEvent = createTimelineEventRecord(
+    workspaceId,
+    session.sessionId,
+    "legacy_workspace_imported_to_session_db",
+    "Imported active workspace snapshot into Session DB v0.",
+    {
+      createdAt: now,
+      evidence: {
+        source: "chrome.storage.local",
+        sourceWorkspaceId: sourceWorkspace.workspaceId,
+        tabCount: workspaceTabs.length,
+        journalCount: journalEntries.length,
+        timelineCount: timelineEvents.length,
+        migrationMode: "copy_only_runtime_bridge"
+      }
+    }
+  );
+  timelineEvents.push(importEvent);
+  const summaryCard = createSummaryCardRecord(workspace, {
+    summaryCardId: workspace.summaryCardId,
+    createdAt: sourceWorkspace.createdAt || now,
+    deterministicSummary: createLegacyWorkspaceDeterministicSummary(sourceWorkspace, workspaceTabs, journalEntries, timelineEvents),
+    tabCount: workspaceTabs.length,
+    roleSummary: createRoleSummaryFromTabs(workspaceTabs),
+    tabSummary: createTabSummaryFromTabs(workspaceTabs),
+    journalSummary: createJournalSummary(journalEntries),
+    recentActivitySummary: createRecentActivitySummary(timelineEvents),
+    continuationSummary: details.continuationNote || "Imported snapshot is available for saved-workspace inspection. Runtime migration has not started.",
+    linkedWorkspaceSummary: []
+  });
+
+  await runSessionDbTransaction([
+    SESSION_DB_SCHEMA.stores.workspaces,
+    SESSION_DB_SCHEMA.stores.workspaceTabs,
+    SESSION_DB_SCHEMA.stores.sessions,
+    SESSION_DB_SCHEMA.stores.projections,
+    SESSION_DB_SCHEMA.stores.journalEntries,
+    SESSION_DB_SCHEMA.stores.timelineEvents,
+    SESSION_DB_SCHEMA.stores.summaryCards,
+    SESSION_DB_SCHEMA.stores.settings
+  ], "readwrite", (stores) => {
+    stores.get(SESSION_DB_SCHEMA.stores.workspaces).put(workspace);
+    stores.get(SESSION_DB_SCHEMA.stores.sessions).put(session);
+    stores.get(SESSION_DB_SCHEMA.stores.projections).put(projection);
+    stores.get(SESSION_DB_SCHEMA.stores.summaryCards).put(summaryCard);
+    workspaceTabs.forEach((tab) => stores.get(SESSION_DB_SCHEMA.stores.workspaceTabs).put(tab));
+    journalEntries.forEach((entry) => stores.get(SESSION_DB_SCHEMA.stores.journalEntries).put(entry));
+    timelineEvents.forEach((event) => stores.get(SESSION_DB_SCHEMA.stores.timelineEvents).put(event));
+    stores.get(SESSION_DB_SCHEMA.stores.settings).put({ key: ACTIVE_WORKSPACE_SETTING_KEY, value: workspace.workspaceId, updatedAt: now });
+  });
+
+  return {
+    importedAt: now,
+    workspace,
+    session,
+    projection,
+    summaryCard,
+    counts: {
+      workspaceTabs: workspaceTabs.length,
+      journalEntries: journalEntries.length,
+      timelineEvents: timelineEvents.length,
+      runtimeTabIds: projection.runtimeTabIds.length,
+      runtimeGroupIds: projection.runtimeGroupIds.length
+    },
+    bridgeStatus: {
+      sessionDbRuntimeSourceOfTruth: false,
+      activeWorkspaceRuntimeSource: "chrome.storage.local",
+      migrationMode: "copy_only_runtime_bridge"
+    }
+  };
+}
+
 export async function getWorkspaceRecord(workspaceId) {
   const workspace = await getFromStore(SESSION_DB_SCHEMA.stores.workspaces, workspaceId);
   return workspace ? normalizeWorkspaceRecord(workspace) : null;
@@ -254,6 +394,16 @@ export async function saveConstellationRecord(constellation) {
 export async function listConstellationRecords() {
   const constellations = await getAllFromStore(SESSION_DB_SCHEMA.stores.constellations);
   return constellations.map(normalizeConstellationRecord).sort(sortByUpdatedAtDescending);
+}
+
+export async function getWorkspaceJournalEntries(workspaceId) {
+  const entries = await getAllFromIndex(SESSION_DB_SCHEMA.stores.journalEntries, "workspaceId", workspaceId);
+  return entries.map(normalizeJournalEntryRecord).sort(sortByCreatedAtDescending);
+}
+
+export async function getWorkspaceTimelineEvents(workspaceId) {
+  const events = await getAllFromIndex(SESSION_DB_SCHEMA.stores.timelineEvents, "workspaceId", workspaceId);
+  return events.map(normalizeTimelineEventRecord).sort(sortByCreatedAtDescending);
 }
 
 export async function getSummaryCardForWorkspace(workspaceId) {
@@ -425,6 +575,42 @@ export function normalizeSummaryCardRecord(card = {}) {
   };
 }
 
+function normalizeLegacyWorkspace(workspace = {}) {
+  const now = new Date().toISOString();
+
+  return {
+    workspaceId: workspace.workspaceId || crypto.randomUUID(),
+    name: workspace.name || "Untitled Workspace",
+    aim: workspace.aim || "",
+    workspaceType: workspace.workspaceType || DEFAULT_WORKSPACE_TYPE,
+    createdAt: workspace.createdAt || now,
+    updatedAt: workspace.updatedAt || now,
+    tabs: Array.isArray(workspace.tabs) ? workspace.tabs : [],
+    journal: Array.isArray(workspace.journal) ? workspace.journal : [],
+    timeline: Array.isArray(workspace.timeline) ? workspace.timeline : []
+  };
+}
+
+function createStableSummaryCardId(workspaceId) {
+  return "summary-card-" + workspaceId;
+}
+
+function createTimelineEvidence(event = {}) {
+  const evidence = { ...event };
+  delete evidence.eventId;
+  delete evidence.type;
+  delete evidence.message;
+  delete evidence.createdAt;
+  return evidence;
+}
+
+function createLegacyWorkspaceDeterministicSummary(workspace, tabs, journalEntries, timelineEvents) {
+  const name = workspace.name || "Untitled Workspace";
+  const aim = workspace.aim || "No workspace aim recorded.";
+  const workspaceType = workspace.workspaceType || DEFAULT_WORKSPACE_TYPE;
+  return name + " is a " + workspaceType + " workspace imported from the active Chrome Flow runtime. Aim: " + aim + " Tabs recorded: " + tabs.length + ". User notes: " + journalEntries.length + ". System events: " + timelineEvents.length + ".";
+}
+
 function createDeterministicWorkspaceSummary(workspace = {}, details = {}) {
   const name = workspace.name || "Untitled Workspace";
   const aim = workspace.aim || "No workspace aim recorded.";
@@ -432,6 +618,63 @@ function createDeterministicWorkspaceSummary(workspace = {}, details = {}) {
   const tabCount = Number.isInteger(details.tabCount) ? details.tabCount : 0;
 
   return name + " is a " + workspaceType + " workspace. Aim: " + aim + " Tabs recorded: " + tabCount + ".";
+}
+
+function createRoleSummaryFromTabs(tabs) {
+  const roles = new Map();
+
+  tabs.forEach((tab) => {
+    const role = tab.role || "unassigned";
+    const current = roles.get(role) || { role, tabCount: 0 };
+    current.tabCount += 1;
+    roles.set(role, current);
+  });
+
+  return Array.from(roles.values()).sort((left, right) => left.role.localeCompare(right.role));
+}
+
+function createTabSummaryFromTabs(tabs) {
+  return tabs.map((tab) => ({
+    workspaceTabId: tab.workspaceTabId,
+    title: tab.alias || tab.originalTitle,
+    alias: tab.alias,
+    role: tab.role,
+    displayUrl: tab.displayUrl,
+    url: tab.url,
+    lastKnownProjectionState: tab.lastKnownProjectionState
+  }));
+}
+
+function createJournalSummary(entries) {
+  return entries.slice(0, 10).map((entry) => ({
+    journalEntryId: entry.journalEntryId,
+    tag: entry.tag,
+    relatedRole: entry.relatedRole,
+    text: entry.text,
+    createdAt: entry.createdAt
+  }));
+}
+
+function createRecentActivitySummary(events) {
+  return events
+    .slice()
+    .sort(sortByCreatedAtDescending)
+    .slice(0, 12)
+    .map((event) => ({
+      eventId: event.eventId,
+      type: event.type,
+      message: event.message,
+      createdAt: event.createdAt
+    }));
+}
+
+function collectUniqueIntegers(values) {
+  return Array.from(new Set(values.filter(Number.isInteger)));
+}
+
+function getSingleRuntimeWindowId(tabs) {
+  const windowIds = collectUniqueIntegers(tabs.map((tab) => tab.windowId));
+  return windowIds.length === 1 ? windowIds[0] : null;
 }
 
 function createDisplayUrl(url) {
@@ -449,4 +692,8 @@ function sortByUpdatedAtDescending(left, right) {
 
 function sortByStartedAtDescending(left, right) {
   return String(right.startedAt || "").localeCompare(String(left.startedAt || ""));
+}
+
+function sortByCreatedAtDescending(left, right) {
+  return String(right.createdAt || "").localeCompare(String(left.createdAt || ""));
 }
