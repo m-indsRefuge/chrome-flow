@@ -285,7 +285,7 @@ function createRegistryState(workspaces, workspaceDetails, activeDbWorkspaceId) 
     savedWorkspaceIds: workspaces.map((workspace) => workspace.workspaceId),
     savedWorkspaceNames: workspaces.map((workspace) => workspace.name || "Untitled Workspace"),
     activeDbWorkspaceId,
-    activeDbWorkspaceExists,
+    activeDbWorkspaceExists: activeWorkspaceExists,
     smokeTestWorkspaceIds: workspaces.filter(isSmokeTestWorkspace).map((workspace) => workspace.workspaceId),
     importedSnapshotWorkspaceIds: workspaceDetails
       .filter((detail) => detail.lifecycle.latestSessionState === "imported_snapshot")
