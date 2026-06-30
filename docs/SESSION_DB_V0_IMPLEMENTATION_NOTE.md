@@ -4,7 +4,7 @@
 
 This note records the first implementation slices for Chrome Flow Layer 2: Session Continuity and Workspace Session Runtime.
 
-The goal is to introduce the local persistence foundation, a safe active-workspace import bridge, and a saved-workspace inspection surface without disturbing the validated Layer 1 tab-management runtime.
+The goal is to introduce the local persistence foundation, a safe active-workspace import bridge, a saved-workspace inspection surface, and Session DB cleanup controls without disturbing the validated Layer 1 tab-management runtime.
 
 ## Branch
 
@@ -19,6 +19,7 @@ src/core/session-db.js
 src/core/session-repository.js
 src/sidepanel/session-db-diagnostics.js
 src/sidepanel/saved-workspace-registry.js
+src/sidepanel/saved-workspace-cleanup-controls.js
 docs/SESSION_DB_V0_IMPLEMENTATION_NOTE.md
 ```
 
@@ -164,6 +165,22 @@ It can also copy a bounded inspection packet:
 saved-workspace-inspection-packet-v0.1
 ```
 
+### saved-workspace-cleanup-controls.js
+
+Provides safe cleanup controls for Session DB records.
+
+Controls:
+
+```text
+Hide smoke-test workspaces in selector
+Delete Smoke-Test Records
+Delete Selected Saved Workspace
+```
+
+Cleanup controls affect Session DB records only. They must not close browser tabs, create browser windows, reopen tabs, recreate Chrome groups, or change the active `chrome.storage.local` runtime source of truth.
+
+Cleanup actions record diagnostics and refresh the saved workspace registry after deletion.
+
 ## Active Workspace Import Bridge
 
 The active workspace import bridge copies the current active workspace from the existing `chrome.storage.local` runtime path into Session DB v0.
@@ -209,6 +226,33 @@ copy an inspection packet for review
 record diagnostics about inspection actions
 ```
 
+## Saved Workspace Cleanup
+
+Saved workspace cleanup is Session DB-only.
+
+It may:
+
+```text
+hide smoke-test workspaces from the selector
+cascade-delete smoke-test workspace records from Session DB
+cascade-delete a selected saved workspace from Session DB after confirmation
+remove deleted workspaces from Session DB constellation membership
+clear the Session DB activeWorkspaceId setting if it points to a deleted Session DB record
+record cleanup diagnostics
+refresh the registry after cleanup
+```
+
+It must not:
+
+```text
+close browser tabs
+open browser tabs
+create or close browser windows
+recreate Chrome groups
+change the active chrome.storage.local workspace runtime
+mark Session DB as runtime source of truth
+```
+
 ## Safety Boundary
 
 This slice does not replace the current active workspace runtime yet.
@@ -233,6 +277,11 @@ Current validation targets:
 - inspect a saved workspace without opening browser tabs
 - confirm the inspection card shows deterministic summary, lifecycle state, projection state, and record counts
 - copy a Saved Workspace Inspection Packet
+- hide smoke-test records in the saved workspace selector
+- delete smoke-test Session DB records after confirmation
+- delete a selected saved workspace record after confirmation
+- confirm cleanup does not close browser tabs or change chrome.storage.local runtime
+- confirm cleanup diagnostics are recorded
 ```
 
 ## Why This Comes First
@@ -243,17 +292,17 @@ This implementation sequence creates the persistence foundation early while keep
 
 ## Next Build Slice
 
-Recommended next slice after the saved-workspace registry validates:
+Recommended next slice after cleanup controls validate:
 
 ```text
-Saved Workspace Registry Refinement / Cleanup Controls
+Saved Workspace Registry Validation / Layer 2 Persistence Stabilization
 ```
 
 Purpose:
 
 ```text
-- remove or hide smoke-test records
-- separate test records from imported real workspace records
-- improve saved workspace labels and sorting
-- prepare the registry for future resume/dehydrate controls
+- validate cleanup controls against smoke-test and imported records
+- inspect imported workspace after cleanup
+- confirm Session DB packet counts match registry counts
+- prepare the persistence branch for review/merge or for the next runtime-control slice
 ```
