@@ -24,6 +24,10 @@ const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const MAX_DIAGNOSTICS = 200;
 const SMOKE_TEST_WORKSPACE_NAME = "Session DB Smoke Test Workspace";
 const SMOKE_TEST_WORKSPACE_AIM = "Validate Session DB v0 workspace/session/projection persistence.";
+const PACKET_ENVELOPE_START = "CHROME_FLOW_PACKET_START";
+const PACKET_ENVELOPE_END = "CHROME_FLOW_PACKET_END";
+const PACKET_CLIPBOARD_FORMAT = "chrome_flow_packet_envelope_v0.1";
+const PACKET_CONTENT_TYPE = "application/json";
 
 installLayer2PersistenceValidation();
 
@@ -117,13 +121,13 @@ async function copyLayer2ValidationPacket() {
     await navigator.clipboard.writeText(formatLayer2ValidationPacketForClipboard(packet));
     setOutput(packet);
     setSummary(createSummaryText(packet));
-    setStatus("Layer 2 validation packet copied: " + packet.validation.status + ".");
-    await recordDiagnostic("info", "layer2_validation_packet_copied", "Layer 2 validation packet copied.", {
+    setStatus("Packaged Layer 2 validation packet copied: " + packet.validation.status + ".");
+    await recordDiagnostic("info", "layer2_validation_packet_copied", "Packaged Layer 2 validation packet copied.", {
       schema: packet.extension.schema,
       status: packet.validation.status,
       workspaceCount: packet.sessionDbSummary.workspaceCount,
       timelineEventCount: packet.sessionDbSummary.timelineEventCount,
-      clipboardFormat: "chrome_flow_packet_envelope_v0.1"
+      clipboardFormat: packet.clipboard.format
     });
   } catch (error) {
     await handleValidationError("layer2_validation_packet_copy_failed", "Could not copy Layer 2 validation packet.", error);
@@ -203,6 +207,13 @@ async function buildLayer2ValidationPacket() {
       name: "Chrome Flow",
       schema: "layer2-persistence-validation-packet-v0.1"
     },
+    clipboard: {
+      format: PACKET_CLIPBOARD_FORMAT,
+      contentType: PACKET_CONTENT_TYPE,
+      copyMode: "text_envelope",
+      envelopeStart: PACKET_ENVELOPE_START,
+      envelopeEnd: PACKET_ENVELOPE_END
+    },
     source: {
       type: "layer2_persistence_validation",
       readOnly: true,
@@ -233,6 +244,7 @@ async function buildLayer2ValidationPacket() {
       "This packet is generated locally by Chrome Flow.",
       "This validation is read-only and does not open tabs, close tabs, create windows, or rehydrate saved workspaces.",
       "Session DB remains a persistence and inspection layer only; active runtime remains chrome.storage.local.",
+      "This packet is copied with the standard Chrome Flow text envelope for review.",
       "Review before sharing because workspace names, tab titles, URLs in timeline evidence, and notes may be sensitive."
     ]
   };
@@ -346,16 +358,16 @@ function createSummaryText(packet) {
 
 function formatLayer2ValidationPacketForClipboard(packet) {
   return [
-    "CHROME_FLOW_PACKET_START",
+    packet.clipboard.envelopeStart,
     "packetType: " + packet.packetType,
     "schema: " + packet.extension.schema,
-    "clipboardFormat: chrome_flow_packet_envelope_v0.1",
+    "clipboardFormat: " + packet.clipboard.format,
     "createdAt: " + packet.createdAt,
-    "contentType: application/json",
+    "contentType: " + packet.clipboard.contentType,
     "",
     JSON.stringify(packet, null, 2),
     "",
-    "CHROME_FLOW_PACKET_END"
+    packet.clipboard.envelopeEnd
   ].join("\n");
 }
 
