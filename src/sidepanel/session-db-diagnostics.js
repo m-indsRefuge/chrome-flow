@@ -4,12 +4,20 @@ import {
 } from "../core/session-db.js";
 
 import {
+  getWorkspace
+} from "../core/workspace-store.js";
+
+import {
   createWorkspaceWithSession,
   getActiveWorkspaceId,
   getDedicatedWindowThreshold,
   getSummaryCardForWorkspace,
+  getWorkspaceJournalEntries,
   getWorkspaceProjections,
   getWorkspaceSessions,
+  getWorkspaceTabs,
+  getWorkspaceTimelineEvents,
+  importLegacyWorkspaceToSessionDb,
   listConstellationRecords,
   listWorkspaceRecords
 } from "../core/session-repository.js";
@@ -41,7 +49,7 @@ function renderSessionDbDiagnostics() {
 
   const help = document.createElement("p");
   help.className = "section-help";
-  help.textContent = "Layer 2 smoke-test surface for the IndexedDB-backed Session DB v0. This does not replace the active workspace runtime yet.";
+  help.textContent = "Layer 2 smoke-test and migration-bridge surface for the IndexedDB-backed Session DB v0. This does not replace the active workspace runtime yet.";
   section.appendChild(help);
 
   const summary = document.createElement("div");
@@ -53,6 +61,7 @@ function renderSessionDbDiagnostics() {
   actions.className = "workspace-session-actions";
   actions.appendChild(createButton("openSessionDbButton", "Open Session DB", "secondary-button"));
   actions.appendChild(createButton("createSessionDbTestWorkspaceButton", "Create Test Workspace Record", "secondary-button"));
+  actions.appendChild(createButton("importActiveWorkspaceToSessionDbButton", "Import Active Workspace to Session DB", "secondary-button"));
   actions.appendChild(createButton("listSessionDbWorkspacesButton", "List Saved DB Workspaces", "secondary-button"));
   actions.appendChild(createButton("copySessionDbPacketButton", "Copy Session DB Packet", "secondary-button"));
   section.appendChild(actions);
@@ -74,6 +83,7 @@ function renderSessionDbDiagnostics() {
 function attachSessionDbDiagnosticsHandlers() {
   document.getElementById("openSessionDbButton")?.addEventListener("click", openSessionDbForDiagnostics);
   document.getElementById("createSessionDbTestWorkspaceButton")?.addEventListener("click", createTestWorkspaceForDiagnostics);
+  document.getElementById("importActiveWorkspaceToSessionDbButton")?.addEventListener("click", importActiveWorkspaceForDiagnostics);
   document.getElementById("listSessionDbWorkspacesButton")?.addEventListener("click", listWorkspacesForDiagnostics);
   document.getElementById("copySessionDbPacketButton")?.addEventListener("click", copySessionDbPacket);
 }
@@ -134,19 +144,62 @@ async function createTestWorkspaceForDiagnostics() {
   }
 }
 
+async function importActiveWorkspaceForDiagnostics() {
+  try {
+    const legacyWorkspace = await getWorkspace();
+    const result = await importLegacyWorkspaceToSessionDb(legacyWorkspace);
+    const packet = {
+      status: "success",
+      importedAt: result.importedAt,
+      workspaceId: result.workspace.workspaceId,
+      name: result.workspace.name,
+      counts: result.counts,
+      bridgeStatus: result.bridgeStatus,
+      summaryCard: {
+        summaryCardId: result.summaryCard.summaryCardId,
+        deterministicSummary: result.summaryCard.deterministicSummary,
+        roleSummary: result.summaryCard.roleSummary,
+        tabSummaryCount: result.summaryCard.tabSummary.length,
+        journalSummaryCount: result.summaryCard.journalSummary.length,
+        recentActivitySummaryCount: result.summaryCard.recentActivitySummary.length,
+        aiAugmentationStatus: result.summaryCard.aiAugmentationStatus
+      }
+    };
+
+    setOutput(packet);
+    setStatus("Imported active workspace into Session DB as a saved snapshot. Runtime source remains chrome.storage.local.");
+    await recordDiagnostic("info", "active_workspace_imported_to_session_db", "Active workspace imported into Session DB as a saved snapshot.", {
+      workspaceId: result.workspace.workspaceId,
+      name: result.workspace.name,
+      counts: result.counts,
+      migrationMode: result.bridgeStatus.migrationMode,
+      sessionDbRuntimeSourceOfTruth: result.bridgeStatus.sessionDbRuntimeSourceOfTruth
+    });
+    await refreshSessionDbDiagnosticsSummary();
+  } catch (error) {
+    await handleSessionDbError("active_workspace_import_to_session_db_failed", "Could not import active workspace into Session DB.", error);
+  }
+}
+
 async function listWorkspacesForDiagnostics() {
   try {
     const workspaces = await listWorkspaceRecords();
     const records = [];
 
     for (const workspace of workspaces) {
+      const tabs = await getWorkspaceTabs(workspace.workspaceId);
       const sessions = await getWorkspaceSessions(workspace.workspaceId);
       const projections = await getWorkspaceProjections(workspace.workspaceId);
+      const journalEntries = await getWorkspaceJournalEntries(workspace.workspaceId);
+      const timelineEvents = await getWorkspaceTimelineEvents(workspace.workspaceId);
       const summaryCard = await getSummaryCardForWorkspace(workspace.workspaceId);
       records.push({
         workspace,
+        tabCount: tabs.length,
         sessionCount: sessions.length,
         projectionCount: projections.length,
+        journalEntryCount: journalEntries.length,
+        timelineEventCount: timelineEvents.length,
         summaryCard: summaryCard ? {
           summaryCardId: summaryCard.summaryCardId,
           deterministicSummary: summaryCard.deterministicSummary,
@@ -181,6 +234,8 @@ async function copySessionDbPacket() {
     setStatus("Packaged Session DB packet copied. Paste it into chat as a contained text packet for review.");
     await recordDiagnostic("info", "session_db_packet_copied", "Packaged Session DB diagnostic packet copied.", {
       workspaceCount: packet.sessionDbSummary.workspaceCount,
+      workspaceTabCount: packet.sessionDbSummary.workspaceTabCount,
+      timelineEventCount: packet.sessionDbSummary.timelineEventCount,
       constellationCount: packet.sessionDbSummary.constellationCount,
       activeWorkspaceId: packet.sessionDbSummary.activeWorkspaceId,
       schema: packet.extension.schema,
@@ -219,10 +274,13 @@ async function buildSessionDbPacket() {
   const workspaceDetails = [];
 
   for (const workspace of workspaces) {
+    const tabs = await getWorkspaceTabs(workspace.workspaceId);
     const sessions = await getWorkspaceSessions(workspace.workspaceId);
     const projections = await getWorkspaceProjections(workspace.workspaceId);
+    const journalEntries = await getWorkspaceJournalEntries(workspace.workspaceId);
+    const timelineEvents = await getWorkspaceTimelineEvents(workspace.workspaceId);
     const summaryCard = await getSummaryCardForWorkspace(workspace.workspaceId);
-    workspaceDetails.push({ workspace, sessions, projections, summaryCard });
+    workspaceDetails.push({ workspace, tabs, sessions, projections, journalEntries, timelineEvents, summaryCard });
   }
 
   return {
@@ -230,7 +288,7 @@ async function buildSessionDbPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "session-db-packet-v0.2"
+      schema: "session-db-packet-v0.3"
     },
     source: {
       type: "session_db_diagnostics",
@@ -248,6 +306,11 @@ async function buildSessionDbPacket() {
     },
     sessionDbSummary: {
       workspaceCount: workspaces.length,
+      workspaceTabCount: countNestedRecords(workspaceDetails, "tabs"),
+      sessionCount: countNestedRecords(workspaceDetails, "sessions"),
+      projectionCount: countNestedRecords(workspaceDetails, "projections"),
+      journalEntryCount: countNestedRecords(workspaceDetails, "journalEntries"),
+      timelineEventCount: countNestedRecords(workspaceDetails, "timelineEvents"),
       constellationCount: constellations.length,
       activeWorkspaceId,
       dedicatedWindowThreshold,
@@ -264,8 +327,8 @@ async function buildSessionDbPacket() {
     bridgeStatus: {
       sessionDbRuntimeSourceOfTruth: false,
       activeWorkspaceRuntimeSource: "chrome.storage.local",
-      migrationStatus: "not_started",
-      layer2Status: "session_db_smoke_test"
+      migrationStatus: "copy_bridge_available",
+      layer2Status: "active_workspace_import_bridge"
     },
     notes: createPacketNotes()
   };
@@ -292,8 +355,11 @@ function createSavedWorkspaceSummary(workspaceDetails) {
     name: detail.workspace.name,
     workspaceType: detail.workspace.workspaceType,
     lifecycleState: detail.workspace.lifecycleState,
+    tabCount: detail.tabs.length,
     sessionCount: detail.sessions.length,
     projectionCount: detail.projections.length,
+    journalEntryCount: detail.journalEntries.length,
+    timelineEventCount: detail.timelineEvents.length,
     summaryCardId: detail.summaryCard?.summaryCardId || "",
     deterministicSummary: detail.summaryCard?.deterministicSummary || "",
     aiAugmentationStatus: detail.summaryCard?.aiAugmentationStatus || "not_augmented",
@@ -315,6 +381,10 @@ function createConstellationSummary(constellations) {
   }));
 }
 
+function countNestedRecords(workspaceDetails, key) {
+  return workspaceDetails.reduce((count, detail) => count + (Array.isArray(detail[key]) ? detail[key].length : 0), 0);
+}
+
 function countProjectionsByState(workspaceDetails, projectionState) {
   return workspaceDetails.reduce((count, detail) => {
     const projections = Array.isArray(detail.projections) ? detail.projections : [];
@@ -326,10 +396,10 @@ function createPacketNotes() {
   return [
     "This packet is generated locally by Chrome Flow.",
     "This is a Session DB packet prepared for debugging or Layer 2 build validation.",
-    "It validates the IndexedDB-backed Session DB v0 foundation and repository boundary.",
+    "It validates the IndexedDB-backed Session DB v0 foundation, repository boundary, and active-workspace import bridge.",
     "Session DB is not yet the active workspace runtime source of truth.",
     "It does not intentionally include page content.",
-    "Review before sharing once real workspace records are migrated because future records may include workspace names, tab titles, URLs, notes, and summaries."
+    "Review before sharing because imported real workspace records may include workspace names, tab titles, URLs, notes, and summaries."
   ];
 }
 
