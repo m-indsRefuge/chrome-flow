@@ -425,7 +425,7 @@ function createConfirmationCommandEnvelope(previewPlan, decisionState, confirmat
       willChangeSessionDbState: false,
       willChangeChromeStorageRuntime: false,
       estimatedTabCount: previewPlan.savedTabCount,
-      estimatedWindowCount: previewPlan.targetMode === "current_window" ? 0 : 1,
+      estimatedWindowCount: createEstimatedWindowCount(previewPlan),
       cancellationAvailable: previewPlan.status === "ready"
     },
     execution: {
@@ -456,6 +456,11 @@ function createConfirmationCommandEnvelope(previewPlan, decisionState, confirmat
       }
     }
   };
+}
+
+function createEstimatedWindowCount(previewPlan) {
+  if (previewPlan.status !== "ready") return 0;
+  return previewPlan.targetMode === "current_window" ? 0 : 1;
 }
 
 function createConfirmationStatus(planStatus, decisionState) {
