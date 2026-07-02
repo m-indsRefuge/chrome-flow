@@ -17,6 +17,8 @@ const PACKET_ENVELOPE_END = "CHROME_FLOW_PACKET_END";
 const PACKET_CLIPBOARD_FORMAT = "chrome_flow_packet_envelope_v0.1";
 const PACKET_CONTENT_TYPE = "application/json";
 const RUN_SETTLE_DELAY_MS = 450;
+const TAB_METADATA_RETRY_COUNT = 12;
+const TAB_METADATA_RETRY_DELAY_MS = 350;
 
 let lastPreparedPacket = null;
 let lastExecutionPacket = null;
@@ -248,13 +250,7 @@ async function buildPreRunPacket(candidateSummaries = null) {
       name: "Chrome Flow",
       schema: "projection-resume-run-precheck-packet-v0.3-live-known-fixture"
     },
-    clipboard: {
-      format: PACKET_CLIPBOARD_FORMAT,
-      contentType: PACKET_CONTENT_TYPE,
-      copyMode: "text_envelope",
-      envelopeStart: PACKET_ENVELOPE_START,
-      envelopeEnd: PACKET_ENVELOPE_END
-    },
+    clipboard: createClipboardBlock(),
     source: {
       type: "projection_resume_run_live_known_fixture_precheck",
       readOnly: true,
@@ -345,6 +341,7 @@ async function executeKnownFixtureResume(preRunPacket, hooks = {}) {
   hooks.markBrowserChanged?.();
   await delay(RUN_SETTLE_DELAY_MS);
 
+  const postActionReadiness = await waitForCreatedTabRuntimeMetadata(creationResult.createdTabs);
   const snapshotAfter = await captureBrowserSnapshot();
   const activeRuntimeAfter = await getWorkspace();
   const activeDbWorkspaceIdAfter = await getActiveWorkspaceId();
@@ -353,6 +350,7 @@ async function executeKnownFixtureResume(preRunPacket, hooks = {}) {
     tabs,
     plannedGroups,
     creationResult,
+    postActionReadiness,
     snapshotBefore,
     snapshotAfter,
     activeRuntimeBefore,
@@ -368,7 +366,7 @@ async function executeKnownFixtureResume(preRunPacket, hooks = {}) {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "projection-resume-execution-packet-v0.1-known-fixture"
+      schema: "projection-resume-execution-packet-v0.2-known-fixture-verification-hardening"
     },
     clipboard: preRunPacket.clipboard,
     commandEnvelope: {
@@ -394,6 +392,7 @@ async function executeKnownFixtureResume(preRunPacket, hooks = {}) {
     operatorConfirmation: preRunPacket.operatorConfirmation,
     browserPlan: preRunPacket.browserPlan,
     browserResult: creationResult,
+    postActionReadiness,
     snapshotBefore,
     snapshotAfter,
     runtimeReview: {
@@ -411,6 +410,7 @@ async function executeKnownFixtureResume(preRunPacket, hooks = {}) {
         "One new Chrome window was created for the known fixture.",
         "Saved tabs were created from Session DB tab records.",
         "Chrome groups were created only from tabs created by this command.",
+        "Post-action readiness waited for created tab runtime URL metadata.",
         "No existing tabs or windows were intentionally closed.",
         "No Session DB records were intentionally mutated.",
         "chrome.storage.local active workspace was not intentionally replaced."
@@ -479,8 +479,83 @@ function createCreatedTabEvidence(savedTab, createdTab, savedOrder) {
     savedUrl: savedTab.url,
     createdTabId: createdTab.id,
     createdWindowId: createdTab.windowId,
+    initialRuntimeUrl: createdTab.url || "",
+    initialRuntimeTitle: createdTab.title || "",
     status: "created"
   };
+}
+
+async function waitForCreatedTabRuntimeMetadata(createdTabs) {
+  const startedAt = new Date().toISOString();
+  let latestRecords = [];
+
+  for (let attempt = 1; attempt <= TAB_METADATA_RETRY_COUNT; attempt += 1) {
+    latestRecords = await readCreatedTabRuntimeMetadata(createdTabs);
+    const urlsMatch = createdTabUrlsMatchSavedUrls(createdTabs, latestRecords);
+    const allRuntimeUrlsAvailable = latestRecords.every((record) => Boolean(record.runtimeUrl));
+    if (urlsMatch && allRuntimeUrlsAvailable) {
+      return {
+        status: "ready",
+        ready: true,
+        attempts: attempt,
+        waitedMs: (attempt - 1) * TAB_METADATA_RETRY_DELAY_MS,
+        startedAt,
+        finishedAt: new Date().toISOString(),
+        expectedTabCount: createdTabs.length,
+        observedTabCount: latestRecords.length,
+        createdTabs: latestRecords
+      };
+    }
+    await delay(TAB_METADATA_RETRY_DELAY_MS);
+  }
+
+  return {
+    status: "not_ready_after_retry",
+    ready: false,
+    attempts: TAB_METADATA_RETRY_COUNT,
+    waitedMs: TAB_METADATA_RETRY_COUNT * TAB_METADATA_RETRY_DELAY_MS,
+    startedAt,
+    finishedAt: new Date().toISOString(),
+    expectedTabCount: createdTabs.length,
+    observedTabCount: latestRecords.length,
+    createdTabs: latestRecords
+  };
+}
+
+async function readCreatedTabRuntimeMetadata(createdTabs) {
+  const records = [];
+  for (const createdTab of createdTabs) {
+    try {
+      const runtimeTab = await chrome.tabs.get(createdTab.createdTabId);
+      records.push({
+        workspaceTabId: createdTab.workspaceTabId,
+        createdTabId: createdTab.createdTabId,
+        createdWindowId: runtimeTab.windowId,
+        savedUrl: createdTab.savedUrl,
+        runtimeUrl: runtimeTab.url || "",
+        runtimeTitle: runtimeTab.title || "",
+        runtimeStatus: runtimeTab.status || "unknown",
+        urlMatchesSaved: urlsMatch(createdTab.savedUrl, runtimeTab.url || ""),
+        titleObserved: Boolean(runtimeTab.title),
+        status: "observed"
+      });
+    } catch (error) {
+      records.push({
+        workspaceTabId: createdTab.workspaceTabId,
+        createdTabId: createdTab.createdTabId,
+        createdWindowId: createdTab.createdWindowId,
+        savedUrl: createdTab.savedUrl,
+        runtimeUrl: "",
+        runtimeTitle: "",
+        runtimeStatus: "unavailable",
+        urlMatchesSaved: false,
+        titleObserved: false,
+        status: "read_failed",
+        error: summarizeError(error)
+      });
+    }
+  }
+  return records;
 }
 
 function verifyExecution(context) {
@@ -501,6 +576,8 @@ function verifyExecution(context) {
   checks.push(createVerificationCheck("created_tab_count_matches_saved", createdTabIds.length === context.tabs.length, "Created tab count matches saved tab count."));
   checks.push(createVerificationCheck("created_tabs_exist_after", createdTabIds.every((tabId) => afterTabIds.has(tabId)), "All created tabs exist after execution."));
   checks.push(createVerificationCheck("created_tabs_in_created_window", createdTabIds.every((tabId) => afterTabsById.get(tabId)?.windowId === createdWindowId), "All created tabs are in the created window."));
+  checks.push(createVerificationCheck("created_tabs_have_runtime_url_metadata", context.postActionReadiness?.createdTabs?.every((tab) => Boolean(tab.runtimeUrl)) === true, "Created tabs have runtime URL metadata after readiness wait."));
+  checks.push(createVerificationCheck("created_tab_urls_match_saved_urls", createdTabUrlsMatchSavedUrls(context.creationResult.createdTabs, context.postActionReadiness?.createdTabs || []), "Created tab runtime URLs match saved URLs."));
   checks.push(createVerificationCheck("created_group_count_matches_plan", createdGroupIds.length === context.plannedGroups.length, "Created group count matches planned group count."));
   checks.push(createVerificationCheck("created_groups_only_contain_created_tabs", createdGroupsOnlyContainCreatedTabs(context.creationResult.createdGroups, createdTabSet), "Created groups contain only tabs created by this command."));
   checks.push(createVerificationCheck("before_windows_preserved", [...beforeWindowIds].every((windowId) => afterWindowIds.has(windowId)), "No before-run windows disappeared."));
@@ -518,6 +595,20 @@ function verifyExecution(context) {
   };
 }
 
+function createdTabUrlsMatchSavedUrls(createdTabs, runtimeTabs) {
+  if (createdTabs.length !== runtimeTabs.length) return false;
+  const runtimeByCreatedTabId = new Map(runtimeTabs.map((tab) => [tab.createdTabId, tab]));
+  return createdTabs.every((createdTab) => urlsMatch(createdTab.savedUrl, runtimeByCreatedTabId.get(createdTab.createdTabId)?.runtimeUrl || ""));
+}
+
+function urlsMatch(left, right) {
+  return normalizeUrlForVerification(left) === normalizeUrlForVerification(right);
+}
+
+function normalizeUrlForVerification(url) {
+  return String(url || "").trim();
+}
+
 function createdGroupsOnlyContainCreatedTabs(groups, createdTabSet) {
   return groups.filter((group) => Number.isInteger(group.groupId)).every((group) => group.tabIds.every((tabId) => createdTabSet.has(tabId)));
 }
@@ -533,7 +624,7 @@ async function buildExecutionFailurePacket({ error, runtimeActionStarted, browse
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "projection-resume-execution-packet-v0.1-known-fixture"
+      schema: "projection-resume-execution-packet-v0.2-known-fixture-verification-hardening"
     },
     clipboard: createClipboardBlock(),
     source: {
