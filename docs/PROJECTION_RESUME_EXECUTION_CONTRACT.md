@@ -58,7 +58,7 @@ One saved workspace target
 One execution command
 New Chrome window target only
 Create tabs from saved workspace tab URLs
-Optionally create Chrome tab groups after tabs exist
+Create Chrome tab groups after tabs exist when saved role/group evidence exists
 Focus the created window after successful creation
 Record diagnostics
 Produce execution packet
@@ -81,6 +81,23 @@ plannedTabCreates: 3
 plannedGroupCreates: 3
 projectionStateBefore: dehydrated
 ```
+
+## Mandatory Group Projection Rule
+
+Chrome tab groups are part of the workspace projection, not decorative UI polish.
+
+When a saved workspace contains role/group evidence and is resumed into a new window or future constellation window set, Chrome Flow must recreate the expected tab groups after creating the tabs.
+
+For the first execution prototype:
+
+```text
+plannedGroupCreates > 0 -> group creation is required
+createdGroupIds count must equal plannedGroupCreates count
+created groups must contain only tabs created by this command
+group creation failure prevents a clean success result
+```
+
+The only acceptable no-group case is a saved workspace with no role/group plan to recreate.
 
 ## Explicitly Out of Scope
 
@@ -144,7 +161,7 @@ Workspace id
 Saved tab count
 Target mode: new_window only
 Number of tabs that will be opened
-Number of Chrome groups that may be created
+Number of Chrome groups that will be created when saved group evidence exists
 Whether the created window will be focused
 Whether existing tabs/windows will be touched
 Whether Session DB authority will change
@@ -211,7 +228,7 @@ The first execution prototype must follow this sequence:
 7. Open saved tab URLs in that new window.
 8. Capture created runtime window id.
 9. Capture created runtime tab ids.
-10. Optionally create Chrome groups by saved tab role.
+10. Create Chrome groups by saved tab role when group evidence exists.
 11. Capture created runtime group ids.
 12. Focus created window if requested.
 13. Run post-action verification.
@@ -228,7 +245,7 @@ Allowed Chrome API effects:
 ```text
 create one new Chrome window
 create tabs in that new window from saved URLs
-create Chrome tab groups only for created tabs
+create Chrome tab groups for created tabs when saved roles/groups exist
 set group titles from saved roles
 focus the created window if requested
 ```
@@ -301,7 +318,7 @@ createdWindowId exists
 createdTabIds count equals savedTabCount
 created tabs are in the created window
 created tab URLs correspond to planned saved URLs
-created group ids count equals plannedGroupCreates count when grouping enabled
+created group ids count equals plannedGroupCreates count when group evidence exists
 created groups only contain tabs created by this command
 no unrelated existing tabs were moved or closed
 no existing windows were closed
@@ -383,12 +400,14 @@ failed: execution or verification failed.
 
 The first prototype must be honest about partial failure.
 
-If a window is created but tab creation partly fails, the packet must report:
+If a window is created but tab creation or group creation partly fails, the packet must report:
 
 ```text
 createdWindowId
 createdTabIds
+createdGroupIds
 failedTabCreates
+failedGroupCreates
 verificationStatus: failed or warn
 ```
 
@@ -448,6 +467,7 @@ Cancelled confirmation -> execution blocked before browser action.
 Zero-tab workspace -> execution blocked before browser action.
 Missing URL tab -> execution blocked before browser action.
 Unchecked operator confirmation -> execution blocked before browser action.
+Group creation failure when groups are expected -> verification failed or warn, not success.
 ```
 
 Required safety validation:
@@ -469,7 +489,7 @@ Operator explicitly confirms execution.
 Only one new window is created.
 Only saved workspace URLs are opened.
 Created tab count matches expected count.
-Created group count matches expected count when group creation is enabled.
+Created group count matches expected count when group evidence exists.
 No unrelated tabs/windows are affected.
 Post-action verification packet is produced.
 Diagnostics record execution and verification.
@@ -495,4 +515,5 @@ new_window target mode only
 explicit Operator confirmation
 no existing-tab modification
 post-action verification required
+mandatory Chrome group creation when saved group evidence exists
 ```
