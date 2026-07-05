@@ -6,6 +6,7 @@ const PACKET_ENVELOPE_START = "CHROME_FLOW_PACKET_START";
 const PACKET_ENVELOPE_END = "CHROME_FLOW_PACKET_END";
 const PACKET_CLIPBOARD_FORMAT = "chrome_flow_packet_envelope_v0.1";
 const PACKET_CONTENT_TYPE = "application/json";
+const RUNTIME_TAB_HYDRATION_DELAY_MS = 500;
 
 let lastPreflightPacket = null;
 
@@ -67,12 +68,13 @@ async function copyPreflightPacket() {
 }
 
 async function buildPreflightPacket() {
-  const workspace = await getWorkspace();
-  const tabs = sortTabsByRuntimeOrder(Array.isArray(workspace?.tabs) ? workspace.tabs : []);
+  const runtimeRead = await readRuntimeWorkspaceWithTabHydration();
+  const workspace = runtimeRead.selectedWorkspace;
+  const tabs = sortTabsByRuntimeOrder(runtimeRead.selectedTabs);
   const tabStatus = buildTabStatus(tabs);
   const plannedGroups = createPlannedGroups(tabs);
   const policy = classifyWorkspace(tabStatus.totalTabs);
-  const checks = createPreflightChecks({ workspace, tabStatus, plannedGroups, policy });
+  const checks = createPreflightChecks({ workspace, tabStatus, plannedGroups, policy, runtimeRead });
   const failedChecks = checks.filter((check) => check.status === "fail");
   const ready = failedChecks.length === 0;
 
@@ -81,7 +83,7 @@ async function buildPreflightPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "dedicated-window-threshold-preflight-packet-v0.1"
+      schema: "dedicated-window-threshold-preflight-packet-v0.2-runtime-hydration"
     },
     clipboard: createClipboardBlock(),
     source: {
@@ -94,7 +96,8 @@ async function buildPreflightPacket() {
       sessionDbChanged: false,
       chromeStorageRuntimeChanged: false,
       packetPreparedOnDemand: true,
-      copyRebuildsFromRuntimeState: true
+      copyRebuildsFromRuntimeState: true,
+      runtimeTabHydrationRead: true
     },
     workspace: {
       workspaceId: workspace?.workspaceId || "",
@@ -102,6 +105,7 @@ async function buildPreflightPacket() {
       workspaceType: workspace?.workspaceType || workspace?.type || "",
       aim: workspace?.aim || ""
     },
+    runtimeRead,
     thresholdPolicy: {
       thresholdTabCount: DEDICATED_WINDOW_THRESHOLD,
       currentWindowValidRange: "0-3 tabs",
@@ -132,9 +136,75 @@ async function buildPreflightPacket() {
         "A 4+ tab active runtime workspace is required before dedicated-window projection can proceed.",
         "All tabs must have URLs and assigned roles for this first threshold preflight.",
         "The copy action rebuilds the packet from current runtime state to avoid stale load-time packets.",
+        "This packet performs a second delayed runtime tab read to detect hydration gaps.",
         "Future live execution must use a separate validation suite, Operator approval, live action, and post-action verification."
       ]
     }
+  };
+}
+
+async function readRuntimeWorkspaceWithTabHydration() {
+  const firstWorkspace = await getWorkspace();
+  const firstTabs = Array.isArray(firstWorkspace?.tabs) ? firstWorkspace.tabs : [];
+
+  if (firstTabs.length > 0) {
+    return createRuntimeReadEvidence({
+      status: "ready_first_read",
+      selectedRead: "first",
+      firstWorkspace,
+      firstTabs,
+      secondWorkspace: null,
+      secondTabs: []
+    });
+  }
+
+  await delay(RUNTIME_TAB_HYDRATION_DELAY_MS);
+  const secondWorkspace = await getWorkspace();
+  const secondTabs = Array.isArray(secondWorkspace?.tabs) ? secondWorkspace.tabs : [];
+
+  if (secondTabs.length > 0) {
+    return createRuntimeReadEvidence({
+      status: "ready_second_read",
+      selectedRead: "second",
+      firstWorkspace,
+      firstTabs,
+      secondWorkspace,
+      secondTabs
+    });
+  }
+
+  return createRuntimeReadEvidence({
+    status: "tabs_missing_after_hydration_read",
+    selectedRead: "second",
+    firstWorkspace,
+    firstTabs,
+    secondWorkspace,
+    secondTabs
+  });
+}
+
+function createRuntimeReadEvidence({ status, selectedRead, firstWorkspace, firstTabs, secondWorkspace, secondTabs }) {
+  const selectedWorkspace = selectedRead === "first" ? firstWorkspace : secondWorkspace || firstWorkspace;
+  const selectedTabs = selectedRead === "first" ? firstTabs : secondTabs;
+  return {
+    status,
+    selectedRead,
+    hydrationDelayMs: selectedRead === "second" ? RUNTIME_TAB_HYDRATION_DELAY_MS : 0,
+    firstRead: {
+      workspaceId: firstWorkspace?.workspaceId || "",
+      name: firstWorkspace?.name || "",
+      tabCount: firstTabs.length,
+      tabsArrayPresent: Array.isArray(firstWorkspace?.tabs)
+    },
+    secondRead: secondWorkspace ? {
+      workspaceId: secondWorkspace?.workspaceId || "",
+      name: secondWorkspace?.name || "",
+      tabCount: secondTabs.length,
+      tabsArrayPresent: Array.isArray(secondWorkspace?.tabs)
+    } : null,
+    selectedWorkspace,
+    selectedTabs,
+    selectedTabCount: selectedTabs.length
   };
 }
 
@@ -183,12 +253,13 @@ function classifyWorkspace(totalTabs) {
   };
 }
 
-function createPreflightChecks({ workspace, tabStatus, plannedGroups, policy }) {
+function createPreflightChecks({ workspace, tabStatus, plannedGroups, policy, runtimeRead }) {
   return [
     createCheck("runtime_workspace_exists", Boolean(workspace?.workspaceId), "Active runtime workspace exists."),
+    createCheck("runtime_tabs_hydrated", runtimeRead.selectedTabCount > 0, "Active runtime workspace tabs are available after hydration read."),
     createCheck("dedicated_window_policy_active", policy.dedicatedWindowPolicyActive === true, "Active workspace is in the 4+ tab dedicated-window policy range."),
     createCheck("minimum_tab_threshold_met", tabStatus.totalTabs >= DEDICATED_WINDOW_THRESHOLD, "Active workspace has at least 4 tabs."),
-    createCheck("workspace_tabs_have_urls", tabStatus.missingUrlCount === 0, "All active workspace tabs have URLs."),
+    createCheck("workspace_tabs_have_urls", tabStatus.totalTabs > 0 && tabStatus.missingUrlCount === 0, "All active workspace tabs have URLs."),
     createCheck("workspace_tabs_have_roles", tabStatus.totalTabs > 0 && tabStatus.unassignedTabs === 0, "All active workspace tabs have assigned roles."),
     createCheck("planned_groups_available", plannedGroups.length > 0, "Planned role groups are available."),
     createCheck("target_mode_new_window", TARGET_MODE === "new_window", "Target mode is new_window."),
@@ -253,14 +324,14 @@ function formatPacket(packet) {
     "createdAt: " + packet.createdAt,
     "contentType: " + packet.clipboard.contentType,
     "",
-    JSON.stringify(packet, null, 2),
+    JSON.stringify(packet, null, 2, ),
     "",
     packet.clipboard.envelopeEnd
   ].join("\n");
 }
 
 function createSummary(packet) {
-  return "Threshold preflight: " + packet.preflight.status + " | Tabs: " + packet.tabStatus.totalTabs + " | Groups: " + packet.browserPlan.plannedGroupCount + " | Ready: " + packet.preflight.readyForNextSlice + ".";
+  return "Threshold preflight: " + packet.preflight.status + " | Tabs: " + packet.tabStatus.totalTabs + " | Groups: " + packet.browserPlan.plannedGroupCount + " | Runtime read: " + packet.runtimeRead.status + " | Ready: " + packet.preflight.readyForNextSlice + ".";
 }
 
 function setSummary(message) {
@@ -281,4 +352,8 @@ function setOutput(value) {
 function setError(message, error) {
   setOutput({ status: "error", message, error: error?.message || String(error) });
   setStatus(message);
+}
+
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
