@@ -1,5 +1,6 @@
 import {
   buildThresholdExecutionPrecheckPacket,
+  createChromeGroupTitle,
   EXECUTION_PHRASE
 } from "./workspace-dedicated-window-threshold-execution.js";
 
@@ -124,6 +125,7 @@ async function buildSuitePacket() {
       expectedAvailable: false,
       expectedFailedChecks: ["planned_groups_available", "live_workspace_tabs_resolved"]
     }),
+    createGroupTitleScenario(),
     createScenario("execution_suite_boundary_preserved", [
       assertCondition("suite_runtime_action_not_executed", true, "Validation suite does not execute runtime action."),
       assertCondition("suite_browser_projection_not_changed", true, "Validation suite does not change browser projection."),
@@ -201,6 +203,27 @@ function createExecutionScenario(name, packet, expected) {
   ].flat();
 
   return createScenario(name, assertions, { packet });
+}
+
+function createGroupTitleScenario() {
+  const workspace = {
+    workspaceId: "fixture-workspace-title-hardening",
+    name: "Live Execution Validation Test",
+    workspaceType: "build"
+  };
+  const titles = [
+    createChromeGroupTitle(workspace, "documentation", "Legacy: documentation"),
+    createChromeGroupTitle(workspace, "api_reference", "Legacy: api_reference"),
+    createChromeGroupTitle(workspace, "bug_reference", "Legacy: bug_reference")
+  ];
+  const assertions = [
+    assertCondition("documentation_title_compact", titles[0] === "Docs · LEVT", "Documentation title is compact and workspace-scoped."),
+    assertCondition("api_reference_title_compact", titles[1] === "API Ref · LEVT", "API reference title is compact and workspace-scoped."),
+    assertCondition("bug_reference_title_compact", titles[2] === "Bug Ref · LEVT", "Bug reference title is compact and workspace-scoped."),
+    assertCondition("no_legacy_prefixes", titles.every((title) => !/^legacy:/i.test(title)), "Chrome group titles do not use Legacy-prefixed labels."),
+    assertCondition("title_length_safe", titles.every((title) => title.length <= 32), "Chrome group titles stay within the compact title length boundary.")
+  ];
+  return createScenario("chrome_group_titles_compact_no_legacy", assertions, { titles });
 }
 
 function createScenario(name, assertions, extra = {}) {
