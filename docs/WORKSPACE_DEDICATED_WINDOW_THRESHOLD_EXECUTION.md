@@ -69,6 +69,40 @@ existingTabsClosed: false
 unrelatedTabsMoved: false
 ```
 
+## Chrome Group Title Policy
+
+Visible Chrome tab-group titles are a live projection surface, not durable workspace storage.
+
+Titles should be compact and workspace-scoped:
+
+```text
+Docs · LEVT
+API Ref · LEVT
+Bug Ref · LEVT
+```
+
+The suffix is derived from the workspace name initials.
+
+Do not use legacy-prefixed labels for visible Chrome group titles:
+
+```text
+Legacy: documentation
+Legacy: api_reference
+Legacy: bug_reference
+```
+
+Those labels may still appear in historical packet data or older role label maps, but they should not appear in newly created Chrome group titles.
+
+## Chrome Saved Group / Bookmarks-Bar Boundary
+
+Constellation treats Chrome tab groups as a live browser projection only.
+
+Do not treat Chrome's saved tab group/bookmarks-bar behavior as Constellation storage.
+
+Constellation durable workspace state belongs in the extension's own storage layer and, later, the native persistent workspace database.
+
+Current execution does not intentionally save groups to bookmarks or use bookmarks as workspace storage.
+
 ## Updated Files
 
 ```text
@@ -140,6 +174,7 @@ small workspace confirmed blocks
 missing role confirmed blocks
 missing URL confirmed blocks
 unresolved live tabs confirmed blocks
+Chrome group titles are compact and non-legacy
 boundary flags remain false
 ```
 
@@ -172,6 +207,7 @@ commandEnvelope.authorityClass: live_browser_action_operator_confirmed
 browserResult.dedicatedWindowId: number
 browserResult.movedTabCount: 4 or more
 browserResult.recreatedChromeGroups: true
+browserResult.refreshedTabs groupId/windowId values match final snapshot
 verification.status: verified
 execution.status: completed_verified
 ```
@@ -190,6 +226,10 @@ no before-action browser tabs disappeared
 unaffected before-action windows are preserved
 created group count matches planned group count
 created groups contain only moved workspace tabs
+created group IDs are present in the final browser snapshot
+refreshed moved-tab metadata matches the final browser snapshot
+workspace tab metadata matches final browser window and group IDs
+Chrome group titles are compact and not Legacy-prefixed
 active runtime workspace id is preserved
 Session DB is not changed by execution
 ```
@@ -207,6 +247,7 @@ small workspace fixture becomes ready
 missing-role fixture becomes ready
 missing-URL fixture becomes ready
 unresolved-live-tabs fixture becomes ready
+Chrome group title scenario fails
 live execution packet closes tabs
 live execution packet moves unrelated tabs
 live execution writes Session DB
@@ -219,7 +260,7 @@ post-action verification fails without clear packet evidence
 After this validates and merges, the next clean slice is:
 
 ```text
-projection.workspace_dedicated_window_threshold_post_action_verification
+projection.workspace_control_internal_gate_consolidation
 ```
 
-This should harden post-action verification as its own reusable service before broader production generalization.
+This should extract shared policy, preflight, review, execution, verification, packet, and validation helpers before broader production generalization and before moving validation panels behind debug mode.
