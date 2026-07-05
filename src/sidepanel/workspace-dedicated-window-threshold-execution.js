@@ -139,7 +139,7 @@ async function buildThresholdExecutionPrecheckPacket(overrides = null) {
   const resolvedResults = resolution.results.filter((result) => result.liveTab);
   const sortedResults = sortResultsByRoleOrder(workspace, resolvedResults);
   const tabStatus = buildTabStatus(tabs, resolution.results);
-  const plannedGroups = createPlannedGroupsFromResults(sortedResults);
+  const plannedGroups = createPlannedGroupsFromResults(workspace, sortedResults);
   const policy = classifyWorkspace(tabStatus.totalTabs);
   const phrase = overrides?.phrase ?? getExecutionPhrase();
   const acknowledgementChecked = overrides?.acknowledgementChecked ?? Boolean(document.getElementById("dedicatedWindowThresholdExecutionAcknowledgement")?.checked);
@@ -224,7 +224,7 @@ async function executeDedicatedWindowThresholdMove(precheckPacket, hooks = {}) {
   const tabs = Array.isArray(workspaceBefore?.tabs) ? workspaceBefore.tabs : [];
   const resolution = await resolveWorkspaceTabsToLiveTabs(tabs);
   const resolvedResults = sortResultsByRoleOrder(workspaceBefore, resolution.results.filter((result) => result.liveTab));
-  const plannedGroups = createPlannedGroupsFromResults(resolvedResults);
+  const plannedGroups = createPlannedGroupsFromResults(workspaceBefore, resolvedResults);
   const snapshotBefore = await captureBrowserSnapshot();
   const sourceWindowIds = unique(resolvedResults.map((result) => result.liveTab.windowId).filter(Number.isInteger));
 
@@ -320,11 +320,11 @@ async function moveResolvedResultsIntoDedicatedWindow({ workspace, resolvedResul
   await delay(WINDOW_SETTLE_DELAY_MS);
   await focusNormalWindow(dedicatedWindowId);
 
+  const groupSummary = await recreateGroupsInDedicatedWindow({ workspace, resolvedResults, plannedGroups, dedicatedWindowId });
+  await delay(WINDOW_SETTLE_DELAY_MS);
+
   const refreshedTabs = await readMovedTabRuntimeMetadata(movedTabIds);
   const refreshedByTabId = new Map(refreshedTabs.map((tab) => [tab.tabId, tab]));
-  const groupSummary = await recreateGroupsInDedicatedWindow({ workspace, resolvedResults, plannedGroups, dedicatedWindowId });
-
-  await delay(WINDOW_SETTLE_DELAY_MS);
   await updateWorkspaceMetadataAfterMove({ workspace, resolvedResults, refreshedByTabId, groupSummary, dedicatedWindowId });
   await focusNormalWindow(dedicatedWindowId);
 
@@ -349,14 +349,15 @@ async function recreateGroupsInDedicatedWindow({ workspace, resolvedResults, pla
 
   for (const plannedGroup of plannedGroups) {
     const tabIds = plannedGroup.workspaceTabIds.map((workspaceTabId) => movedTabIdsByWorkspaceTabId.get(workspaceTabId)).filter(Number.isInteger);
+    const title = createChromeGroupTitle(workspace, plannedGroup.role, plannedGroup.roleLabel);
     if (tabIds.length !== plannedGroup.workspaceTabIds.length) {
-      groups.push({ role: plannedGroup.role, roleLabel: plannedGroup.roleLabel, status: "failed_missing_moved_tabs", tabIds, workspaceTabIds: plannedGroup.workspaceTabIds });
+      groups.push({ role: plannedGroup.role, roleLabel: plannedGroup.roleLabel, title, status: "failed_missing_moved_tabs", tabIds, workspaceTabIds: plannedGroup.workspaceTabIds });
       continue;
     }
     const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId: dedicatedWindowId } });
-    await chrome.tabGroups.update(groupId, { title: createChromeGroupTitle(workspace, plannedGroup.roleLabel), collapsed: false });
+    await chrome.tabGroups.update(groupId, { title, collapsed: false });
     groupedTabCount += tabIds.length;
-    groups.push({ role: plannedGroup.role, roleLabel: plannedGroup.roleLabel, groupId, windowId: dedicatedWindowId, tabIds, workspaceTabIds: plannedGroup.workspaceTabIds, status: "created" });
+    groups.push({ role: plannedGroup.role, roleLabel: plannedGroup.roleLabel, title, groupId, windowId: dedicatedWindowId, tabIds, workspaceTabIds: plannedGroup.workspaceTabIds, status: "created" });
   }
 
   return { groups, groupedTabCount };
@@ -374,7 +375,7 @@ async function updateWorkspaceMetadataAfterMove({ workspace, resolvedResults, re
     const refreshed = refreshedByTabId.get(result.liveTab.id);
     result.workspaceTab.tabId = result.liveTab.id;
     result.workspaceTab.windowId = dedicatedWindowId;
-    result.workspaceTab.groupId = groupByWorkspaceTabId.get(result.workspaceTab.workspaceTabId) ?? -1;
+    result.workspaceTab.groupId = groupByWorkspaceTabId.get(result.workspaceTab.workspaceTabId) ?? refreshed?.groupId ?? -1;
     result.workspaceTab.url = refreshed?.url || result.workspaceTab.url;
     result.workspaceTab.originalTitle = refreshed?.title || result.workspaceTab.originalTitle;
     result.workspaceTab.isOpen = true;
@@ -419,6 +420,9 @@ function verifyExecution(context) {
   const movedTabIdSet = new Set(context.browserResult.movedTabIds);
   const sourceWindowIdSet = new Set(context.sourceWindowIds);
   const unaffectedBeforeWindowIds = [...beforeWindowIds].filter((windowId) => !sourceWindowIdSet.has(windowId));
+  const createdGroups = context.browserResult.groups.filter((group) => Number.isInteger(group.groupId));
+  const refreshedTabsById = new Map((context.browserResult.refreshedTabs || []).map((tab) => [tab.tabId, tab]));
+  const workspaceAfterTabsById = new Map((context.workspaceAfter?.tabs || []).map((tab) => [tab.workspaceTabId, tab]));
 
   checks.push(createVerificationCheck("dedicated_window_exists", Number.isInteger(context.browserResult.dedicatedWindowId) && afterWindowIds.has(context.browserResult.dedicatedWindowId), "Dedicated window exists after execution."));
   checks.push(createVerificationCheck("dedicated_window_not_present_before", Number.isInteger(context.browserResult.dedicatedWindowId) && !beforeWindowIds.has(context.browserResult.dedicatedWindowId), "Dedicated window was not present before execution."));
@@ -427,8 +431,20 @@ function verifyExecution(context) {
   checks.push(createVerificationCheck("moved_tabs_in_dedicated_window", context.browserResult.movedTabIds.every((tabId) => afterTabsById.get(tabId)?.windowId === context.browserResult.dedicatedWindowId), "All moved tabs are in the dedicated window."));
   checks.push(createVerificationCheck("before_tabs_preserved", [...beforeTabIds].every((tabId) => afterTabIds.has(tabId)), "No before-action browser tabs disappeared."));
   checks.push(createVerificationCheck("unaffected_windows_preserved", unaffectedBeforeWindowIds.every((windowId) => afterWindowIds.has(windowId)), "No unaffected before-action windows disappeared."));
-  checks.push(createVerificationCheck("created_group_count_matches_plan", context.browserResult.groups.filter((group) => Number.isInteger(group.groupId)).length === context.plannedGroups.length, "Created group count matches planned group count."));
-  checks.push(createVerificationCheck("groups_only_contain_moved_tabs", context.browserResult.groups.filter((group) => Number.isInteger(group.groupId)).every((group) => group.tabIds.every((tabId) => movedTabIdSet.has(tabId))), "Created groups contain only moved workspace tabs."));
+  checks.push(createVerificationCheck("created_group_count_matches_plan", createdGroups.length === context.plannedGroups.length, "Created group count matches planned group count."));
+  checks.push(createVerificationCheck("groups_only_contain_moved_tabs", createdGroups.every((group) => group.tabIds.every((tabId) => movedTabIdSet.has(tabId))), "Created groups contain only moved workspace tabs."));
+  checks.push(createVerificationCheck("created_group_ids_present_in_final_snapshot", createdGroups.every((group) => group.tabIds.every((tabId) => afterTabsById.get(tabId)?.groupId === group.groupId)), "Created group IDs are present on moved tabs in the final browser snapshot."));
+  checks.push(createVerificationCheck("refreshed_tabs_match_final_snapshot", context.browserResult.movedTabIds.every((tabId) => {
+    const refreshed = refreshedTabsById.get(tabId);
+    const after = afterTabsById.get(tabId);
+    return refreshed && after && refreshed.windowId === after.windowId && refreshed.groupId === after.groupId;
+  }), "Refreshed moved-tab metadata matches the final browser snapshot."));
+  checks.push(createVerificationCheck("workspace_metadata_matches_final_snapshot", context.resolvedResults.every((result) => {
+    const workspaceTab = workspaceAfterTabsById.get(result.workspaceTab.workspaceTabId);
+    const after = afterTabsById.get(result.liveTab.id);
+    return workspaceTab && after && workspaceTab.windowId === after.windowId && workspaceTab.groupId === after.groupId;
+  }), "Workspace tab metadata matches final browser window and group IDs."));
+  checks.push(createVerificationCheck("chrome_group_titles_are_compact", createdGroups.every((group) => typeof group.title === "string" && group.title.length <= 32 && !/^legacy:/i.test(group.title)), "Chrome group titles are compact and do not use Legacy-prefixed labels."));
   checks.push(createVerificationCheck("active_workspace_id_preserved", context.workspaceAfter?.workspaceId === context.preActionWorkspaceId, "Active runtime workspace id is preserved."));
   checks.push(createVerificationCheck("session_db_not_changed_by_execution", true, "Session DB is not changed by this command."));
 
@@ -559,7 +575,7 @@ function classifyWorkspace(totalTabs) {
   return { status: "dedicated_window_policy_active", dedicatedWindowPolicyActive: true, currentWindowStillValid: false };
 }
 
-function createPlannedGroupsFromResults(results) {
+function createPlannedGroupsFromResults(workspace, results) {
   const roles = new Map();
   for (const result of results) {
     const role = result.workspaceTab.role || "unassigned";
@@ -567,7 +583,13 @@ function createPlannedGroupsFromResults(results) {
     if (!roles.has(role)) roles.set(role, []);
     roles.get(role).push(result.workspaceTab.workspaceTabId);
   }
-  return Array.from(roles.entries()).map(([role, workspaceTabIds]) => ({ role, roleLabel: createRoleLabel(role), workspaceTabIds, plannedTabCount: workspaceTabIds.length, requiredForProjection: true }));
+  return Array.from(roles.entries()).map(([role, workspaceTabIds]) => ({
+    role,
+    roleLabel: createRoleLabel(workspace, role),
+    workspaceTabIds,
+    plannedTabCount: workspaceTabIds.length,
+    requiredForProjection: true
+  }));
 }
 
 function sortResultsByRoleOrder(workspace, results) {
@@ -586,18 +608,43 @@ function createRoleOrderMap(workspaceType) {
   return map;
 }
 
-function createRoleLabel(role) {
-  return getWorkspaceRoleLabel(DEFAULT_WORKSPACE_TYPE, role) || String(role || "unassigned").replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+function createRoleLabel(workspace, role) {
+  const workspaceType = workspace?.workspaceType || workspace?.type || DEFAULT_WORKSPACE_TYPE;
+  const configuredLabel = getWorkspaceRoleLabel(workspaceType, role) || getWorkspaceRoleLabel(DEFAULT_WORKSPACE_TYPE, role);
+  return removeLegacyPrefix(configuredLabel || humanizeRole(role));
 }
 
-function createChromeGroupTitle(workspace, roleLabel) {
+function createChromeGroupTitle(workspace, role, roleLabel = "") {
   const suffix = " · " + getWorkspaceGroupToken(workspace);
-  const role = roleLabel || "Unassigned";
+  const roleTitle = compactRoleLabel(role, roleLabel);
   const maxLength = 32;
   const availableRoleLength = maxLength - suffix.length;
-  if (availableRoleLength <= 3) return (role + suffix).slice(0, maxLength - 3) + "...";
-  const trimmedRole = role.length <= availableRoleLength ? role : role.slice(0, availableRoleLength - 3) + "...";
+  if (availableRoleLength <= 3) return (roleTitle + suffix).slice(0, maxLength - 3) + "...";
+  const trimmedRole = roleTitle.length <= availableRoleLength ? roleTitle : roleTitle.slice(0, availableRoleLength - 3) + "...";
   return trimmedRole + suffix;
+}
+
+function compactRoleLabel(role, roleLabel = "") {
+  const normalizedRole = String(role || "").toLowerCase();
+  const cleanedLabel = removeLegacyPrefix(roleLabel || humanizeRole(role));
+  const compactByRole = {
+    api_reference: "API Ref",
+    bug_reference: "Bug Ref",
+    documentation: "Docs",
+    reference: "Ref",
+    counterpoint: "Counter",
+    source: "Source",
+    question: "Question"
+  };
+  return compactByRole[normalizedRole] || cleanedLabel;
+}
+
+function removeLegacyPrefix(value = "") {
+  return String(value || "").replace(/^legacy:\s*/i, "").trim();
+}
+
+function humanizeRole(role) {
+  return String(role || "unassigned").replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
 function getWorkspaceGroupToken(workspace) {
@@ -698,4 +745,4 @@ function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-export { buildThresholdExecutionPrecheckPacket, EXECUTION_PHRASE };
+export { buildThresholdExecutionPrecheckPacket, createChromeGroupTitle, EXECUTION_PHRASE };
