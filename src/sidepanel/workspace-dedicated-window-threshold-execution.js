@@ -14,6 +14,7 @@ const PACKET_ENVELOPE_END = "CHROME_FLOW_PACKET_END";
 const PACKET_CLIPBOARD_FORMAT = "chrome_flow_packet_envelope_v0.1";
 const PACKET_CONTENT_TYPE = "application/json";
 const WINDOW_SETTLE_DELAY_MS = 650;
+const NATIVE_CHROME_GROUPS_ENABLED = false;
 
 let lastThresholdExecutionPacket = null;
 let liveThresholdExecutionInProgress = false;
@@ -31,14 +32,15 @@ function installDedicatedWindowThresholdExecution() {
   section.className = "dedicated-window-threshold-execution-section";
   section.innerHTML = `
     <h2>Dedicated Window Threshold Execution</h2>
-    <p class="section-help">Moves a 4+ tab active runtime workspace into one dedicated Chrome window after all gates pass. This is a live browser action.</p>
+    <p class="section-help">Moves a 4+ tab active runtime workspace into one dedicated Chrome window after all gates pass. This is a live browser action. Native Chrome tab groups are suppressed; Constellation keeps logical role groups internally.</p>
     <div id="dedicatedWindowThresholdExecutionSummary" class="workspace-session-summary">Threshold execution surface loaded.</div>
     <div class="workspace-session-options">
       <p><strong>Target mode:</strong> ${TARGET_MODE}</p>
+      <p><strong>Native Chrome groups:</strong> suppressed by default</p>
       <p><strong>Required execution phrase:</strong> ${EXECUTION_PHRASE}</p>
       <label for="dedicatedWindowThresholdExecutionPhrase">Type execution phrase</label>
       <input id="dedicatedWindowThresholdExecutionPhrase" type="text" placeholder="${EXECUTION_PHRASE}" />
-      <label class="checkbox-label"><input id="dedicatedWindowThresholdExecutionAcknowledgement" type="checkbox" /> I understand this will move open workspace tabs into a dedicated/new Chrome window.</label>
+      <label class="checkbox-label"><input id="dedicatedWindowThresholdExecutionAcknowledgement" type="checkbox" /> I understand this will move open workspace tabs into a dedicated/new Chrome window without creating native Chrome tab groups.</label>
     </div>
     <div class="workspace-session-actions">
       <button id="prepareDedicatedWindowThresholdExecutionButton" type="button" class="secondary-button">Prepare Threshold Execution Packet</button>
@@ -110,7 +112,7 @@ async function runThresholdExecution() {
       return;
     }
 
-    setStatus("Running dedicated-window threshold execution. Moving workspace tabs into one dedicated window...");
+    setStatus("Running dedicated-window threshold execution. Moving workspace tabs into one dedicated window without native Chrome groups...");
     const executionPacket = await executeDedicatedWindowThresholdMove(precheckPacket, {
       markRuntimeStarted: () => { runtimeActionStarted = true; },
       markBrowserChanged: () => { browserProjectionChanged = true; }
@@ -139,13 +141,13 @@ async function buildThresholdExecutionPrecheckPacket(overrides = null) {
   const resolvedResults = resolution.results.filter((result) => result.liveTab);
   const sortedResults = sortResultsByRoleOrder(workspace, resolvedResults);
   const tabStatus = buildTabStatus(tabs, resolution.results);
-  const plannedGroups = createPlannedGroupsFromResults(workspace, sortedResults);
+  const logicalGroups = createLogicalGroupsFromResults(workspace, sortedResults);
   const policy = classifyWorkspace(tabStatus.totalTabs);
   const phrase = overrides?.phrase ?? getExecutionPhrase();
   const acknowledgementChecked = overrides?.acknowledgementChecked ?? Boolean(document.getElementById("dedicatedWindowThresholdExecutionAcknowledgement")?.checked);
   const phraseMatches = phrase === EXECUTION_PHRASE;
   const operatorConfirmed = phraseMatches && acknowledgementChecked;
-  const checks = createExecutionGateChecks({ workspace, tabStatus, plannedGroups, policy, phraseMatches, acknowledgementChecked, resolution });
+  const checks = createExecutionGateChecks({ workspace, tabStatus, logicalGroups, policy, phraseMatches, acknowledgementChecked, resolution });
   const failedChecks = checks.filter((check) => check.status === "fail");
   const ready = failedChecks.length === 0;
 
@@ -154,7 +156,7 @@ async function buildThresholdExecutionPrecheckPacket(overrides = null) {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "dedicated-window-threshold-execution-precheck-packet-v0.1"
+      schema: "dedicated-window-threshold-execution-precheck-packet-v0.2-no-native-groups"
     },
     clipboard: createClipboardBlock(),
     source: {
@@ -180,11 +182,12 @@ async function buildThresholdExecutionPrecheckPacket(overrides = null) {
     liveResolution: summarizeResolution(resolution),
     browserPlan: {
       targetMode: TARGET_MODE,
-      action: "move_existing_workspace_tabs_to_dedicated_window",
+      action: "move_existing_workspace_tabs_to_dedicated_window_without_native_chrome_groups",
       expectedWindowCountDelta: 1,
       plannedTabCount: sortedResults.length,
-      plannedGroupCount: plannedGroups.length,
-      plannedGroups,
+      logicalGroupCount: logicalGroups.length,
+      logicalGroups,
+      nativeChromeGroups: createNativeChromeGroupsPolicy(),
       tabMovePlan: sortedResults.map((result, index) => ({
         workspaceTabId: result.workspaceTab.workspaceTabId,
         tabId: result.liveTab.id,
@@ -208,6 +211,8 @@ async function buildThresholdExecutionPrecheckPacket(overrides = null) {
       notes: [
         "This packet gates a live browser action.",
         "Execution moves existing open workspace tabs into one dedicated Chrome window.",
+        "Native Chrome tab groups are suppressed by default to avoid saved-group/bookmarks-bar clutter.",
+        "Constellation logical role groups remain available in this packet and in workspace metadata.",
         "Execution must rebuild this gate immediately before any live action.",
         "Session DB is not written by this command.",
         "chrome.storage.local active workspace may receive metadata and timeline updates, but the active workspace is not replaced."
@@ -224,12 +229,12 @@ async function executeDedicatedWindowThresholdMove(precheckPacket, hooks = {}) {
   const tabs = Array.isArray(workspaceBefore?.tabs) ? workspaceBefore.tabs : [];
   const resolution = await resolveWorkspaceTabsToLiveTabs(tabs);
   const resolvedResults = sortResultsByRoleOrder(workspaceBefore, resolution.results.filter((result) => result.liveTab));
-  const plannedGroups = createPlannedGroupsFromResults(workspaceBefore, resolvedResults);
+  const logicalGroups = createLogicalGroupsFromResults(workspaceBefore, resolvedResults);
   const snapshotBefore = await captureBrowserSnapshot();
   const sourceWindowIds = unique(resolvedResults.map((result) => result.liveTab.windowId).filter(Number.isInteger));
 
   hooks.markRuntimeStarted?.();
-  const browserResult = await moveResolvedResultsIntoDedicatedWindow({ workspace: workspaceBefore, resolvedResults, plannedGroups });
+  const browserResult = await moveResolvedResultsIntoDedicatedWindow({ workspace: workspaceBefore, resolvedResults, logicalGroups });
   hooks.markBrowserChanged?.();
   await delay(WINDOW_SETTLE_DELAY_MS);
 
@@ -240,7 +245,7 @@ async function executeDedicatedWindowThresholdMove(precheckPacket, hooks = {}) {
     workspaceBefore,
     workspaceAfter,
     resolvedResults,
-    plannedGroups,
+    logicalGroups,
     browserResult,
     snapshotBefore,
     snapshotAfter,
@@ -254,7 +259,7 @@ async function executeDedicatedWindowThresholdMove(precheckPacket, hooks = {}) {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "dedicated-window-threshold-execution-packet-v0.1"
+      schema: "dedicated-window-threshold-execution-packet-v0.2-no-native-groups"
     },
     clipboard: precheckPacket.clipboard,
     commandEnvelope: {
@@ -262,7 +267,7 @@ async function executeDedicatedWindowThresholdMove(precheckPacket, hooks = {}) {
       commandId,
       authorityClass: "live_browser_action_operator_confirmed",
       targetMode: TARGET_MODE,
-      action: "move_existing_workspace_tabs_to_dedicated_window",
+      action: "move_existing_workspace_tabs_to_dedicated_window_without_native_chrome_groups",
       startedAt,
       finishedAt: new Date().toISOString()
     },
@@ -275,7 +280,9 @@ async function executeDedicatedWindowThresholdMove(precheckPacket, hooks = {}) {
       chromeStorageChangeScope: "active_workspace_tab_metadata_and_timeline_only",
       chromeStorageActiveWorkspaceReplaced: false,
       existingTabsClosed: false,
-      unrelatedTabsMoved: false
+      unrelatedTabsMoved: false,
+      nativeChromeGroupsCreated: false,
+      nativeChromeGroupsSuppressed: true
     },
     precheck: precheckPacket.executionGate,
     workspace: precheckPacket.workspace,
@@ -289,7 +296,8 @@ async function executeDedicatedWindowThresholdMove(precheckPacket, hooks = {}) {
       status,
       notes: [
         "Existing open workspace tabs were moved into one dedicated Chrome window.",
-        "Chrome groups were recreated in the dedicated window from workspace roles.",
+        "Native Chrome tab groups were suppressed and moved tabs were ungrouped after the move.",
+        "Constellation logical groups remain in the execution packet and active workspace metadata.",
         "No Session DB records were intentionally mutated.",
         "chrome.storage.local active workspace metadata/timeline was updated to reflect the live browser move.",
         "The active runtime workspace id was not intentionally replaced."
@@ -298,13 +306,14 @@ async function executeDedicatedWindowThresholdMove(precheckPacket, hooks = {}) {
   };
 }
 
-async function moveResolvedResultsIntoDedicatedWindow({ workspace, resolvedResults, plannedGroups }) {
+async function moveResolvedResultsIntoDedicatedWindow({ workspace, resolvedResults, logicalGroups }) {
   if (!resolvedResults.length) throw new Error("No resolved workspace tabs are available to move.");
 
   const primaryResult = resolvedResults[0];
   const remainingResults = resolvedResults.slice(1);
   const movedTabIds = resolvedResults.map((result) => result.liveTab.id);
   const workspaceTabIds = resolvedResults.map((result) => result.workspaceTab.workspaceTabId);
+  const sourceWindowIds = unique(resolvedResults.map((result) => result.liveTab.windowId).filter(Number.isInteger));
 
   const createdWindow = await chrome.windows.create({ tabId: primaryResult.liveTab.id, focused: true, state: "normal" });
   const dedicatedWindowId = createdWindow.id;
@@ -319,13 +328,12 @@ async function moveResolvedResultsIntoDedicatedWindow({ workspace, resolvedResul
 
   await delay(WINDOW_SETTLE_DELAY_MS);
   await focusNormalWindow(dedicatedWindowId);
-
-  const groupSummary = await recreateGroupsInDedicatedWindow({ workspace, resolvedResults, plannedGroups, dedicatedWindowId });
+  await suppressNativeChromeGroups(movedTabIds);
   await delay(WINDOW_SETTLE_DELAY_MS);
 
   const refreshedTabs = await readMovedTabRuntimeMetadata(movedTabIds);
   const refreshedByTabId = new Map(refreshedTabs.map((tab) => [tab.tabId, tab]));
-  await updateWorkspaceMetadataAfterMove({ workspace, resolvedResults, refreshedByTabId, groupSummary, dedicatedWindowId });
+  await updateWorkspaceMetadataAfterMove({ workspace, resolvedResults, refreshedByTabId, logicalGroups, dedicatedWindowId });
   await focusNormalWindow(dedicatedWindowId);
 
   return {
@@ -333,41 +341,32 @@ async function moveResolvedResultsIntoDedicatedWindow({ workspace, resolvedResul
     movedTabIds,
     workspaceTabIds,
     movedTabCount: movedTabIds.length,
-    sourceWindowIds: unique(resolvedResults.map((result) => result.liveTab.windowId).filter(Number.isInteger)),
-    recreatedChromeGroups: true,
-    recreatedGroupCount: groupSummary.groups.length,
-    groupedTabCount: groupSummary.groupedTabCount,
-    groups: groupSummary.groups,
+    sourceWindowIds,
+    nativeChromeGroupsCreated: false,
+    nativeChromeGroupsSuppressed: true,
+    nativeUngroupApplied: true,
+    recreatedChromeGroups: false,
+    recreatedGroupCount: 0,
+    groupedTabCount: 0,
+    logicalGroupCount: logicalGroups.length,
+    logicalGroups,
     refreshedTabs
   };
 }
 
-async function recreateGroupsInDedicatedWindow({ workspace, resolvedResults, plannedGroups, dedicatedWindowId }) {
-  const movedTabIdsByWorkspaceTabId = new Map(resolvedResults.map((result) => [result.workspaceTab.workspaceTabId, result.liveTab.id]));
-  const groups = [];
-  let groupedTabCount = 0;
-
-  for (const plannedGroup of plannedGroups) {
-    const tabIds = plannedGroup.workspaceTabIds.map((workspaceTabId) => movedTabIdsByWorkspaceTabId.get(workspaceTabId)).filter(Number.isInteger);
-    const title = createChromeGroupTitle(workspace, plannedGroup.role, plannedGroup.roleLabel);
-    if (tabIds.length !== plannedGroup.workspaceTabIds.length) {
-      groups.push({ role: plannedGroup.role, roleLabel: plannedGroup.roleLabel, title, status: "failed_missing_moved_tabs", tabIds, workspaceTabIds: plannedGroup.workspaceTabIds });
-      continue;
-    }
-    const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId: dedicatedWindowId } });
-    await chrome.tabGroups.update(groupId, { title, collapsed: false });
-    groupedTabCount += tabIds.length;
-    groups.push({ role: plannedGroup.role, roleLabel: plannedGroup.roleLabel, title, groupId, windowId: dedicatedWindowId, tabIds, workspaceTabIds: plannedGroup.workspaceTabIds, status: "created" });
+async function suppressNativeChromeGroups(tabIds) {
+  if (!tabIds.length) return;
+  try {
+    await chrome.tabs.ungroup(tabIds);
+  } catch (error) {
+    throw new Error("Could not suppress native Chrome tab groups: " + (error?.message || String(error)));
   }
-
-  return { groups, groupedTabCount };
 }
 
-async function updateWorkspaceMetadataAfterMove({ workspace, resolvedResults, refreshedByTabId, groupSummary, dedicatedWindowId }) {
-  const groupByWorkspaceTabId = new Map();
-  for (const group of groupSummary.groups) {
-    if (!Number.isInteger(group.groupId)) continue;
-    group.workspaceTabIds.forEach((workspaceTabId) => groupByWorkspaceTabId.set(workspaceTabId, group.groupId));
+async function updateWorkspaceMetadataAfterMove({ workspace, resolvedResults, refreshedByTabId, logicalGroups, dedicatedWindowId }) {
+  const logicalGroupByWorkspaceTabId = new Map();
+  for (const group of logicalGroups) {
+    group.workspaceTabIds.forEach((workspaceTabId) => logicalGroupByWorkspaceTabId.set(workspaceTabId, group.role));
   }
 
   const updatedAt = new Date().toISOString();
@@ -375,7 +374,8 @@ async function updateWorkspaceMetadataAfterMove({ workspace, resolvedResults, re
     const refreshed = refreshedByTabId.get(result.liveTab.id);
     result.workspaceTab.tabId = result.liveTab.id;
     result.workspaceTab.windowId = dedicatedWindowId;
-    result.workspaceTab.groupId = groupByWorkspaceTabId.get(result.workspaceTab.workspaceTabId) ?? refreshed?.groupId ?? -1;
+    result.workspaceTab.groupId = refreshed?.groupId ?? -1;
+    result.workspaceTab.logicalGroupRole = logicalGroupByWorkspaceTabId.get(result.workspaceTab.workspaceTabId) || result.workspaceTab.role || "unassigned";
     result.workspaceTab.url = refreshed?.url || result.workspaceTab.url;
     result.workspaceTab.originalTitle = refreshed?.title || result.workspaceTab.originalTitle;
     result.workspaceTab.isOpen = true;
@@ -385,14 +385,15 @@ async function updateWorkspaceMetadataAfterMove({ workspace, resolvedResults, re
 
   workspace.updatedAt = updatedAt;
   await saveWorkspace(workspace);
-  await addTimelineEvent("workspace_threshold_dedicated_window_executed", "Moved " + resolvedResults.length + " workspace tab(s) into a dedicated Chrome window and recreated " + groupSummary.groups.length + " role group(s).", {
+  await addTimelineEvent("workspace_threshold_dedicated_window_executed", "Moved " + resolvedResults.length + " workspace tab(s) into a dedicated Chrome window without native Chrome groups.", {
     dedicatedWindowId,
     movedTabIds: resolvedResults.map((result) => result.liveTab.id),
     workspaceTabIds: resolvedResults.map((result) => result.workspaceTab.workspaceTabId),
-    recreatedGroupCount: groupSummary.groups.length,
-    groupedTabCount: groupSummary.groupedTabCount,
-    groups: groupSummary.groups,
-    thresholdPolicy: "4+ tabs dedicated-window execution",
+    nativeChromeGroupsCreated: false,
+    nativeChromeGroupsSuppressed: true,
+    logicalGroupCount: logicalGroups.length,
+    logicalGroups,
+    thresholdPolicy: "4+ tabs dedicated-window execution without native Chrome groups",
     storageMutationScope: "active_workspace_tab_metadata_and_timeline_only"
   });
 }
@@ -417,10 +418,8 @@ function verifyExecution(context) {
   const beforeWindowIds = new Set(context.snapshotBefore.windowIds);
   const afterWindowIds = new Set(context.snapshotAfter.windowIds);
   const afterTabsById = new Map(context.snapshotAfter.tabs.map((tab) => [tab.tabId, tab]));
-  const movedTabIdSet = new Set(context.browserResult.movedTabIds);
   const sourceWindowIdSet = new Set(context.sourceWindowIds);
   const unaffectedBeforeWindowIds = [...beforeWindowIds].filter((windowId) => !sourceWindowIdSet.has(windowId));
-  const createdGroups = context.browserResult.groups.filter((group) => Number.isInteger(group.groupId));
   const refreshedTabsById = new Map((context.browserResult.refreshedTabs || []).map((tab) => [tab.tabId, tab]));
   const workspaceAfterTabsById = new Map((context.workspaceAfter?.tabs || []).map((tab) => [tab.workspaceTabId, tab]));
 
@@ -429,11 +428,12 @@ function verifyExecution(context) {
   checks.push(createVerificationCheck("moved_tab_count_matches_plan", context.browserResult.movedTabIds.length === context.resolvedResults.length, "Moved tab count matches resolved workspace tab count."));
   checks.push(createVerificationCheck("moved_tabs_exist_after", context.browserResult.movedTabIds.every((tabId) => afterTabIds.has(tabId)), "All moved tabs exist after execution."));
   checks.push(createVerificationCheck("moved_tabs_in_dedicated_window", context.browserResult.movedTabIds.every((tabId) => afterTabsById.get(tabId)?.windowId === context.browserResult.dedicatedWindowId), "All moved tabs are in the dedicated window."));
+  checks.push(createVerificationCheck("moved_tabs_ungrouped_in_final_snapshot", context.browserResult.movedTabIds.every((tabId) => afterTabsById.get(tabId)?.groupId === -1), "Moved tabs are not in native Chrome tab groups after execution."));
+  checks.push(createVerificationCheck("native_chrome_groups_not_created", context.browserResult.nativeChromeGroupsCreated === false && context.browserResult.recreatedGroupCount === 0 && context.browserResult.groupedTabCount === 0, "Execution did not create native Chrome tab groups."));
+  checks.push(createVerificationCheck("native_ungroup_applied", context.browserResult.nativeUngroupApplied === true, "Native Chrome grouping was explicitly suppressed after the move."));
+  checks.push(createVerificationCheck("logical_groups_preserved", context.browserResult.logicalGroupCount === context.logicalGroups.length && context.logicalGroups.length > 0, "Constellation logical groups are preserved in packet evidence."));
   checks.push(createVerificationCheck("before_tabs_preserved", [...beforeTabIds].every((tabId) => afterTabIds.has(tabId)), "No before-action browser tabs disappeared."));
   checks.push(createVerificationCheck("unaffected_windows_preserved", unaffectedBeforeWindowIds.every((windowId) => afterWindowIds.has(windowId)), "No unaffected before-action windows disappeared."));
-  checks.push(createVerificationCheck("created_group_count_matches_plan", createdGroups.length === context.plannedGroups.length, "Created group count matches planned group count."));
-  checks.push(createVerificationCheck("groups_only_contain_moved_tabs", createdGroups.every((group) => group.tabIds.every((tabId) => movedTabIdSet.has(tabId))), "Created groups contain only moved workspace tabs."));
-  checks.push(createVerificationCheck("created_group_ids_present_in_final_snapshot", createdGroups.every((group) => group.tabIds.every((tabId) => afterTabsById.get(tabId)?.groupId === group.groupId)), "Created group IDs are present on moved tabs in the final browser snapshot."));
   checks.push(createVerificationCheck("refreshed_tabs_match_final_snapshot", context.browserResult.movedTabIds.every((tabId) => {
     const refreshed = refreshedTabsById.get(tabId);
     const after = afterTabsById.get(tabId);
@@ -444,7 +444,6 @@ function verifyExecution(context) {
     const after = afterTabsById.get(result.liveTab.id);
     return workspaceTab && after && workspaceTab.windowId === after.windowId && workspaceTab.groupId === after.groupId;
   }), "Workspace tab metadata matches final browser window and group IDs."));
-  checks.push(createVerificationCheck("chrome_group_titles_are_compact", createdGroups.every((group) => typeof group.title === "string" && group.title.length <= 32 && !/^legacy:/i.test(group.title)), "Chrome group titles are compact and do not use Legacy-prefixed labels."));
   checks.push(createVerificationCheck("active_workspace_id_preserved", context.workspaceAfter?.workspaceId === context.preActionWorkspaceId, "Active runtime workspace id is preserved."));
   checks.push(createVerificationCheck("session_db_not_changed_by_execution", true, "Session DB is not changed by this command."));
 
@@ -463,7 +462,7 @@ async function buildExecutionFailurePacket({ error, runtimeActionStarted, browse
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "dedicated-window-threshold-execution-packet-v0.1"
+      schema: "dedicated-window-threshold-execution-packet-v0.2-no-native-groups"
     },
     clipboard: createClipboardBlock(),
     source: {
@@ -534,7 +533,7 @@ function summarizeResolution(resolution) {
   };
 }
 
-function createExecutionGateChecks({ workspace, tabStatus, plannedGroups, policy, phraseMatches, acknowledgementChecked, resolution }) {
+function createExecutionGateChecks({ workspace, tabStatus, logicalGroups, policy, phraseMatches, acknowledgementChecked, resolution }) {
   const summary = summarizeResolution(resolution);
   return [
     createCheck("runtime_workspace_exists", Boolean(workspace?.workspaceId), "Active runtime workspace exists."),
@@ -542,7 +541,8 @@ function createExecutionGateChecks({ workspace, tabStatus, plannedGroups, policy
     createCheck("minimum_tab_threshold_met", tabStatus.totalTabs >= DEDICATED_WINDOW_THRESHOLD, "Active workspace has at least 4 tabs."),
     createCheck("workspace_tabs_have_urls", tabStatus.totalTabs > 0 && tabStatus.missingUrlCount === 0, "All active workspace tabs have URLs."),
     createCheck("workspace_tabs_have_roles", tabStatus.totalTabs > 0 && tabStatus.unassignedTabs === 0, "All active workspace tabs have assigned roles."),
-    createCheck("planned_groups_available", plannedGroups.length > 0, "Planned role groups are available."),
+    createCheck("logical_groups_available", logicalGroups.length > 0, "Constellation logical role groups are available."),
+    createCheck("native_chrome_groups_suppressed", NATIVE_CHROME_GROUPS_ENABLED === false, "Native Chrome tab groups are suppressed for this live projection."),
     createCheck("live_workspace_tabs_resolved", summary.workspaceTabCount > 0 && summary.resolvedCount === summary.workspaceTabCount, "All workspace tab records resolve to live browser tabs."),
     createCheck("target_mode_new_window", TARGET_MODE === "new_window", "Target mode is new_window."),
     createCheck("operator_phrase_matches", phraseMatches, "Operator typed the required execution phrase."),
@@ -575,7 +575,7 @@ function classifyWorkspace(totalTabs) {
   return { status: "dedicated_window_policy_active", dedicatedWindowPolicyActive: true, currentWindowStillValid: false };
 }
 
-function createPlannedGroupsFromResults(workspace, results) {
+function createLogicalGroupsFromResults(workspace, results) {
   const roles = new Map();
   for (const result of results) {
     const role = result.workspaceTab.role || "unassigned";
@@ -588,8 +588,19 @@ function createPlannedGroupsFromResults(workspace, results) {
     roleLabel: createRoleLabel(workspace, role),
     workspaceTabIds,
     plannedTabCount: workspaceTabIds.length,
-    requiredForProjection: true
+    preservedInConstellation: true,
+    nativeChromeGroupCreated: false
   }));
+}
+
+function createNativeChromeGroupsPolicy() {
+  return {
+    createNativeChromeGroups: false,
+    expectedNativeGroupCount: 0,
+    suppressionReason: "Avoid Chrome saved-tab-group/bookmarks-bar clutter; Constellation stores role groups internally.",
+    browserStorageRole: "live_projection_only",
+    durableStorageRole: "constellation_workspace_state"
+  };
 }
 
 function sortResultsByRoleOrder(workspace, results) {
@@ -614,44 +625,12 @@ function createRoleLabel(workspace, role) {
   return removeLegacyPrefix(configuredLabel || humanizeRole(role));
 }
 
-function createChromeGroupTitle(workspace, role, roleLabel = "") {
-  const suffix = " · " + getWorkspaceGroupToken(workspace);
-  const roleTitle = compactRoleLabel(role, roleLabel);
-  const maxLength = 32;
-  const availableRoleLength = maxLength - suffix.length;
-  if (availableRoleLength <= 3) return (roleTitle + suffix).slice(0, maxLength - 3) + "...";
-  const trimmedRole = roleTitle.length <= availableRoleLength ? roleTitle : roleTitle.slice(0, availableRoleLength - 3) + "...";
-  return trimmedRole + suffix;
-}
-
-function compactRoleLabel(role, roleLabel = "") {
-  const normalizedRole = String(role || "").toLowerCase();
-  const cleanedLabel = removeLegacyPrefix(roleLabel || humanizeRole(role));
-  const compactByRole = {
-    api_reference: "API Ref",
-    bug_reference: "Bug Ref",
-    documentation: "Docs",
-    reference: "Ref",
-    counterpoint: "Counter",
-    source: "Source",
-    question: "Question"
-  };
-  return compactByRole[normalizedRole] || cleanedLabel;
-}
-
 function removeLegacyPrefix(value = "") {
   return String(value || "").replace(/^legacy:\s*/i, "").trim();
 }
 
 function humanizeRole(role) {
   return String(role || "unassigned").replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function getWorkspaceGroupToken(workspace) {
-  const rawName = (workspace?.name || "").trim();
-  if (!rawName) return "CF";
-  const initials = rawName.split(/\s+/).filter(Boolean).map((word) => word.replace(/[^a-zA-Z0-9]/g, "")).filter(Boolean).map((word) => word[0]).join("").toUpperCase();
-  return initials ? initials.slice(0, 4) : "CF";
 }
 
 async function captureBrowserSnapshot() {
@@ -705,8 +684,8 @@ function createClipboardBlock() {
 }
 
 function createSummary(packet) {
-  if (packet?.packetType === "Chrome Flow Dedicated Window Threshold Execution Packet") return "Threshold execution: " + packet.execution.status + " | Window: " + (packet.browserResult?.dedicatedWindowId || "none") + " | Moved tabs: " + (packet.browserResult?.movedTabCount || 0) + " | Groups: " + (packet.browserResult?.recreatedGroupCount || 0) + ".";
-  return "Threshold execution gate: " + packet.executionGate.status + " | Tabs: " + packet.tabStatus.totalTabs + " | Open: " + packet.tabStatus.openTabs + " | Groups: " + packet.browserPlan.plannedGroupCount + " | Available: " + packet.executionGate.availableInThisSlice + ".";
+  if (packet?.packetType === "Chrome Flow Dedicated Window Threshold Execution Packet") return "Threshold execution: " + packet.execution.status + " | Window: " + (packet.browserResult?.dedicatedWindowId || "none") + " | Moved tabs: " + (packet.browserResult?.movedTabCount || 0) + " | Native groups: " + (packet.browserResult?.nativeChromeGroupsCreated ? "created" : "suppressed") + ".";
+  return "Threshold execution gate: " + packet.executionGate.status + " | Tabs: " + packet.tabStatus.totalTabs + " | Open: " + packet.tabStatus.openTabs + " | Logical groups: " + packet.browserPlan.logicalGroupCount + " | Native groups: suppressed | Available: " + packet.executionGate.availableInThisSlice + ".";
 }
 
 function getPacketStatus(packet) {
@@ -745,4 +724,4 @@ function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
-export { buildThresholdExecutionPrecheckPacket, createChromeGroupTitle, EXECUTION_PHRASE };
+export { buildThresholdExecutionPrecheckPacket, EXECUTION_PHRASE };
