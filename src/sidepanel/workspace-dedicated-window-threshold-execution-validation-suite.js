@@ -122,7 +122,7 @@ async function buildSuitePacket() {
     createExecutionScenario("unresolved_live_tabs_confirmed_blocks", cases.unresolvedLiveTabsConfirmed, {
       expectedStatus: "blocked_before_live_threshold_execution",
       expectedAvailable: false,
-      expectedFailedChecks: ["live_workspace_tabs_resolved"]
+      expectedFailedChecks: ["planned_groups_available", "live_workspace_tabs_resolved"]
     }),
     createScenario("execution_suite_boundary_preserved", [
       assertCondition("suite_runtime_action_not_executed", true, "Validation suite does not execute runtime action."),
