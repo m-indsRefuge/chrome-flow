@@ -88,7 +88,7 @@ async function buildSuitePacket() {
     createPreflightScenario("zero_tabs_block", fixtureMatrix[0], {
       expectedStatus: "blocked_before_threshold_projection",
       expectedReady: false,
-      expectedFailedChecks: ["dedicated_window_policy_active", "minimum_tab_threshold_met", "workspace_tabs_have_roles", "planned_groups_available"]
+      expectedFailedChecks: ["dedicated_window_policy_active", "minimum_tab_threshold_met", "workspace_tabs_have_urls", "workspace_tabs_have_roles", "planned_groups_available"]
     }),
 
     createPreflightScenario("one_tab_blocks", fixtureMatrix[1], {
@@ -198,13 +198,15 @@ function createNextDecision(overallStatus, activePreflight) {
 }
 
 function createPreflightScenario(name, fixture, expected) {
-  const failedCheckNames = fixture.preflight.failedChecks.map((check) => check.check);
+  const preflightPacket = fixture.preflight;
+  const preflightBlock = preflightPacket.preflight;
+  const failedCheckNames = preflightBlock.failedChecks.map((check) => check.check);
   const assertions = [
-    assertCondition("expected_status", fixture.preflight.status === expected.expectedStatus, "Preflight status matches expected result."),
-    assertCondition("expected_ready_state", fixture.preflight.readyForNextSlice === expected.expectedReady, "Preflight readiness matches expected result."),
+    assertCondition("expected_status", preflightBlock.status === expected.expectedStatus, "Preflight status matches expected result."),
+    assertCondition("expected_ready_state", preflightBlock.readyForNextSlice === expected.expectedReady, "Preflight readiness matches expected result."),
     assertCondition("expected_failed_check_count", failedCheckNames.length === expected.expectedFailedChecks.length, "Failed check count matches expected result."),
     ...expected.expectedFailedChecks.map((checkName) => assertCondition("expected_failed_check_" + checkName, failedCheckNames.includes(checkName), "Expected failed check is present: " + checkName + ".")),
-    assertBoundary(fixture.source)
+    assertBoundary(preflightPacket.source)
   ].flat();
 
   return createScenario(name, assertions, { fixture });
