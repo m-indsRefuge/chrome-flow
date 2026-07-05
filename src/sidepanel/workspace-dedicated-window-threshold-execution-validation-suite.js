@@ -89,7 +89,7 @@ async function buildSuitePacket() {
     createExecutionScenario("acknowledgement_only_blocks", cases.acknowledgementOnly, "blocked_before_live_threshold_execution", false, ["operator_phrase_matches"]),
     createExecutionScenario("full_confirmation_ready", cases.fullConfirmationReady, "ready_for_live_threshold_execution", true, []),
     createExecutionScenario("small_workspace_confirmed_blocks", cases.smallWorkspaceConfirmed, "blocked_before_live_threshold_execution", false, ["dedicated_window_policy_active", "minimum_tab_threshold_met"]),
-    createExecutionScenario("missing_role_confirmed_blocks", cases.missingRoleConfirmed, "blocked_before_live_threshold_execution", false, ["workspace_tabs_have_roles", "logical_groups_available"]),
+    createExecutionScenario("missing_role_confirmed_blocks", cases.missingRoleConfirmed, "blocked_before_live_threshold_execution", false, ["workspace_tabs_have_roles"]),
     createExecutionScenario("missing_url_confirmed_blocks", cases.missingUrlConfirmed, "blocked_before_live_threshold_execution", false, ["workspace_tabs_have_urls"]),
     createExecutionScenario("unresolved_live_tabs_confirmed_blocks", cases.unresolvedLiveTabsConfirmed, "blocked_before_live_threshold_execution", false, ["logical_groups_available", "live_workspace_tabs_resolved"]),
     createNoNativeGroupsScenario(cases.fullConfirmationReady),
