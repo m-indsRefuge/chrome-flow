@@ -1,6 +1,5 @@
 import {
   buildThresholdExecutionPrecheckPacket,
-  createChromeGroupTitle,
   EXECUTION_PHRASE
 } from "./workspace-dedicated-window-threshold-execution.js";
 
@@ -24,7 +23,7 @@ function installDedicatedWindowThresholdExecutionValidationSuite() {
   section.className = "dedicated-window-threshold-execution-validation-suite-section";
   section.innerHTML = `
     <h2>Dedicated Window Threshold Execution Validation Suite</h2>
-    <p class="section-help">Programmatically validates dedicated-window threshold live-action gates without executing browser actions.</p>
+    <p class="section-help">Programmatically validates dedicated-window threshold gates. Native Chrome tab groups are suppressed by default.</p>
     <div id="dedicatedWindowThresholdExecutionValidationSuiteSummary" class="workspace-session-summary">Threshold execution validation suite ready.</div>
     <div class="workspace-session-actions">
       <button id="runDedicatedWindowThresholdExecutionValidationSuiteButton" type="button" class="secondary-button">Run Threshold Execution Validation Suite</button>
@@ -85,52 +84,21 @@ async function buildSuitePacket() {
   };
 
   const scenarios = [
-    createExecutionScenario("no_confirmation_blocks", cases.noConfirmation, {
-      expectedStatus: "blocked_before_live_threshold_execution",
-      expectedAvailable: false,
-      expectedFailedChecks: ["operator_phrase_matches", "operator_acknowledgement_checked"]
-    }),
-    createExecutionScenario("phrase_only_blocks", cases.phraseOnly, {
-      expectedStatus: "blocked_before_live_threshold_execution",
-      expectedAvailable: false,
-      expectedFailedChecks: ["operator_acknowledgement_checked"]
-    }),
-    createExecutionScenario("acknowledgement_only_blocks", cases.acknowledgementOnly, {
-      expectedStatus: "blocked_before_live_threshold_execution",
-      expectedAvailable: false,
-      expectedFailedChecks: ["operator_phrase_matches"]
-    }),
-    createExecutionScenario("full_confirmation_ready", cases.fullConfirmationReady, {
-      expectedStatus: "ready_for_live_threshold_execution",
-      expectedAvailable: true,
-      expectedFailedChecks: []
-    }),
-    createExecutionScenario("small_workspace_confirmed_blocks", cases.smallWorkspaceConfirmed, {
-      expectedStatus: "blocked_before_live_threshold_execution",
-      expectedAvailable: false,
-      expectedFailedChecks: ["dedicated_window_policy_active", "minimum_tab_threshold_met"]
-    }),
-    createExecutionScenario("missing_role_confirmed_blocks", cases.missingRoleConfirmed, {
-      expectedStatus: "blocked_before_live_threshold_execution",
-      expectedAvailable: false,
-      expectedFailedChecks: ["workspace_tabs_have_roles"]
-    }),
-    createExecutionScenario("missing_url_confirmed_blocks", cases.missingUrlConfirmed, {
-      expectedStatus: "blocked_before_live_threshold_execution",
-      expectedAvailable: false,
-      expectedFailedChecks: ["workspace_tabs_have_urls"]
-    }),
-    createExecutionScenario("unresolved_live_tabs_confirmed_blocks", cases.unresolvedLiveTabsConfirmed, {
-      expectedStatus: "blocked_before_live_threshold_execution",
-      expectedAvailable: false,
-      expectedFailedChecks: ["planned_groups_available", "live_workspace_tabs_resolved"]
-    }),
-    createGroupTitleScenario(),
+    createExecutionScenario("no_confirmation_blocks", cases.noConfirmation, "blocked_before_live_threshold_execution", false, ["operator_phrase_matches", "operator_acknowledgement_checked"]),
+    createExecutionScenario("phrase_only_blocks", cases.phraseOnly, "blocked_before_live_threshold_execution", false, ["operator_acknowledgement_checked"]),
+    createExecutionScenario("acknowledgement_only_blocks", cases.acknowledgementOnly, "blocked_before_live_threshold_execution", false, ["operator_phrase_matches"]),
+    createExecutionScenario("full_confirmation_ready", cases.fullConfirmationReady, "ready_for_live_threshold_execution", true, []),
+    createExecutionScenario("small_workspace_confirmed_blocks", cases.smallWorkspaceConfirmed, "blocked_before_live_threshold_execution", false, ["dedicated_window_policy_active", "minimum_tab_threshold_met"]),
+    createExecutionScenario("missing_role_confirmed_blocks", cases.missingRoleConfirmed, "blocked_before_live_threshold_execution", false, ["workspace_tabs_have_roles", "logical_groups_available"]),
+    createExecutionScenario("missing_url_confirmed_blocks", cases.missingUrlConfirmed, "blocked_before_live_threshold_execution", false, ["workspace_tabs_have_urls"]),
+    createExecutionScenario("unresolved_live_tabs_confirmed_blocks", cases.unresolvedLiveTabsConfirmed, "blocked_before_live_threshold_execution", false, ["logical_groups_available", "live_workspace_tabs_resolved"]),
+    createNoNativeGroupsScenario(cases.fullConfirmationReady),
     createScenario("execution_suite_boundary_preserved", [
       assertCondition("suite_runtime_action_not_executed", true, "Validation suite does not execute runtime action."),
       assertCondition("suite_browser_projection_not_changed", true, "Validation suite does not change browser projection."),
       assertCondition("suite_session_db_not_changed", true, "Validation suite does not write Session DB."),
-      assertCondition("suite_chrome_storage_runtime_not_changed", true, "Validation suite does not change chrome.storage.local.")
+      assertCondition("suite_chrome_storage_runtime_not_changed", true, "Validation suite does not change chrome.storage.local."),
+      assertCondition("suite_live_browser_action_not_executed", true, "Validation suite does not run the live browser action.")
     ])
   ];
 
@@ -141,7 +109,7 @@ async function buildSuitePacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "dedicated-window-threshold-execution-validation-suite-packet-v0.1"
+      schema: "dedicated-window-threshold-execution-validation-suite-packet-v0.2-no-native-groups"
     },
     clipboard: createClipboardBlock(),
     source: {
@@ -154,7 +122,8 @@ async function buildSuitePacket() {
       sessionDbChanged: false,
       chromeStorageRuntimeChanged: false,
       operatorManualFixtureRequired: false,
-      liveBrowserActionExecuted: false
+      liveBrowserActionExecuted: false,
+      nativeChromeGroupsCreated: false
     },
     suite: {
       overallStatus,
@@ -187,43 +156,34 @@ function createNextDecision(overallStatus) {
     };
   }
   return {
-    recommendation: "ready_for_live_threshold_execution_validation",
-    reason: "Execution validation suite passed. The live execution surface can be validated with an actual active 4+ tab workspace under Operator confirmation."
+    recommendation: "ready_for_no_native_groups_live_execution_validation",
+    reason: "Execution validation suite passed. The live execution surface can be validated with an active 4+ tab workspace. Native Chrome groups should not be created."
   };
 }
 
-function createExecutionScenario(name, packet, expected) {
+function createExecutionScenario(name, packet, expectedStatus, expectedAvailable, expectedFailedChecks) {
   const failedCheckNames = packet.executionGate.failedChecks.map((check) => check.check);
   const assertions = [
-    assertCondition("expected_status", packet.executionGate.status === expected.expectedStatus, "Execution gate status matches expected result."),
-    assertCondition("expected_live_action_availability", packet.executionGate.availableInThisSlice === expected.expectedAvailable, "Execution live action availability matches expected result."),
-    assertCondition("expected_failed_check_count", failedCheckNames.length === expected.expectedFailedChecks.length, "Failed check count matches expected result."),
-    ...expected.expectedFailedChecks.map((checkName) => assertCondition("expected_failed_check_" + checkName, failedCheckNames.includes(checkName), "Expected failed check is present: " + checkName + ".")),
+    assertCondition("expected_status", packet.executionGate.status === expectedStatus, "Execution gate status matches expected result."),
+    assertCondition("expected_live_action_availability", packet.executionGate.availableInThisSlice === expectedAvailable, "Execution live action availability matches expected result."),
+    assertCondition("expected_failed_check_count", failedCheckNames.length === expectedFailedChecks.length, "Failed check count matches expected result."),
+    ...expectedFailedChecks.map((checkName) => assertCondition("expected_failed_check_" + checkName, failedCheckNames.includes(checkName), "Expected failed check is present: " + checkName + ".")),
     assertBoundary(packet.source)
   ].flat();
 
   return createScenario(name, assertions, { packet });
 }
 
-function createGroupTitleScenario() {
-  const workspace = {
-    workspaceId: "fixture-workspace-title-hardening",
-    name: "Live Execution Validation Test",
-    workspaceType: "build"
-  };
-  const titles = [
-    createChromeGroupTitle(workspace, "documentation", "Legacy: documentation"),
-    createChromeGroupTitle(workspace, "api_reference", "Legacy: api_reference"),
-    createChromeGroupTitle(workspace, "bug_reference", "Legacy: bug_reference")
-  ];
+function createNoNativeGroupsScenario(packet) {
+  const nativePolicy = packet.browserPlan.nativeChromeGroups;
   const assertions = [
-    assertCondition("documentation_title_compact", titles[0] === "Docs · LEVT", "Documentation title is compact and workspace-scoped."),
-    assertCondition("api_reference_title_compact", titles[1] === "API Ref · LEVT", "API reference title is compact and workspace-scoped."),
-    assertCondition("bug_reference_title_compact", titles[2] === "Bug Ref · LEVT", "Bug reference title is compact and workspace-scoped."),
-    assertCondition("no_legacy_prefixes", titles.every((title) => !/^legacy:/i.test(title)), "Chrome group titles do not use Legacy-prefixed labels."),
-    assertCondition("title_length_safe", titles.every((title) => title.length <= 32), "Chrome group titles stay within the compact title length boundary.")
+    assertCondition("native_groups_policy_exists", Boolean(nativePolicy), "Native Chrome groups policy exists on the execution plan."),
+    assertCondition("native_groups_disabled", nativePolicy?.createNativeChromeGroups === false, "Native Chrome groups are disabled by default."),
+    assertCondition("expected_native_group_count_zero", nativePolicy?.expectedNativeGroupCount === 0, "Expected native Chrome group count is zero."),
+    assertCondition("logical_groups_preserved", packet.browserPlan.logicalGroupCount > 0 && packet.browserPlan.logicalGroups.length === packet.browserPlan.logicalGroupCount, "Constellation logical groups are preserved in the execution plan."),
+    assertCondition("precheck_has_native_suppression_gate", packet.executionGate.checks.some((check) => check.check === "native_chrome_groups_suppressed" && check.status === "pass"), "Execution gate includes a native Chrome group suppression check.")
   ];
-  return createScenario("chrome_group_titles_compact_no_legacy", assertions, { titles });
+  return createScenario("native_chrome_groups_suppressed_by_default", assertions, { nativePolicy, logicalGroups: packet.browserPlan.logicalGroups });
 }
 
 function createScenario(name, assertions, extra = {}) {
@@ -333,7 +293,7 @@ function formatPacket(packet) {
 }
 
 function createSummary(packet) {
-  return "Threshold execution validation suite: " + packet.suite.overallStatus + " | Scenarios: " + packet.suite.passedScenarioCount + "/" + packet.suite.scenarioCount + " pass | Next: " + packet.nextDecision.recommendation + ".";
+  return "Threshold execution validation suite: " + packet.suite.overallStatus + " | Scenarios: " + packet.suite.passedScenarioCount + "/" + packet.suite.scenarioCount + " pass | Native groups: suppressed | Next: " + packet.nextDecision.recommendation + ".";
 }
 
 function setSummary(message) {
