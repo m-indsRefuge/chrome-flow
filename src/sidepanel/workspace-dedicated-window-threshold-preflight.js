@@ -37,7 +37,8 @@ function installDedicatedWindowThresholdPreflight() {
   document.getElementById("prepareDedicatedWindowThresholdPreflightButton")?.addEventListener("click", preparePreflightPacket);
   document.getElementById("copyDedicatedWindowThresholdPreflightPacketButton")?.addEventListener("click", copyPreflightPacket);
 
-  preparePreflightPacket();
+  setSummary("Threshold preflight ready. Prepare a packet to read current runtime state.");
+  setStatus("Threshold preflight loaded. No packet has been prepared yet.");
 }
 
 async function preparePreflightPacket() {
@@ -54,12 +55,12 @@ async function preparePreflightPacket() {
 
 async function copyPreflightPacket() {
   try {
-    const packet = lastPreflightPacket || await buildPreflightPacket();
+    const packet = await buildPreflightPacket();
     await navigator.clipboard.writeText(formatPacket(packet));
     lastPreflightPacket = packet;
     setSummary(createSummary(packet));
     setOutput(packet);
-    setStatus("Threshold preflight packet copied: " + packet.preflight.status + ".");
+    setStatus("Fresh threshold preflight packet copied: " + packet.preflight.status + ".");
   } catch (error) {
     setError("Could not copy threshold preflight packet.", error);
   }
@@ -91,7 +92,9 @@ async function buildPreflightPacket() {
       runtimeActionExecuted: false,
       browserProjectionChanged: false,
       sessionDbChanged: false,
-      chromeStorageRuntimeChanged: false
+      chromeStorageRuntimeChanged: false,
+      packetPreparedOnDemand: true,
+      copyRebuildsFromRuntimeState: true
     },
     workspace: {
       workspaceId: workspace?.workspaceId || "",
@@ -128,6 +131,7 @@ async function buildPreflightPacket() {
         "No browser action is performed by this preflight surface.",
         "A 4+ tab active runtime workspace is required before dedicated-window projection can proceed.",
         "All tabs must have URLs and assigned roles for this first threshold preflight.",
+        "The copy action rebuilds the packet from current runtime state to avoid stale load-time packets.",
         "Future live execution must use a separate validation suite, Operator approval, live action, and post-action verification."
       ]
     }
