@@ -1,4 +1,5 @@
 import "./workspace-dedicated-window-threshold-validation-suite.js";
+import "./workspace-dedicated-window-threshold-preflight.js";
 import { getWorkspace } from "../core/workspace-store.js";
 
 const DEDICATED_WINDOW_THRESHOLD = 4;
