@@ -168,7 +168,8 @@ function createWorkspaceIdentityScenario() {
 }
 
 function createPolicyBlockScenario() {
-  const block = createThresholdPolicyBlock(4);
+  const policy = classifyDedicatedWindowThreshold(4);
+  const block = createThresholdPolicyBlock(policy);
   return createScenario("threshold_policy_block_shared", [
     assertCondition("threshold", block.thresholdTabCount === 4, "Threshold tab count is preserved."),
     assertCondition("target", block.targetMode === "new_window", "Target mode is preserved."),
@@ -216,10 +217,7 @@ function createPacketEnvelopeScenario() {
 function createBoundaryScenario() {
   const source = createBoundarySource("gate_consolidation_fixture", { helperMigrationValidation: true });
   return createScenario("read_only_boundary_shared", [
-    assertReadOnlyBoundary(source, "runtimeActionExecuted", "Source does not execute runtime actions."),
-    assertReadOnlyBoundary(source, "browserProjectionChanged", "Source does not change browser projection."),
-    assertReadOnlyBoundary(source, "sessionDbChanged", "Source does not write Session DB."),
-    assertReadOnlyBoundary(source, "chromeStorageRuntimeChanged", "Source does not change chrome.storage.local."),
+    assertReadOnlyBoundary(source),
     assertCondition("validation_flag", source.helperMigrationValidation === true, "Additional source metadata is preserved.")
   ]);
 }
