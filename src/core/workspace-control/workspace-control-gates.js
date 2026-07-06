@@ -167,11 +167,11 @@ function createScenario(name, assertions, extra = {}) {
   const safeAssertions = Array.isArray(assertions) ? assertions.flat() : [];
   const failedAssertions = safeAssertions.filter((assertion) => assertion.status === "fail");
   return {
+    ...extra,
     name,
     status: failedAssertions.length ? "fail" : "pass",
     assertions: safeAssertions,
-    failedAssertions,
-    ...extra
+    failedAssertions
   };
 }
 
