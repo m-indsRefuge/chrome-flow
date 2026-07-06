@@ -70,6 +70,7 @@ function buildSuitePacket() {
   const noConfirmPacket = createGatePacket({ workspaceId: "execution-gate-no-confirm", tabCount: 4, phrase: "", acknowledgementChecked: false, resolutionMode: "resolved" });
   const smallPacket = createGatePacket({ workspaceId: "execution-gate-small", tabCount: 3, phrase: EXECUTION_PHRASE, acknowledgementChecked: true, resolutionMode: "resolved" });
   const unresolvedPacket = createGatePacket({ workspaceId: "execution-gate-unresolved", tabCount: 4, phrase: EXECUTION_PHRASE, acknowledgementChecked: true, resolutionMode: "unresolved" });
+  const callerSortedPacket = createGatePacket({ workspaceId: "execution-gate-caller-sorted", tabCount: 4, phrase: EXECUTION_PHRASE, acknowledgementChecked: true, resolutionMode: "resolved", sortResolvedResults: reverseResolvedResults });
 
   const scenarios = [
     createPacketShapeScenario(readyPacket),
@@ -77,6 +78,7 @@ function buildSuitePacket() {
     createNoConfirmScenario(noConfirmPacket),
     createSmallScenario(smallPacket),
     createUnresolvedScenario(unresolvedPacket),
+    createCallerSortedScenario(callerSortedPacket),
     createBoundaryScenario(readyPacket)
   ];
   const overallStatus = scenarios.some((scenario) => scenario.status === "fail") ? "fail" : "pass";
@@ -86,7 +88,7 @@ function buildSuitePacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "workspace-control-execution-gate-validation-suite-packet-v0.1"
+      schema: "workspace-control-execution-gate-validation-suite-packet-v0.2-caller-ordering"
     },
     clipboard: createClipboardBlock(),
     source: {
@@ -110,7 +112,8 @@ function buildSuitePacket() {
       readyPacket,
       noConfirmPacket,
       smallPacket,
-      unresolvedPacket
+      unresolvedPacket,
+      callerSortedPacket
     },
     nextDecision: createNextDecision(overallStatus)
   };
@@ -164,6 +167,16 @@ function createUnresolvedScenario(packet) {
   ], { failedCheckNames });
 }
 
+function createCallerSortedScenario(packet) {
+  const tabMoveIds = packet.browserPlan.tabMovePlan.map((item) => item.workspaceTabId);
+  return createScenario("execution_gate_preserves_caller_supplied_ordering", [
+    assertCondition("first_tab_reversed", tabMoveIds[0] === "execution-gate-tab-4", "Caller-supplied order controls the first planned move."),
+    assertCondition("last_tab_reversed", tabMoveIds[3] === "execution-gate-tab-1", "Caller-supplied order controls the final planned move."),
+    assertCondition("planned_groups_follow_order", packet.browserPlan.plannedGroups[0]?.role === "docs" && packet.browserPlan.plannedGroups[3]?.role === "source", "Planned groups follow caller-supplied result order."),
+    assertCondition("gate_still_ready", packet.executionGate.status === "ready_for_live_threshold_execution", "Caller ordering does not break a ready gate.")
+  ], { tabMoveIds });
+}
+
 function createBoundaryScenario(packet) {
   return createScenario("execution_gate_boundary_preserved", [
     assertCondition("source_read_only", packet.source.readOnly === true, "Source is read-only."),
@@ -184,7 +197,8 @@ function createGatePacket(options) {
     resolution: createFixtureResolution(tabs, options.resolutionMode),
     phrase: options.phrase,
     acknowledgementChecked: options.acknowledgementChecked,
-    createdAt: "2026-01-01T00:00:00.000Z"
+    createdAt: "2026-01-01T00:00:00.000Z",
+    sortResolvedResults: options.sortResolvedResults
   });
 }
 
@@ -238,6 +252,10 @@ function createFixtureResolution(tabs, resolutionMode) {
   };
 }
 
+function reverseResolvedResults(results) {
+  return [...results].reverse();
+}
+
 function createNextDecision(overallStatus) {
   if (overallStatus !== "pass") {
     return {
@@ -248,7 +266,7 @@ function createNextDecision(overallStatus) {
 
   return {
     recommendation: "ready_to_wire_execution_surface_to_migrated_gate",
-    reason: "Migrated execution gate packet construction validates. The browser-control surface can be wired onto this builder in a separate patch."
+    reason: "Migrated execution gate packet construction validates, including caller-supplied result ordering. The browser-control surface can be wired onto this builder in a separate patch."
   };
 }
 
