@@ -1,5 +1,12 @@
 const VALIDATION_MODE_STORAGE_KEY = "chromeFlowValidationSurfacesVisible";
 const VALIDATION_MODE_QUERY_PARAM = "chromeFlowValidation";
+const VALIDATION_SURFACE_SELECTOR = [
+  "[data-validation-surface='true']",
+  "section[id*='ValidationSuite']",
+  "section[class*='validation-suite']"
+].join(", ");
+
+let validationSurfaceObserver = null;
 
 function isValidationSurfaceDebugModeEnabled() {
   return readValidationModeFromQuery() || readValidationModeFromStorage() || document.body?.dataset?.chromeFlowValidationMode === "true";
@@ -14,6 +21,7 @@ function registerValidationSurface(section) {
 
 function installValidationSurfaceDebugToggle(anchor) {
   if (document.getElementById("validationSurfaceDebugModeSection")) {
+    ensureValidationSurfaceObserver();
     refreshValidationSurfaceVisibility();
     return;
   }
@@ -35,6 +43,7 @@ function installValidationSurfaceDebugToggle(anchor) {
 
   safeAnchor.insertAdjacentElement("afterend", section);
   document.getElementById("toggleValidationSurfaceDebugModeButton")?.addEventListener("click", toggleValidationSurfaceDebugMode);
+  ensureValidationSurfaceObserver();
   refreshValidationSurfaceVisibility();
 }
 
@@ -54,16 +63,30 @@ function setValidationSurfaceDebugModeEnabled(enabled) {
 
 function refreshValidationSurfaceVisibility() {
   const enabled = isValidationSurfaceDebugModeEnabled();
-  document.querySelectorAll("[data-validation-surface='true']").forEach((section) => applyValidationSurfaceVisibility(section, enabled));
+  getValidationSurfaces().forEach((section) => applyValidationSurfaceVisibility(section, enabled));
   const summary = document.getElementById("validationSurfaceDebugModeSummary");
   if (summary) summary.textContent = enabled ? "Validation surfaces are visible." : "Validation surfaces are hidden.";
   const button = document.getElementById("toggleValidationSurfaceDebugModeButton");
   if (button) button.textContent = enabled ? "Hide Validation Surfaces" : "Show Validation Surfaces";
 }
 
+function getValidationSurfaces() {
+  return Array.from(document.querySelectorAll(VALIDATION_SURFACE_SELECTOR)).filter((section) => section.id !== "validationSurfaceDebugModeSection");
+}
+
 function applyValidationSurfaceVisibility(section, enabled) {
+  section.dataset.validationSurface = "true";
   section.hidden = !enabled;
   section.setAttribute("aria-hidden", enabled ? "false" : "true");
+}
+
+function ensureValidationSurfaceObserver() {
+  if (validationSurfaceObserver || !document.body) return;
+  validationSurfaceObserver = new MutationObserver((mutations) => {
+    if (!mutations.some((mutation) => mutation.addedNodes?.length)) return;
+    refreshValidationSurfaceVisibility();
+  });
+  validationSurfaceObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 function readValidationModeFromQuery() {
