@@ -6,6 +6,7 @@ import "./workspace-dedicated-window-threshold-review-validation-suite.js";
 import "./workspace-dedicated-window-threshold-execution.js";
 import "./workspace-dedicated-window-threshold-execution-validation-suite.js";
 import "./workspace-control-internal-gate-consolidation-validation-suite.js";
+import "./workspace-control-policy-migration-validation-suite.js";
 import { getWorkspace } from "../core/workspace-store.js";
 import {
   DEDICATED_WINDOW_THRESHOLD,
@@ -78,14 +79,19 @@ async function copyPolicyPacket() {
 async function buildPolicyPacket() {
   const workspace = await getWorkspace();
   const tabs = Array.isArray(workspace?.tabs) ? workspace.tabs : [];
-  const tabStatus = buildWorkspaceTabStatus(tabs);
+  return buildDedicatedWindowThresholdPolicyPacketForValidation({ workspace, tabs });
+}
+
+function buildDedicatedWindowThresholdPolicyPacketForValidation({ workspace = {}, tabs = [], createdAt = null } = {}) {
+  const safeTabs = Array.isArray(tabs) ? tabs : [];
+  const tabStatus = buildWorkspaceTabStatus(safeTabs);
   const classification = classifyDedicatedWindowThreshold(tabStatus.totalTabs);
   const checks = createPolicyChecks({ workspace, tabStatus, classification });
   const failedChecks = collectFailedChecks(checks);
 
   return {
     packetType: "Chrome Flow Dedicated Window Threshold Policy Packet",
-    createdAt: new Date().toISOString(),
+    createdAt: createdAt || new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
       schema: "dedicated-window-threshold-policy-packet-v0.1"
@@ -171,3 +177,5 @@ function setError(message, error) {
   setOutput({ status: "error", message, error: error?.message || String(error) });
   setStatus(message);
 }
+
+export { buildDedicatedWindowThresholdPolicyPacketForValidation };
