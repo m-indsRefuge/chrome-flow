@@ -22,13 +22,15 @@ function buildThresholdExecutionGatePacket({
   phrase = "",
   acknowledgementChecked = false,
   createdAt = null,
-  roleLabeler = humanizeRole
+  roleLabeler = humanizeRole,
+  sortResolvedResults = sortResultsByRuntimeOrder
 } = {}) {
   const safeTabs = Array.isArray(tabs) ? tabs : [];
   const safeResolution = resolution || createEmptyResolution(safeTabs);
   const resolvedResults = safeResolution.results.filter((result) => result.liveTab);
-  const sortedResults = sortResultsByRuntimeOrder(resolvedResults);
-  const sortedWorkspaceTabs = sortedResults.map((result) => result.workspaceTab);
+  const sortedResults = typeof sortResolvedResults === "function" ? sortResolvedResults(resolvedResults, workspace) : sortResultsByRuntimeOrder(resolvedResults);
+  const safeSortedResults = Array.isArray(sortedResults) ? sortedResults : sortResultsByRuntimeOrder(resolvedResults);
+  const sortedWorkspaceTabs = safeSortedResults.map((result) => result.workspaceTab);
   const tabStatus = buildExecutionTabStatus(safeTabs, safeResolution.results);
   const plannedGroups = createPlannedRoleGroups(sortedWorkspaceTabs, { roleLabeler });
   const policy = classifyDedicatedWindowThreshold(tabStatus.totalTabs);
@@ -71,10 +73,10 @@ function buildThresholdExecutionGatePacket({
       targetMode: TARGET_MODE_NEW_WINDOW,
       action: "move_existing_workspace_tabs_to_dedicated_window",
       expectedWindowCountDelta: 1,
-      plannedTabCount: sortedResults.length,
+      plannedTabCount: safeSortedResults.length,
       plannedGroupCount: plannedGroups.length,
       plannedGroups,
-      tabMovePlan: sortedResults.map((result, index) => ({
+      tabMovePlan: safeSortedResults.map((result, index) => ({
         workspaceTabId: result.workspaceTab.workspaceTabId,
         tabId: result.liveTab.id,
         sourceWindowId: result.liveTab.windowId,
