@@ -7,6 +7,7 @@ import "./workspace-dedicated-window-threshold-execution.js";
 import "./workspace-dedicated-window-threshold-execution-validation-suite.js";
 import "./workspace-control-internal-gate-consolidation-validation-suite.js";
 import "./workspace-control-policy-migration-validation-suite.js";
+import "./workspace-control-preflight-migration-validation-suite.js";
 import { getWorkspace } from "../core/workspace-store.js";
 import {
   DEDICATED_WINDOW_THRESHOLD,
