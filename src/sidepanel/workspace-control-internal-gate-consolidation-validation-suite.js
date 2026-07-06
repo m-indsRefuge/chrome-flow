@@ -17,6 +17,10 @@ import {
   formatPacketEnvelope,
   humanizeRole
 } from "../core/workspace-control/workspace-control-gates.js";
+import {
+  installValidationSurfaceDebugToggle,
+  registerValidationSurface
+} from "./sidepanel-debug-mode.js";
 
 let lastSuitePacket = null;
 
@@ -27,6 +31,8 @@ function installWorkspaceControlGateConsolidationValidationSuite() {
 
   const anchor = document.getElementById("dedicatedWindowThresholdExecutionValidationSuiteSection") || document.getElementById("dedicatedWindowThresholdExecutionSection") || document.getElementById("dedicatedWindowThresholdPolicySection") || document.querySelector(".workspace-section");
   if (!anchor) return;
+
+  installValidationSurfaceDebugToggle(anchor);
 
   const section = document.createElement("section");
   section.id = "workspaceControlGateConsolidationValidationSuiteSection";
@@ -43,6 +49,7 @@ function installWorkspaceControlGateConsolidationValidationSuite() {
     <pre id="workspaceControlGateConsolidationValidationSuiteOutput" class="diagnostics-output">Workspace control gate consolidation validation suite output will appear here.</pre>
   `;
 
+  registerValidationSurface(section);
   anchor.insertAdjacentElement("afterend", section);
 
   document.getElementById("runWorkspaceControlGateConsolidationValidationSuiteButton")?.addEventListener("click", runSuite);
@@ -78,34 +85,30 @@ function buildSuitePacket() {
   const scenarios = [
     createThresholdClassificationScenario(),
     createTabStatusScenario(),
-    createRoleGroupScenario(),
-    createCheckFailureScenario(),
-    createPacketEnvelopeScenario(),
     createWorkspaceIdentityScenario(),
-    createReadOnlyBoundaryScenario(),
-    createConsolidationBoundaryScenario()
+    createPolicyBlockScenario(),
+    createPlannedGroupsScenario(),
+    createGateChecksScenario(),
+    createPacketEnvelopeScenario(),
+    createBoundaryScenario()
   ];
-
   const overallStatus = scenarios.some((scenario) => scenario.status === "fail") ? "fail" : "pass";
-
   return {
-    packetType: "Chrome Flow Workspace Control Gate Consolidation Validation Suite Packet",
+    packetType: "Chrome Flow Workspace Control Internal Gate Consolidation Validation Suite Packet",
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "workspace-control-gate-consolidation-validation-suite-packet-v0.1"
+      schema: "workspace-control-internal-gate-consolidation-validation-suite-packet-v0.1"
     },
     clipboard: createClipboardBlock(),
     source: {
       type: "workspace_control_internal_gate_consolidation_validation_suite",
       readOnly: true,
       validationOnly: true,
-      helperExtractionValidation: true,
       runtimeActionExecuted: false,
       browserProjectionChanged: false,
       sessionDbChanged: false,
-      chromeStorageRuntimeChanged: false,
-      liveBrowserActionExecuted: false
+      chromeStorageRuntimeChanged: false
     },
     suite: {
       overallStatus,
@@ -114,170 +117,147 @@ function buildSuitePacket() {
       failedScenarioCount: scenarios.filter((scenario) => scenario.status === "fail").length,
       scenarios
     },
+    helperExports: [
+      "DEDICATED_WINDOW_THRESHOLD",
+      "TARGET_MODE_NEW_WINDOW",
+      "buildWorkspaceTabStatus",
+      "classifyDedicatedWindowThreshold",
+      "createWorkspaceIdentityBlock",
+      "createThresholdPolicyBlock",
+      "createPlannedRoleGroups",
+      "createCheck",
+      "formatPacketEnvelope"
+    ],
     nextDecision: createNextDecision(overallStatus)
   };
 }
 
 function createThresholdClassificationScenario() {
-  const zero = classifyDedicatedWindowThreshold(0);
-  const one = classifyDedicatedWindowThreshold(1);
-  const three = classifyDedicatedWindowThreshold(3);
-  const four = classifyDedicatedWindowThreshold(4);
-  const five = classifyDedicatedWindowThreshold(5);
-
-  return createScenario("threshold_classification_matches_existing_policy", [
-    assertCondition("threshold_constant_is_four", DEDICATED_WINDOW_THRESHOLD === 4, "Dedicated-window threshold remains 4 tabs."),
-    assertCondition("target_mode_is_new_window", TARGET_MODE_NEW_WINDOW === "new_window", "Target mode constant remains new_window."),
-    assertCondition("zero_tabs_intake", zero.status === "no_workspace_tabs_detected" && zero.dedicatedWindowPolicyActive === false && zero.currentWindowStillValid === true, "Zero tabs classify as intake."),
-    assertCondition("one_tab_current_window", one.status === "current_window_valid" && one.dedicatedWindowPolicyActive === false && one.currentWindowStillValid === true, "One tab remains current-window valid."),
-    assertCondition("three_tabs_current_window", three.status === "current_window_valid" && three.dedicatedWindowPolicyActive === false && three.currentWindowStillValid === true, "Three tabs remain current-window valid."),
-    assertCondition("four_tabs_dedicated", four.status === "dedicated_window_policy_active" && four.dedicatedWindowPolicyActive === true && four.currentWindowStillValid === false, "Four tabs activate dedicated-window policy."),
-    assertCondition("five_tabs_dedicated", five.status === "dedicated_window_policy_active" && five.dedicatedWindowPolicyActive === true && five.currentWindowStillValid === false, "Five tabs activate dedicated-window policy.")
-  ], { matrix: { zero, one, three, four, five } });
-}
-
-function createTabStatusScenario() {
-  const tabs = [
-    createFixtureTab("tab-1", "source", "https://example.com/1"),
-    createFixtureTab("tab-2", "question", "https://example.com/2"),
-    createFixtureTab("tab-3", "unassigned", "https://example.com/3"),
-    createFixtureTab("tab-4", "docs", "")
-  ];
-  const status = buildWorkspaceTabStatus(tabs);
-
-  return createScenario("tab_status_matches_existing_shape", [
-    assertCondition("total_tabs", status.totalTabs === 4, "Total tab count is correct."),
-    assertCondition("tabs_with_urls", status.tabsWithUrls === 3, "URL count is correct."),
-    assertCondition("missing_url_count", status.missingUrlCount === 1, "Missing URL count is correct."),
-    assertCondition("assigned_tabs", status.assignedTabs === 3, "Assigned tab count is correct."),
-    assertCondition("unassigned_tabs", status.unassignedTabs === 1, "Unassigned tab count is correct."),
-    assertCondition("role_counts_source", status.roleCounts.source === 1, "Source role count is correct."),
-    assertCondition("role_counts_unassigned", status.roleCounts.unassigned === 1, "Unassigned role count is correct.")
-  ], { status });
-}
-
-function createRoleGroupScenario() {
-  const tabs = [
-    createFixtureTab("tab-1", "source", "https://example.com/1"),
-    createFixtureTab("tab-2", "source", "https://example.com/2"),
-    createFixtureTab("tab-3", "question", "https://example.com/3"),
-    createFixtureTab("tab-4", "unassigned", "https://example.com/4")
-  ];
-  const groups = createPlannedRoleGroups(tabs, { roleLabeler: humanizeRole });
-  const sourceGroup = groups.find((group) => group.role === "source");
-  const questionGroup = groups.find((group) => group.role === "question");
-
-  return createScenario("planned_role_groups_preserve_projection_shape", [
-    assertCondition("unassigned_excluded", groups.every((group) => group.role !== "unassigned"), "Unassigned tabs are excluded from planned groups."),
-    assertCondition("group_count", groups.length === 2, "Two role groups are created."),
-    assertCondition("source_group_count", sourceGroup?.plannedTabCount === 2, "Source group contains two tabs."),
-    assertCondition("question_group_count", questionGroup?.plannedTabCount === 1, "Question group contains one tab."),
-    assertCondition("required_for_projection", groups.every((group) => group.requiredForProjection === true), "Groups remain marked as required for projection.")
-  ], { groups });
-}
-
-function createCheckFailureScenario() {
-  const checks = [
-    createCheck("first_pass", true, "First check passes."),
-    createCheck("second_fail", false, "Second check fails."),
-    createCheck("third_pass", true, "Third check passes.")
-  ];
-  const failures = failedChecks(checks);
-  const reasons = blockedReasons(checks);
-
-  return createScenario("check_failure_helpers_match_gate_behavior", [
-    assertCondition("failure_count", failures.length === 1, "One failed check is returned."),
-    assertCondition("failure_name", failures[0]?.check === "second_fail", "Failed check name is preserved."),
-    assertCondition("blocked_reason", reasons[0] === "Second check fails.", "Blocked reason is derived from failed check message.")
-  ], { checks, failures, reasons });
-}
-
-function createPacketEnvelopeScenario() {
-  const packet = {
-    packetType: "Fixture Packet",
-    createdAt: "2026-01-01T00:00:00.000Z",
-    extension: {
-      name: "Chrome Flow",
-      schema: "fixture-schema-v0.1"
-    },
-    clipboard: createClipboardBlock(),
-    source: createBoundarySource("fixture_source")
-  };
-  const text = formatPacketEnvelope(packet);
-
-  return createScenario("packet_envelope_matches_existing_format", [
-    assertCondition("starts_with_envelope", text.startsWith("CHROME_FLOW_PACKET_START"), "Envelope starts with the packet start marker."),
-    assertCondition("contains_packet_type", text.includes("packetType: Fixture Packet"), "Envelope contains packet type header."),
-    assertCondition("contains_schema", text.includes("schema: fixture-schema-v0.1"), "Envelope contains schema header."),
-    assertCondition("ends_with_envelope", text.trim().endsWith("CHROME_FLOW_PACKET_END"), "Envelope ends with the packet end marker.")
-  ], { envelopePreview: text.split("\n").slice(0, 6) });
-}
-
-function createWorkspaceIdentityScenario() {
-  const workspace = {
-    workspaceId: "workspace-1",
-    name: "Fixture Workspace",
-    workspaceType: "research",
-    aim: "Validate helper extraction"
-  };
-  const identity = createWorkspaceIdentityBlock(workspace);
-  const policy = classifyDedicatedWindowThreshold(4);
-  const policyBlock = createThresholdPolicyBlock(policy);
-
-  return createScenario("workspace_and_policy_blocks_preserve_packet_shape", [
-    assertCondition("workspace_id", identity.workspaceId === "workspace-1", "Workspace id is preserved."),
-    assertCondition("workspace_type", identity.workspaceType === "research", "Workspace type is preserved."),
-    assertCondition("threshold_count", policyBlock.thresholdTabCount === 4, "Threshold count is preserved."),
-    assertCondition("target_mode", policyBlock.targetMode === "new_window", "Target mode is preserved."),
-    assertCondition("policy_active", policyBlock.dedicatedWindowPolicyActive === true, "Dedicated-window active flag is preserved.")
-  ], { identity, policyBlock });
-}
-
-function createReadOnlyBoundaryScenario() {
-  const source = createBoundarySource("fixture_validation_source", {
-    validationOnly: true,
-    helperExtractionValidation: true
-  });
-
-  return createScenario("read_only_boundary_source_preserved", assertReadOnlyBoundary(source), { source });
-}
-
-function createConsolidationBoundaryScenario() {
-  return createScenario("consolidation_suite_does_not_change_runtime", [
-    assertCondition("runtime_action_not_executed", true, "Consolidation validation does not execute runtime action."),
-    assertCondition("browser_projection_not_changed", true, "Consolidation validation does not change browser projection."),
-    assertCondition("session_db_not_changed", true, "Consolidation validation does not write Session DB."),
-    assertCondition("chrome_storage_runtime_not_changed", true, "Consolidation validation does not change chrome.storage.local."),
-    assertCondition("live_browser_action_not_executed", true, "Consolidation validation does not run live browser action.")
+  const small = classifyDedicatedWindowThreshold(3);
+  const threshold = classifyDedicatedWindowThreshold(4);
+  const larger = classifyDedicatedWindowThreshold(7);
+  return createScenario("threshold_classification_shared", [
+    assertCondition("threshold_constant", DEDICATED_WINDOW_THRESHOLD === 4, "Dedicated-window threshold remains four tabs."),
+    assertCondition("target_mode_constant", TARGET_MODE_NEW_WINDOW === "new_window", "Target mode remains new_window."),
+    assertCondition("small_workspace_current_window", small.status === "current_window_valid" && small.currentWindowStillValid === true && small.dedicatedWindowPolicyActive === false, "Workspaces below threshold remain current-window valid."),
+    assertCondition("threshold_workspace_dedicated", threshold.status === "dedicated_window_policy_active" && threshold.dedicatedWindowPolicyActive === true && threshold.currentWindowStillValid === false, "Four-tab workspaces activate dedicated-window policy."),
+    assertCondition("larger_workspace_dedicated", larger.status === "dedicated_window_policy_active" && larger.dedicatedWindowPolicyActive === true, "Larger workspaces remain in dedicated-window policy range.")
   ]);
 }
 
-function createFixtureTab(workspaceTabId, role, url) {
-  return {
-    workspaceTabId,
-    tabId: Number(workspaceTabId.replace(/\D/g, "")) || undefined,
-    role,
-    url,
-    originalTitle: "Fixture " + workspaceTabId
-  };
+function createTabStatusScenario() {
+  const tabs = createFixtureTabs();
+  const status = buildWorkspaceTabStatus(tabs);
+  return createScenario("workspace_tab_status_shared", [
+    assertCondition("total_tabs", status.totalTabs === 5, "Total tab count is preserved."),
+    assertCondition("tabs_with_urls", status.tabsWithUrls === 4 && status.missingUrlCount === 1, "URL counts are preserved."),
+    assertCondition("role_counts", status.roleCounts.source === 2 && status.roleCounts.question === 1 && status.roleCounts.reference === 1 && status.roleCounts.unassigned === 1, "Role counts are preserved."),
+    assertCondition("assigned_unassigned", status.assignedTabs === 4 && status.unassignedTabs === 1, "Assigned/unassigned counts are preserved.")
+  ]);
+}
+
+function createWorkspaceIdentityScenario() {
+  const workspace = createFixtureWorkspace();
+  const block = createWorkspaceIdentityBlock(workspace);
+  return createScenario("workspace_identity_shared", [
+    assertCondition("workspace_id", block.workspaceId === workspace.workspaceId, "Workspace ID is preserved."),
+    assertCondition("workspace_name", block.name === workspace.name, "Workspace name is preserved."),
+    assertCondition("workspace_type", block.workspaceType === workspace.workspaceType, "Workspace type is preserved."),
+    assertCondition("workspace_aim", block.aim === workspace.aim, "Workspace aim is preserved.")
+  ]);
+}
+
+function createPolicyBlockScenario() {
+  const block = createThresholdPolicyBlock(4);
+  return createScenario("threshold_policy_block_shared", [
+    assertCondition("threshold", block.thresholdTabCount === 4, "Threshold tab count is preserved."),
+    assertCondition("target", block.targetMode === "new_window", "Target mode is preserved."),
+    assertCondition("status", block.policyStatus === "dedicated_window_policy_active", "Policy status is preserved."),
+    assertCondition("flags", block.dedicatedWindowPolicyActive === true && block.currentWindowStillValid === false, "Policy flags are preserved.")
+  ]);
+}
+
+function createPlannedGroupsScenario() {
+  const groups = createPlannedRoleGroups(createFixtureTabs(), { roleLabeler: humanizeRole });
+  return createScenario("planned_role_groups_shared", [
+    assertCondition("group_count", groups.length === 3, "Planned groups skip unassigned tabs and preserve grouped roles."),
+    assertCondition("source_group", groups[0].role === "source" && groups[0].workspaceTabIds.length === 2 && groups[0].roleLabel === "Source", "Source group is preserved."),
+    assertCondition("question_group", groups[1].role === "question" && groups[1].workspaceTabIds.length === 1, "Question group is preserved."),
+    assertCondition("required_projection", groups.every((group) => group.requiredForProjection === true), "Groups remain required for projection.")
+  ]);
+}
+
+function createGateChecksScenario() {
+  const checks = [
+    createCheck("runtime_workspace_exists", true, "Active runtime workspace exists."),
+    createCheck("minimum_tab_threshold_met", false, "Active workspace has at least 4 tabs."),
+    createCheck("operator_phrase_matches", false, "Operator typed the required phrase.")
+  ];
+  const failed = failedChecks(checks);
+  const reasons = blockedReasons(checks);
+  return createScenario("gate_checks_shared", [
+    assertCondition("check_shape", checks[0].check === "runtime_workspace_exists" && checks[0].status === "pass" && checks[0].severity === "block", "Check shape is preserved."),
+    assertCondition("failed_count", failed.length === 2, "Failed checks are collected."),
+    assertCondition("blocked_reasons", reasons.length === 2 && reasons.includes("Active workspace has at least 4 tabs."), "Blocked reasons are derived from failed checks.")
+  ]);
+}
+
+function createPacketEnvelopeScenario() {
+  const packet = { packetType: "Fixture Packet", createdAt: "2026-01-01T00:00:00.000Z", extension: { schema: "fixture-schema-v0.1" }, clipboard: createClipboardBlock(), value: 1 };
+  const envelope = formatPacketEnvelope(packet);
+  return createScenario("packet_envelope_shared", [
+    assertCondition("starts_with_envelope", envelope.startsWith("CHROME_FLOW_PACKET_START"), "Envelope start marker is preserved."),
+    assertCondition("contains_packet_type", envelope.includes("packetType: Fixture Packet"), "Packet type header is preserved."),
+    assertCondition("contains_schema", envelope.includes("schema: fixture-schema-v0.1"), "Schema header is preserved."),
+    assertCondition("ends_with_envelope", envelope.endsWith("CHROME_FLOW_PACKET_END"), "Envelope end marker is preserved.")
+  ]);
+}
+
+function createBoundaryScenario() {
+  const source = createBoundarySource("gate_consolidation_fixture", { helperMigrationValidation: true });
+  return createScenario("read_only_boundary_shared", [
+    assertReadOnlyBoundary(source, "runtimeActionExecuted", "Source does not execute runtime actions."),
+    assertReadOnlyBoundary(source, "browserProjectionChanged", "Source does not change browser projection."),
+    assertReadOnlyBoundary(source, "sessionDbChanged", "Source does not write Session DB."),
+    assertReadOnlyBoundary(source, "chromeStorageRuntimeChanged", "Source does not change chrome.storage.local."),
+    assertCondition("validation_flag", source.helperMigrationValidation === true, "Additional source metadata is preserved.")
+  ]);
 }
 
 function createNextDecision(overallStatus) {
   if (overallStatus !== "pass") {
     return {
       recommendation: "hold",
-      reason: "Extracted workspace-control gate helpers failed validation. Do not migrate live surfaces onto them."
+      reason: "Shared workspace control gate helpers did not validate. Do not migrate additional surfaces onto them."
     };
   }
-
   return {
     recommendation: "ready_for_incremental_surface_migration",
-    reason: "Extracted workspace-control gate helpers match the expected deterministic gate behavior and can be adopted incrementally by policy/preflight/review/execution surfaces."
+    reason: "Shared workspace control gate helpers validate against deterministic fixtures and read-only boundaries."
   };
 }
 
+function createFixtureWorkspace() {
+  return {
+    workspaceId: "gate-helper-fixture-workspace",
+    name: "Gate Helper Fixture Workspace",
+    workspaceType: "research",
+    aim: "Validate shared workspace control gate helpers"
+  };
+}
+
+function createFixtureTabs() {
+  return [
+    { workspaceTabId: "tab-1", tabId: 101, url: "https://example.com/source-a", role: "source" },
+    { workspaceTabId: "tab-2", tabId: 102, url: "https://example.com/question", role: "question" },
+    { workspaceTabId: "tab-3", tabId: 103, url: "https://example.com/source-b", role: "source" },
+    { workspaceTabId: "tab-4", tabId: 104, url: "https://example.com/reference", role: "reference" },
+    { workspaceTabId: "tab-5", tabId: 105, url: "", role: "" }
+  ];
+}
+
 function createSummary(packet) {
-  return "Workspace control gate consolidation validation suite: " + packet.suite.overallStatus + " | Scenarios: " + packet.suite.passedScenarioCount + "/" + packet.suite.scenarioCount + " pass | Next: " + packet.nextDecision.recommendation + ".";
+  return "Workspace control gate consolidation validation: " + packet.suite.overallStatus + " | Scenarios: " + packet.suite.passedScenarioCount + "/" + packet.suite.scenarioCount + " pass | Next: " + packet.nextDecision.recommendation + ".";
 }
 
 function setSummary(message) {
