@@ -1,12 +1,20 @@
 import { getWorkspace } from "../core/workspace-store.js";
+import {
+  DEDICATED_WINDOW_THRESHOLD,
+  TARGET_MODE_NEW_WINDOW,
+  blockedReasons,
+  buildWorkspaceTabStatus,
+  classifyDedicatedWindowThreshold,
+  createCheck,
+  createClipboardBlock,
+  createPlannedRoleGroups,
+  createWorkspaceIdentityBlock,
+  failedChecks as collectFailedChecks,
+  formatPacketEnvelope,
+  humanizeRole
+} from "../core/workspace-control/workspace-control-gates.js";
 
-const DEDICATED_WINDOW_THRESHOLD = 4;
-const TARGET_MODE = "new_window";
 const REVIEW_PHRASE = "PREPARE DEDICATED WINDOW PROJECTION";
-const PACKET_ENVELOPE_START = "CHROME_FLOW_PACKET_START";
-const PACKET_ENVELOPE_END = "CHROME_FLOW_PACKET_END";
-const PACKET_CLIPBOARD_FORMAT = "chrome_flow_packet_envelope_v0.1";
-const PACKET_CONTENT_TYPE = "application/json";
 
 let lastReviewPacket = null;
 
@@ -26,7 +34,7 @@ function installDedicatedWindowThresholdReview() {
     <p class="section-help">Creates an Operator review packet before a future dedicated/new-window projection can execute. This review surface does not execute browser actions.</p>
     <div id="dedicatedWindowThresholdReviewSummary" class="workspace-session-summary">Threshold review surface loaded.</div>
     <div class="workspace-session-options">
-      <p><strong>Target mode:</strong> ${TARGET_MODE}</p>
+      <p><strong>Target mode:</strong> ${TARGET_MODE_NEW_WINDOW}</p>
       <p><strong>Required review phrase:</strong> ${REVIEW_PHRASE}</p>
       <label for="dedicatedWindowThresholdReviewPhrase">Type review phrase</label>
       <input id="dedicatedWindowThresholdReviewPhrase" type="text" placeholder="${REVIEW_PHRASE}" />
@@ -77,20 +85,30 @@ async function copyReviewPacket() {
 async function buildReviewPacket(overrides = null) {
   const workspace = overrides?.workspace || await getWorkspace();
   const tabs = Array.isArray(overrides?.tabs) ? overrides.tabs : Array.isArray(workspace?.tabs) ? workspace.tabs : [];
-  const tabStatus = buildTabStatus(tabs);
-  const plannedGroups = createPlannedGroups(tabs);
-  const policy = classifyWorkspace(tabStatus.totalTabs);
   const phrase = overrides?.phrase ?? getReviewPhrase();
   const acknowledgementChecked = overrides?.acknowledgementChecked ?? Boolean(document.getElementById("dedicatedWindowThresholdReviewAcknowledgement")?.checked);
+  return buildDedicatedWindowThresholdReviewPacketForValidation({
+    workspace,
+    tabs,
+    phrase,
+    acknowledgementChecked
+  });
+}
+
+function buildDedicatedWindowThresholdReviewPacketForValidation({ workspace = {}, tabs = [], phrase = "", acknowledgementChecked = false, createdAt = null } = {}) {
+  const safeTabs = Array.isArray(tabs) ? tabs : [];
+  const tabStatus = buildWorkspaceTabStatus(safeTabs);
+  const plannedGroups = createPlannedRoleGroups(safeTabs, { roleLabeler: humanizeRole });
+  const policy = classifyDedicatedWindowThreshold(tabStatus.totalTabs);
   const phraseMatches = phrase === REVIEW_PHRASE;
   const operatorConfirmed = phraseMatches && acknowledgementChecked;
   const checks = createReviewChecks({ workspace, tabStatus, plannedGroups, policy, phraseMatches, acknowledgementChecked });
-  const failedChecks = checks.filter((check) => check.status === "fail");
+  const failedChecks = collectFailedChecks(checks);
   const ready = failedChecks.length === 0;
 
   return {
     packetType: "Chrome Flow Dedicated Window Threshold Review Packet",
-    createdAt: new Date().toISOString(),
+    createdAt: createdAt || new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
       schema: "dedicated-window-threshold-review-packet-v0.1"
@@ -106,24 +124,19 @@ async function buildReviewPacket(overrides = null) {
       chromeStorageRuntimeChanged: false,
       copyRebuildsFromRuntimeState: true
     },
-    workspace: {
-      workspaceId: workspace?.workspaceId || "",
-      name: workspace?.name || "",
-      workspaceType: workspace?.workspaceType || workspace?.type || "",
-      aim: workspace?.aim || ""
-    },
+    workspace: createWorkspaceIdentityBlock(workspace),
     thresholdPolicy: {
       thresholdTabCount: DEDICATED_WINDOW_THRESHOLD,
-      targetMode: TARGET_MODE,
+      targetMode: TARGET_MODE_NEW_WINDOW,
       policyStatus: policy.status,
       dedicatedWindowPolicyActive: policy.dedicatedWindowPolicyActive,
       currentWindowStillValid: policy.currentWindowStillValid
     },
     tabStatus,
     browserPlan: {
-      targetMode: TARGET_MODE,
+      targetMode: TARGET_MODE_NEW_WINDOW,
       expectedWindowCount: ready ? 1 : 0,
-      plannedTabCount: tabs.length,
+      plannedTabCount: safeTabs.length,
       plannedGroupCount: plannedGroups.length,
       plannedGroups
     },
@@ -139,7 +152,7 @@ async function buildReviewPacket(overrides = null) {
       availableInThisSlice: false,
       checks,
       failedChecks,
-      blockedReasons: failedChecks.map((check) => check.message),
+      blockedReasons: blockedReasons(checks),
       notes: [
         "This packet is review-only.",
         "No browser action is performed by this review surface.",
@@ -151,122 +164,34 @@ async function buildReviewPacket(overrides = null) {
   };
 }
 
-function buildTabStatus(tabs) {
-  const totalTabs = tabs.length;
-  const tabsWithUrls = tabs.filter((tab) => Boolean(tab.url)).length;
-  const assignedTabs = tabs.filter((tab) => tab.role && tab.role !== "unassigned").length;
-  const unassignedTabs = totalTabs - assignedTabs;
-  const roleCounts = tabs.reduce((counts, tab) => {
-    const role = tab.role || "unassigned";
-    counts[role] = (counts[role] || 0) + 1;
-    return counts;
-  }, {});
-
-  return {
-    totalTabs,
-    tabsWithUrls,
-    missingUrlCount: totalTabs - tabsWithUrls,
-    assignedTabs,
-    unassignedTabs,
-    roleCounts
-  };
-}
-
-function classifyWorkspace(totalTabs) {
-  if (totalTabs <= 0) {
-    return {
-      status: "no_workspace_tabs_detected",
-      dedicatedWindowPolicyActive: false,
-      currentWindowStillValid: true
-    };
-  }
-
-  if (totalTabs < DEDICATED_WINDOW_THRESHOLD) {
-    return {
-      status: "current_window_valid",
-      dedicatedWindowPolicyActive: false,
-      currentWindowStillValid: true
-    };
-  }
-
-  return {
-    status: "dedicated_window_policy_active",
-    dedicatedWindowPolicyActive: true,
-    currentWindowStillValid: false
-  };
-}
-
 function createReviewChecks({ workspace, tabStatus, plannedGroups, policy, phraseMatches, acknowledgementChecked }) {
   return [
-    createCheck("runtime_workspace_exists", Boolean(workspace?.workspaceId), "Active runtime workspace exists."),
-    createCheck("dedicated_window_policy_active", policy.dedicatedWindowPolicyActive === true, "Active workspace is in the 4+ tab dedicated-window policy range."),
-    createCheck("minimum_tab_threshold_met", tabStatus.totalTabs >= DEDICATED_WINDOW_THRESHOLD, "Active workspace has at least 4 tabs."),
-    createCheck("workspace_tabs_have_urls", tabStatus.totalTabs > 0 && tabStatus.missingUrlCount === 0, "All active workspace tabs have URLs."),
-    createCheck("workspace_tabs_have_roles", tabStatus.totalTabs > 0 && tabStatus.unassignedTabs === 0, "All active workspace tabs have assigned roles."),
-    createCheck("planned_groups_available", plannedGroups.length > 0, "Planned role groups are available."),
-    createCheck("target_mode_new_window", TARGET_MODE === "new_window", "Target mode is new_window."),
-    createCheck("operator_phrase_matches", phraseMatches, "Operator typed the required review phrase."),
-    createCheck("operator_acknowledgement_checked", acknowledgementChecked, "Operator checked the threshold review acknowledgement."),
-    createCheck("no_runtime_action_executed", true, "Review packet does not execute runtime action."),
-    createCheck("no_browser_projection_changed", true, "Review packet does not change browser projection."),
-    createCheck("no_session_db_changed", true, "Review packet does not write Session DB."),
-    createCheck("no_chrome_storage_runtime_changed", true, "Review packet does not replace chrome.storage.local runtime workspace.")
+    createReviewCheck("runtime_workspace_exists", Boolean(workspace?.workspaceId), "Active runtime workspace exists."),
+    createReviewCheck("dedicated_window_policy_active", policy.dedicatedWindowPolicyActive === true, "Active workspace is in the 4+ tab dedicated-window policy range."),
+    createReviewCheck("minimum_tab_threshold_met", tabStatus.totalTabs >= DEDICATED_WINDOW_THRESHOLD, "Active workspace has at least 4 tabs."),
+    createReviewCheck("workspace_tabs_have_urls", tabStatus.totalTabs > 0 && tabStatus.missingUrlCount === 0, "All active workspace tabs have URLs."),
+    createReviewCheck("workspace_tabs_have_roles", tabStatus.totalTabs > 0 && tabStatus.unassignedTabs === 0, "All active workspace tabs have assigned roles."),
+    createReviewCheck("planned_groups_available", plannedGroups.length > 0, "Planned role groups are available."),
+    createReviewCheck("target_mode_new_window", TARGET_MODE_NEW_WINDOW === "new_window", "Target mode is new_window."),
+    createReviewCheck("operator_phrase_matches", phraseMatches, "Operator typed the required review phrase."),
+    createReviewCheck("operator_acknowledgement_checked", acknowledgementChecked, "Operator checked the threshold review acknowledgement."),
+    createReviewCheck("no_runtime_action_executed", true, "Review packet does not execute runtime action."),
+    createReviewCheck("no_browser_projection_changed", true, "Review packet does not change browser projection."),
+    createReviewCheck("no_session_db_changed", true, "Review packet does not write Session DB."),
+    createReviewCheck("no_chrome_storage_runtime_changed", true, "Review packet does not replace chrome.storage.local runtime workspace.")
   ];
 }
 
-function createPlannedGroups(tabs) {
-  const roles = new Map();
-  for (const tab of tabs) {
-    const role = tab.role || "unassigned";
-    if (role === "unassigned") continue;
-    if (!roles.has(role)) roles.set(role, []);
-    roles.get(role).push(tab.workspaceTabId || String(tab.tabId || tab.url));
-  }
-
-  return Array.from(roles.entries()).map(([role, workspaceTabIds]) => ({
-    role,
-    roleLabel: createRoleLabel(role),
-    workspaceTabIds,
-    plannedTabCount: workspaceTabIds.length,
-    requiredForProjection: true
-  }));
-}
-
-function createRoleLabel(role) {
-  return String(role || "unassigned").replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
-}
-
-function createCheck(check, passed, message) {
-  return { check, status: passed ? "pass" : "fail", severity: "block", message };
+function createReviewCheck(check, passed, message) {
+  return createCheck(check, passed, message, "block");
 }
 
 function getReviewPhrase() {
   return document.getElementById("dedicatedWindowThresholdReviewPhrase")?.value.trim() || "";
 }
 
-function createClipboardBlock() {
-  return {
-    format: PACKET_CLIPBOARD_FORMAT,
-    contentType: PACKET_CONTENT_TYPE,
-    copyMode: "text_envelope",
-    envelopeStart: PACKET_ENVELOPE_START,
-    envelopeEnd: PACKET_ENVELOPE_END
-  };
-}
-
 function formatPacket(packet) {
-  return [
-    packet.clipboard.envelopeStart,
-    "packetType: " + packet.packetType,
-    "schema: " + packet.extension.schema,
-    "clipboardFormat: " + packet.clipboard.format,
-    "createdAt: " + packet.createdAt,
-    "contentType: " + packet.clipboard.contentType,
-    "",
-    JSON.stringify(packet, null, 2),
-    "",
-    packet.clipboard.envelopeEnd
-  ].join("\n");
+  return formatPacketEnvelope(packet);
 }
 
 function createSummary(packet) {
@@ -293,4 +218,4 @@ function setError(message, error) {
   setStatus(message);
 }
 
-export { buildReviewPacket, REVIEW_PHRASE };
+export { buildReviewPacket, buildDedicatedWindowThresholdReviewPacketForValidation, REVIEW_PHRASE };

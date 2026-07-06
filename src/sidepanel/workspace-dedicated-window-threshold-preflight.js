@@ -1,11 +1,19 @@
 import { getWorkspace } from "../core/workspace-store.js";
+import {
+  DEDICATED_WINDOW_THRESHOLD,
+  TARGET_MODE_NEW_WINDOW,
+  blockedReasons,
+  buildWorkspaceTabStatus,
+  classifyDedicatedWindowThreshold,
+  createCheck,
+  createClipboardBlock,
+  createPlannedRoleGroups,
+  createWorkspaceIdentityBlock,
+  failedChecks as collectFailedChecks,
+  formatPacketEnvelope,
+  humanizeRole
+} from "../core/workspace-control/workspace-control-gates.js";
 
-const DEDICATED_WINDOW_THRESHOLD = 4;
-const TARGET_MODE = "new_window";
-const PACKET_ENVELOPE_START = "CHROME_FLOW_PACKET_START";
-const PACKET_ENVELOPE_END = "CHROME_FLOW_PACKET_END";
-const PACKET_CLIPBOARD_FORMAT = "chrome_flow_packet_envelope_v0.1";
-const PACKET_CONTENT_TYPE = "application/json";
 const RUNTIME_TAB_HYDRATION_DELAY_MS = 500;
 
 let lastPreflightPacket = null;
@@ -69,18 +77,30 @@ async function copyPreflightPacket() {
 
 async function buildPreflightPacket() {
   const runtimeRead = await readRuntimeWorkspaceWithTabHydration();
-  const workspace = runtimeRead.selectedWorkspace;
-  const tabs = sortTabsByRuntimeOrder(runtimeRead.selectedTabs);
-  const tabStatus = buildTabStatus(tabs);
-  const plannedGroups = createPlannedGroups(tabs);
-  const policy = classifyWorkspace(tabStatus.totalTabs);
-  const checks = createPreflightChecks({ workspace, tabStatus, plannedGroups, policy, runtimeRead });
-  const failedChecks = checks.filter((check) => check.status === "fail");
+  return buildDedicatedWindowThresholdPreflightPacketForValidation({ runtimeRead });
+}
+
+function buildDedicatedWindowThresholdPreflightPacketForValidation({ runtimeRead, createdAt = null } = {}) {
+  const safeRuntimeRead = runtimeRead || createRuntimeReadEvidence({
+    status: "validation_runtime_read_missing",
+    selectedRead: "second",
+    firstWorkspace: null,
+    firstTabs: [],
+    secondWorkspace: null,
+    secondTabs: []
+  });
+  const workspace = safeRuntimeRead.selectedWorkspace;
+  const tabs = sortTabsByRuntimeOrder(safeRuntimeRead.selectedTabs || []);
+  const tabStatus = buildWorkspaceTabStatus(tabs);
+  const plannedGroups = createPlannedRoleGroups(tabs, { roleLabeler: humanizeRole });
+  const policy = classifyDedicatedWindowThreshold(tabStatus.totalTabs);
+  const checks = createPreflightChecks({ workspace, tabStatus, plannedGroups, policy, runtimeRead: safeRuntimeRead });
+  const failedChecks = collectFailedChecks(checks);
   const ready = failedChecks.length === 0;
 
   return {
     packetType: "Chrome Flow Dedicated Window Threshold Preflight Packet",
-    createdAt: new Date().toISOString(),
+    createdAt: createdAt || new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
       schema: "dedicated-window-threshold-preflight-packet-v0.2-runtime-hydration"
@@ -99,13 +119,8 @@ async function buildPreflightPacket() {
       copyRebuildsFromRuntimeState: true,
       runtimeTabHydrationRead: true
     },
-    workspace: {
-      workspaceId: workspace?.workspaceId || "",
-      name: workspace?.name || "",
-      workspaceType: workspace?.workspaceType || workspace?.type || "",
-      aim: workspace?.aim || ""
-    },
-    runtimeRead,
+    workspace: createWorkspaceIdentityBlock(workspace),
+    runtimeRead: safeRuntimeRead,
     thresholdPolicy: {
       thresholdTabCount: DEDICATED_WINDOW_THRESHOLD,
       currentWindowValidRange: "0-3 tabs",
@@ -116,7 +131,7 @@ async function buildPreflightPacket() {
     },
     tabStatus,
     browserPlan: {
-      targetMode: TARGET_MODE,
+      targetMode: TARGET_MODE_NEW_WINDOW,
       expectedWindowCount: ready ? 1 : 0,
       plannedTabCount: tabs.length,
       missingUrlCount: tabStatus.missingUrlCount,
@@ -129,7 +144,7 @@ async function buildPreflightPacket() {
       availableInThisSlice: false,
       checks,
       failedChecks,
-      blockedReasons: failedChecks.map((check) => check.message),
+      blockedReasons: blockedReasons(checks),
       notes: [
         "This packet is preflight-only.",
         "No browser action is performed by this preflight surface.",
@@ -208,88 +223,25 @@ function createRuntimeReadEvidence({ status, selectedRead, firstWorkspace, first
   };
 }
 
-function buildTabStatus(tabs) {
-  const totalTabs = tabs.length;
-  const tabsWithUrls = tabs.filter((tab) => Boolean(tab.url)).length;
-  const assignedTabs = tabs.filter((tab) => tab.role && tab.role !== "unassigned").length;
-  const unassignedTabs = totalTabs - assignedTabs;
-  const roleCounts = tabs.reduce((counts, tab) => {
-    const role = tab.role || "unassigned";
-    counts[role] = (counts[role] || 0) + 1;
-    return counts;
-  }, {});
-
-  return {
-    totalTabs,
-    tabsWithUrls,
-    missingUrlCount: totalTabs - tabsWithUrls,
-    assignedTabs,
-    unassignedTabs,
-    roleCounts
-  };
-}
-
-function classifyWorkspace(totalTabs) {
-  if (totalTabs <= 0) {
-    return {
-      status: "no_workspace_tabs_detected",
-      dedicatedWindowPolicyActive: false,
-      currentWindowStillValid: true
-    };
-  }
-
-  if (totalTabs < DEDICATED_WINDOW_THRESHOLD) {
-    return {
-      status: "current_window_valid",
-      dedicatedWindowPolicyActive: false,
-      currentWindowStillValid: true
-    };
-  }
-
-  return {
-    status: "dedicated_window_policy_active",
-    dedicatedWindowPolicyActive: true,
-    currentWindowStillValid: false
-  };
-}
-
 function createPreflightChecks({ workspace, tabStatus, plannedGroups, policy, runtimeRead }) {
   return [
-    createCheck("runtime_workspace_exists", Boolean(workspace?.workspaceId), "Active runtime workspace exists."),
-    createCheck("runtime_tabs_hydrated", runtimeRead.selectedTabCount > 0, "Active runtime workspace tabs are available after hydration read."),
-    createCheck("dedicated_window_policy_active", policy.dedicatedWindowPolicyActive === true, "Active workspace is in the 4+ tab dedicated-window policy range."),
-    createCheck("minimum_tab_threshold_met", tabStatus.totalTabs >= DEDICATED_WINDOW_THRESHOLD, "Active workspace has at least 4 tabs."),
-    createCheck("workspace_tabs_have_urls", tabStatus.totalTabs > 0 && tabStatus.missingUrlCount === 0, "All active workspace tabs have URLs."),
-    createCheck("workspace_tabs_have_roles", tabStatus.totalTabs > 0 && tabStatus.unassignedTabs === 0, "All active workspace tabs have assigned roles."),
-    createCheck("planned_groups_available", plannedGroups.length > 0, "Planned role groups are available."),
-    createCheck("target_mode_new_window", TARGET_MODE === "new_window", "Target mode is new_window."),
-    createCheck("no_runtime_action_executed", true, "Preflight packet does not execute runtime action."),
-    createCheck("no_browser_projection_changed", true, "Preflight packet does not change browser projection."),
-    createCheck("no_session_db_changed", true, "Preflight packet does not write Session DB."),
-    createCheck("no_chrome_storage_runtime_changed", true, "Preflight packet does not replace chrome.storage.local runtime workspace.")
+    createPreflightCheck("runtime_workspace_exists", Boolean(workspace?.workspaceId), "Active runtime workspace exists."),
+    createPreflightCheck("runtime_tabs_hydrated", runtimeRead.selectedTabCount > 0, "Active runtime workspace tabs are available after hydration read."),
+    createPreflightCheck("dedicated_window_policy_active", policy.dedicatedWindowPolicyActive === true, "Active workspace is in the 4+ tab dedicated-window policy range."),
+    createPreflightCheck("minimum_tab_threshold_met", tabStatus.totalTabs >= DEDICATED_WINDOW_THRESHOLD, "Active workspace has at least 4 tabs."),
+    createPreflightCheck("workspace_tabs_have_urls", tabStatus.totalTabs > 0 && tabStatus.missingUrlCount === 0, "All active workspace tabs have URLs."),
+    createPreflightCheck("workspace_tabs_have_roles", tabStatus.totalTabs > 0 && tabStatus.unassignedTabs === 0, "All active workspace tabs have assigned roles."),
+    createPreflightCheck("planned_groups_available", plannedGroups.length > 0, "Planned role groups are available."),
+    createPreflightCheck("target_mode_new_window", TARGET_MODE_NEW_WINDOW === "new_window", "Target mode is new_window."),
+    createPreflightCheck("no_runtime_action_executed", true, "Preflight packet does not execute runtime action."),
+    createPreflightCheck("no_browser_projection_changed", true, "Preflight packet does not change browser projection."),
+    createPreflightCheck("no_session_db_changed", true, "Preflight packet does not write Session DB."),
+    createPreflightCheck("no_chrome_storage_runtime_changed", true, "Preflight packet does not replace chrome.storage.local runtime workspace.")
   ];
 }
 
-function createPlannedGroups(tabs) {
-  const roles = new Map();
-  for (const tab of tabs) {
-    const role = tab.role || "unassigned";
-    if (role === "unassigned") continue;
-    if (!roles.has(role)) roles.set(role, []);
-    roles.get(role).push(tab.workspaceTabId || String(tab.tabId || tab.url));
-  }
-
-  return Array.from(roles.entries()).map(([role, workspaceTabIds]) => ({
-    role,
-    roleLabel: createRoleLabel(role),
-    workspaceTabIds,
-    plannedTabCount: workspaceTabIds.length,
-    requiredForProjection: true
-  }));
-}
-
-function createRoleLabel(role) {
-  return String(role || "unassigned").replace(/[-_]+/g, " ").replace(/\b\w/g, (letter) => letter.toUpperCase());
+function createPreflightCheck(check, passed, message) {
+  return createCheck(check, passed, message, "block");
 }
 
 function sortTabsByRuntimeOrder(tabs) {
@@ -301,37 +253,12 @@ function sortTabsByRuntimeOrder(tabs) {
   });
 }
 
-function createCheck(check, passed, message) {
-  return { check, status: passed ? "pass" : "fail", severity: "block", message };
-}
-
-function createClipboardBlock() {
-  return {
-    format: PACKET_CLIPBOARD_FORMAT,
-    contentType: PACKET_CONTENT_TYPE,
-    copyMode: "text_envelope",
-    envelopeStart: PACKET_ENVELOPE_START,
-    envelopeEnd: PACKET_ENVELOPE_END
-  };
-}
-
 function formatPacket(packet) {
-  return [
-    packet.clipboard.envelopeStart,
-    "packetType: " + packet.packetType,
-    "schema: " + packet.extension.schema,
-    "clipboardFormat: " + packet.clipboard.format,
-    "createdAt: " + packet.createdAt,
-    "contentType: " + packet.clipboard.contentType,
-    "",
-    JSON.stringify(packet, null, 2, ),
-    "",
-    packet.clipboard.envelopeEnd
-  ].join("\n");
+  return formatPacketEnvelope(packet);
 }
 
 function createSummary(packet) {
-  return "Threshold preflight: " + packet.preflight.status + " | Tabs: " + packet.tabStatus.totalTabs + " | Groups: " + packet.browserPlan.plannedGroupCount + " | Runtime read: " + packet.runtimeRead.status + " | Ready: " + packet.preflight.readyForNextSlice + ".";
+  return "Threshold preflight: " + packet.preflight.status + " | Tabs: " + packet.tabStatus.totalTabs + " | Planned groups: " + packet.browserPlan.plannedGroupCount + " | Ready for review: " + packet.preflight.readyForNextSlice + ".";
 }
 
 function setSummary(message) {
@@ -357,3 +284,5 @@ function setError(message, error) {
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
+
+export { buildDedicatedWindowThresholdPreflightPacketForValidation, createRuntimeReadEvidence };
