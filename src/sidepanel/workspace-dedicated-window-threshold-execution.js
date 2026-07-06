@@ -5,10 +5,14 @@ import {
   getWorkspaceRoleLabel,
   getWorkspaceRoles
 } from "../core/workspace-role-sets.js";
+import {
+  EXECUTION_PHRASE,
+  buildThresholdExecutionGatePacket,
+  formatThresholdExecutionGatePacket
+} from "./workspace-dedicated-window-threshold-execution-gate.js";
 
 const DEDICATED_WINDOW_THRESHOLD = 4;
 const TARGET_MODE = "new_window";
-const EXECUTION_PHRASE = "MOVE WORKSPACE TO DEDICATED WINDOW";
 const PACKET_ENVELOPE_START = "CHROME_FLOW_PACKET_START";
 const PACKET_ENVELOPE_END = "CHROME_FLOW_PACKET_END";
 const PACKET_CLIPBOARD_FORMAT = "chrome_flow_packet_envelope_v0.1";
@@ -136,84 +140,19 @@ async function buildThresholdExecutionPrecheckPacket(overrides = null) {
   const workspace = overrides?.workspace || await getWorkspace();
   const tabs = Array.isArray(overrides?.tabs) ? overrides.tabs : Array.isArray(workspace?.tabs) ? workspace.tabs : [];
   const resolution = overrides?.resolution || await resolveWorkspaceTabsToLiveTabs(tabs);
-  const resolvedResults = resolution.results.filter((result) => result.liveTab);
-  const sortedResults = sortResultsByRoleOrder(workspace, resolvedResults);
-  const tabStatus = buildTabStatus(tabs, resolution.results);
-  const plannedGroups = createPlannedGroupsFromResults(workspace, sortedResults);
-  const policy = classifyWorkspace(tabStatus.totalTabs);
   const phrase = overrides?.phrase ?? getExecutionPhrase();
   const acknowledgementChecked = overrides?.acknowledgementChecked ?? Boolean(document.getElementById("dedicatedWindowThresholdExecutionAcknowledgement")?.checked);
-  const phraseMatches = phrase === EXECUTION_PHRASE;
-  const operatorConfirmed = phraseMatches && acknowledgementChecked;
-  const checks = createExecutionGateChecks({ workspace, tabStatus, plannedGroups, policy, phraseMatches, acknowledgementChecked, resolution });
-  const failedChecks = checks.filter((check) => check.status === "fail");
-  const ready = failedChecks.length === 0;
 
-  return {
-    packetType: "Chrome Flow Dedicated Window Threshold Execution Precheck Packet",
-    createdAt: new Date().toISOString(),
-    extension: {
-      name: "Chrome Flow",
-      schema: "dedicated-window-threshold-execution-precheck-packet-v0.1"
-    },
-    clipboard: createClipboardBlock(),
-    source: {
-      type: "workspace_dedicated_window_threshold_execution_precheck",
-      readOnly: true,
-      executionPrecheckOnly: true,
-      liveActionAvailable: ready,
-      runtimeActionExecuted: false,
-      browserProjectionChanged: false,
-      sessionDbChanged: false,
-      chromeStorageRuntimeChanged: false,
-      runButtonShouldBeEnabled: ready
-    },
-    workspace: createWorkspaceBlock(workspace),
-    thresholdPolicy: {
-      thresholdTabCount: DEDICATED_WINDOW_THRESHOLD,
-      targetMode: TARGET_MODE,
-      policyStatus: policy.status,
-      dedicatedWindowPolicyActive: policy.dedicatedWindowPolicyActive,
-      currentWindowStillValid: policy.currentWindowStillValid
-    },
-    tabStatus,
-    liveResolution: summarizeResolution(resolution),
-    browserPlan: {
-      targetMode: TARGET_MODE,
-      action: "move_existing_workspace_tabs_to_dedicated_window",
-      expectedWindowCountDelta: 1,
-      plannedTabCount: sortedResults.length,
-      plannedGroupCount: plannedGroups.length,
-      plannedGroups,
-      tabMovePlan: sortedResults.map((result, index) => ({
-        workspaceTabId: result.workspaceTab.workspaceTabId,
-        tabId: result.liveTab.id,
-        sourceWindowId: result.liveTab.windowId,
-        role: result.workspaceTab.role || "unassigned",
-        targetIndex: index
-      }))
-    },
-    operatorConfirmation: {
-      requiredPhrase: EXECUTION_PHRASE,
-      phraseMatches,
-      acknowledgementChecked,
-      operatorConfirmed
-    },
-    executionGate: {
-      status: ready ? "ready_for_live_threshold_execution" : "blocked_before_live_threshold_execution",
-      availableInThisSlice: ready,
-      checks,
-      failedChecks,
-      blockedReasons: failedChecks.map((check) => check.message),
-      notes: [
-        "This packet gates a live browser action.",
-        "Execution moves existing open workspace tabs into one dedicated Chrome window.",
-        "Execution must rebuild this gate immediately before any live action.",
-        "Session DB is not written by this command.",
-        "chrome.storage.local active workspace may receive metadata and timeline updates, but the active workspace is not replaced."
-      ]
-    }
-  };
+  return buildThresholdExecutionGatePacket({
+    workspace,
+    tabs,
+    resolution,
+    phrase,
+    acknowledgementChecked,
+    createdAt: overrides?.createdAt || null,
+    roleLabeler: (role) => createRoleLabel(workspace, role),
+    sortResolvedResults: (results) => sortResultsByRoleOrder(workspace, results)
+  });
 }
 
 async function executeDedicatedWindowThresholdMove(precheckPacket, hooks = {}) {
@@ -697,13 +636,19 @@ async function safeBuildThresholdExecutionPrecheckPacket() {
 }
 
 function formatPacket(packet) {
-  return [packet.clipboard?.envelopeStart || PACKET_ENVELOPE_START, "packetType: " + packet.packetType, "schema: " + packet.extension.schema, "clipboardFormat: " + (packet.clipboard?.format || PACKET_CLIPBOARD_FORMAT), "createdAt: " + packet.createdAt, "contentType: " + (packet.clipboard?.contentType || PACKET_CONTENT_TYPE), "", JSON.stringify(packet, null, 2), "", packet.clipboard?.envelopeEnd || PACKET_ENVELOPE_END].join("\n");
+  return formatThresholdExecutionGatePacket(packet);
 }
+
 
 function createClipboardBlock() {
-  return { format: PACKET_CLIPBOARD_FORMAT, contentType: PACKET_CONTENT_TYPE, copyMode: "text_envelope", envelopeStart: PACKET_ENVELOPE_START, envelopeEnd: PACKET_ENVELOPE_END };
+  return {
+    format: PACKET_CLIPBOARD_FORMAT,
+    contentType: PACKET_CONTENT_TYPE,
+    copyMode: "text_envelope",
+    envelopeStart: PACKET_ENVELOPE_START,
+    envelopeEnd: PACKET_ENVELOPE_END
+  };
 }
-
 function createSummary(packet) {
   if (packet?.packetType === "Chrome Flow Dedicated Window Threshold Execution Packet") return "Threshold execution: " + packet.execution.status + " | Window: " + (packet.browserResult?.dedicatedWindowId || "none") + " | Moved tabs: " + (packet.browserResult?.movedTabCount || 0) + " | Groups: " + (packet.browserResult?.recreatedGroupCount || 0) + ".";
   return "Threshold execution gate: " + packet.executionGate.status + " | Tabs: " + packet.tabStatus.totalTabs + " | Open: " + packet.tabStatus.openTabs + " | Groups: " + packet.browserPlan.plannedGroupCount + " | Available: " + packet.executionGate.availableInThisSlice + ".";
