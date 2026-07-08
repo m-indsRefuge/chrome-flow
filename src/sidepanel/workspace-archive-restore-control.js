@@ -246,7 +246,12 @@ async function recreateRestoredChromeGroups(openedTabs, windowId) {
     }
 
     try {
-      const groupId = await chrome.tabs.group({ tabIds: group.tabIds });
+      const groupOptions = { tabIds: group.tabIds };
+      if (Number.isInteger(windowId)) {
+        groupOptions.createProperties = { windowId };
+      }
+
+      const groupId = await chrome.tabs.group(groupOptions);
       await chrome.tabGroups.update(groupId, {
         title: group.title,
         collapsed: false
@@ -285,29 +290,40 @@ async function recreateRestoredChromeGroups(openedTabs, windowId) {
 async function refocusRestoredWindow(windowId, activeTabId) {
   if (!windowId || !globalThis.chrome?.windows?.update) return false;
 
-  try {
-    if (globalThis.chrome?.windows?.get) {
-      await chrome.windows.get(windowId);
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    if (attempt > 1) {
+      await delay(WINDOW_SETTLE_DELAY_MS * attempt);
     }
 
-    if (activeTabId && globalThis.chrome?.tabs?.update) {
-      await chrome.tabs.update(activeTabId, { active: true });
-    }
+    try {
+      if (globalThis.chrome?.windows?.get) {
+        await chrome.windows.get(windowId);
+      }
 
-    await chrome.windows.update(windowId, { focused: true, state: "normal" });
-    await recordDiagnostic("info", "archive_restore_window_focused", "Archive restore window focus requested.", {
-      windowId,
-      activeTabId
-    });
-    return true;
-  } catch (error) {
-    await recordDiagnostic("warn", "archive_restore_window_focus_failed", "Could not refocus restored archive window.", {
-      windowId,
-      activeTabId,
-      error: summarizeError(error)
-    });
-    return false;
+      if (activeTabId && globalThis.chrome?.tabs?.update) {
+        await chrome.tabs.update(activeTabId, { active: true });
+      }
+
+      await chrome.windows.update(windowId, { focused: true });
+      await recordDiagnostic("info", "archive_restore_window_focused", "Archive restore window focus requested.", {
+        windowId,
+        activeTabId,
+        attempt
+      });
+      return true;
+    } catch (error) {
+      lastError = error;
+    }
   }
+
+  await recordDiagnostic("warn", "archive_restore_window_focus_failed", "Could not refocus restored archive window.", {
+    windowId,
+    activeTabId,
+    error: summarizeError(lastError)
+  });
+  return false;
 }
 
 function buildRestoredWorkspace(archivedWorkspace, selectedArchive, openedTabs, groupResult, restoreTargetMode) {
