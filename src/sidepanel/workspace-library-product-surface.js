@@ -1,8 +1,13 @@
+import { listRecentResumableWorkspaceMemoryRecords } from "../core/workspace-memory-store.js";
+
 import { registerDeveloperSurface } from "./developer-mode.js";
 import {
   evaluateSavedWorkspaceResumeGate,
   formatSavedWorkspaceResumeGateForUser
 } from "./workspace-library-resume-gate.js";
+
+let currentLibraryView = "all";
+let recentWorkspaceIds = [];
 
 installWorkspaceLibraryProductSurface();
 
@@ -15,9 +20,11 @@ function installWorkspaceLibraryProductSurface() {
   renameWorkspaceLibrary(section);
   hideRawInspectionControls();
   hideCleanupControls();
+  ensureWorkspaceLibraryViewControls(section);
   ensureWorkspaceLibraryActionSkeleton(section);
   renderWorkspaceLibraryEmptyState();
   attachWorkspaceLibraryProductLanguageRefresh();
+  void refreshWorkspaceLibraryViewState();
 }
 
 function renameWorkspaceLibrary(section) {
@@ -26,7 +33,7 @@ function renameWorkspaceLibrary(section) {
 
   const help = section.querySelector(".section-help");
   if (help) {
-    help.textContent = "Review saved workspaces, preview their structure, and decide whether to resume them through a checked workspace action.";
+    help.textContent = "Browse saved workspaces, preview their structure, and resume a selected workspace through a checked action.";
   }
 
   const label = document.querySelector("label[for='savedWorkspaceSelect']");
@@ -61,6 +68,123 @@ function hideCleanupControls() {
   if (cleanupSummary) registerDeveloperSurface(cleanupSummary);
 }
 
+function ensureWorkspaceLibraryViewControls(section) {
+  if (document.getElementById("workspaceLibraryViewControls")) return;
+
+  const selectorPanel = document.getElementById("savedWorkspaceSelect")?.closest(".archive-browser-panel") || section;
+  const panel = document.createElement("div");
+  panel.id = "workspaceLibraryViewControls";
+  panel.className = "workspace-library-view-controls workspace-session-actions";
+
+  panel.appendChild(createLibraryViewButton("recent", "Recent"));
+  panel.appendChild(createLibraryViewButton("all", "All"));
+  panel.appendChild(createLibraryViewButton("archived", "Archived"));
+
+  const explainer = document.createElement("p");
+  explainer.id = "workspaceLibraryViewExplainer";
+  explainer.className = "status-message";
+  explainer.textContent = "All saved workspaces are visible. Use Recent for quick continuation or Archived for deeper recovery.";
+
+  selectorPanel.insertAdjacentElement("beforebegin", explainer);
+  selectorPanel.insertAdjacentElement("beforebegin", panel);
+}
+
+function createLibraryViewButton(view, text) {
+  const button = document.createElement("button");
+  button.id = "workspaceLibraryView" + capitalize(view) + "Button";
+  button.type = "button";
+  button.className = "secondary-button";
+  button.dataset.libraryView = view;
+  button.textContent = text;
+  button.addEventListener("click", () => {
+    currentLibraryView = view;
+    void refreshWorkspaceLibraryViewState();
+  });
+  return button;
+}
+
+async function refreshWorkspaceLibraryViewState() {
+  await refreshRecentWorkspaceIds();
+  applyWorkspaceLibraryViewFilter();
+  updateWorkspaceLibraryViewButtons();
+  updateWorkspaceLibraryViewExplainer();
+}
+
+async function refreshRecentWorkspaceIds() {
+  try {
+    const recentRecords = await listRecentResumableWorkspaceMemoryRecords(3);
+    recentWorkspaceIds = recentRecords.map((record) => record.workspace.workspaceId);
+  } catch (_error) {
+    recentWorkspaceIds = [];
+  }
+}
+
+function applyWorkspaceLibraryViewFilter() {
+  const select = document.getElementById("savedWorkspaceSelect");
+  if (!select) return;
+
+  const options = Array.from(select.options);
+
+  for (const option of options) {
+    const visible = isWorkspaceOptionVisibleForCurrentView(option);
+    option.hidden = !visible;
+    option.disabled = !visible;
+  }
+
+  const currentOption = options.find((option) => option.value === select.value);
+  if (!currentOption || currentOption.hidden || currentOption.disabled) {
+    const firstVisible = options.find((option) => !option.hidden && !option.disabled && option.value);
+    if (firstVisible) {
+      select.value = firstVisible.value;
+      select.dispatchEvent(new Event("change"));
+    }
+  }
+}
+
+function isWorkspaceOptionVisibleForCurrentView(option) {
+  if (!option.value) return true;
+
+  const label = option.textContent.toLowerCase();
+
+  if (currentLibraryView === "recent") {
+    return recentWorkspaceIds.includes(option.value);
+  }
+
+  if (currentLibraryView === "archived") {
+    return label.includes("| archived") || label.includes(" archived") || label.includes("archived");
+  }
+
+  return true;
+}
+
+function updateWorkspaceLibraryViewButtons() {
+  for (const button of Array.from(document.querySelectorAll("[data-library-view]"))) {
+    const selected = button.dataset.libraryView === currentLibraryView;
+    button.classList.toggle("selected", selected);
+    button.setAttribute("aria-pressed", String(selected));
+  }
+}
+
+function updateWorkspaceLibraryViewExplainer() {
+  const explainer = document.getElementById("workspaceLibraryViewExplainer");
+  const select = document.getElementById("savedWorkspaceSelect");
+  if (!explainer) return;
+
+  const visibleCount = select ? Array.from(select.options).filter((option) => option.value && !option.hidden && !option.disabled).length : 0;
+
+  if (currentLibraryView === "recent") {
+    explainer.textContent = "Recent view: showing up to 3 resumable workspaces for quick continuation. Visible: " + visibleCount + ".";
+    return;
+  }
+
+  if (currentLibraryView === "archived") {
+    explainer.textContent = "Archived view: showing older archived/recovery workspaces when available. Visible: " + visibleCount + ".";
+    return;
+  }
+
+  explainer.textContent = "All view: showing the full Workspace Library. Visible: " + visibleCount + ".";
+}
+
 function ensureWorkspaceLibraryActionSkeleton(section) {
   if (document.getElementById("workspaceLibraryActionSkeleton")) return;
 
@@ -72,9 +196,9 @@ function ensureWorkspaceLibraryActionSkeleton(section) {
   panel.id = "workspaceLibraryActionSkeleton";
   panel.className = "workspace-library-action-skeleton workspace-session-actions";
 
-  const previewButton = createActionButton("workspaceLibraryPreviewButton", "Preview Saved Workspace", false);
-  const resumeButton = createActionButton("workspaceLibraryResumeButton", "Resume Saved Workspace", true);
-  const controlsButton = createActionButton("workspaceLibraryOpenControlsButton", "Open Workspace Controls", false);
+  const previewButton = createActionButton("workspaceLibraryPreviewButton", "Preview Workspace", false);
+  const resumeButton = createActionButton("workspaceLibraryResumeButton", "Resume Workspace", true);
+  const controlsButton = createActionButton("workspaceLibraryOpenControlsButton", "Open Current Workspace Controls", false);
 
   previewButton.addEventListener("click", () => {
     document.getElementById("inspectSavedWorkspaceButton")?.click();
@@ -82,12 +206,12 @@ function ensureWorkspaceLibraryActionSkeleton(section) {
   });
 
   controlsButton.addEventListener("click", () => {
-    const controls = document.getElementById("workspaceSessionControlSection");
+    const controls = document.getElementById("workspaceSessionControlSection") || document.querySelector(".workspace-section");
     if (controls) {
       controls.scrollIntoView({ behavior: "smooth", block: "start" });
-      setLibraryActionStatus("Workspace Controls opened. Use that surface for active archive/restore lifecycle actions.");
+      setLibraryActionStatus("Current Workspace controls opened. Use that surface to pause/archive the active workspace.");
     } else {
-      setLibraryActionStatus("Workspace Controls are not available in this sidepanel session.");
+      setLibraryActionStatus("Current Workspace controls are not available in this sidepanel session.");
     }
   });
 
@@ -98,14 +222,15 @@ function ensureWorkspaceLibraryActionSkeleton(section) {
   const actionStatus = document.createElement("p");
   actionStatus.id = "workspaceLibraryActionStatus";
   actionStatus.className = "status-message";
-  actionStatus.textContent = "Preview is available. Resume is intentionally gated until the saved-workspace resume gate is connected to execution.";
+  actionStatus.textContent = "Preview is available. Resume is intentionally gated until the saved-workspace resume engine is connected to execution.";
 
   const alignment = document.createElement("div");
   alignment.id = "workspaceLibraryActionAlignment";
   alignment.className = "workspace-library-action-alignment";
-  alignment.appendChild(createActionReadinessLine("Preview", "available", "Read-only saved workspace inspection."));
-  alignment.appendChild(createActionReadinessLine("Resume", "gated", "Internal resume gate exists; execution remains disabled until confirmation and verification are connected."));
-  alignment.appendChild(createActionReadinessLine("Archive", "active-control", "Use Workspace Controls for active workspace archive/restore actions."));
+  alignment.appendChild(createActionReadinessLine("Recent", "quick resume", "Last 3 resumable workspaces for fast continuation."));
+  alignment.appendChild(createActionReadinessLine("All", "library", "Full saved workspace memory."));
+  alignment.appendChild(createActionReadinessLine("Archived", "recovery", "Older archived/recovery workspaces."));
+  alignment.appendChild(createActionReadinessLine("Resume", "gated", "One future Resume Workspace action will handle recent, saved, and archived records through the same gate."));
 
   anchor.insertAdjacentElement("afterend", alignment);
   anchor.insertAdjacentElement("afterend", actionStatus);
@@ -264,8 +389,10 @@ function reapplyWorkspaceLibraryLanguageSoon() {
     renameWorkspaceLibrary(section);
     hideRawInspectionControls();
     hideCleanupControls();
+    ensureWorkspaceLibraryViewControls(section);
     ensureWorkspaceLibraryActionSkeleton(section);
     rewriteWorkspaceOptionLabels();
+    void refreshWorkspaceLibraryViewState();
     renderStructuredWorkspaceDetail();
   }, 250);
 }
@@ -318,4 +445,8 @@ function clearElement(element) {
   while (element.firstChild) {
     element.removeChild(element.firstChild);
   }
+}
+
+function capitalize(value) {
+  return String(value || "").charAt(0).toUpperCase() + String(value || "").slice(1);
 }
