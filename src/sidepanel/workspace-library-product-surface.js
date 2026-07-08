@@ -11,6 +11,7 @@ function installWorkspaceLibraryProductSurface() {
   renameWorkspaceLibrary(section);
   hideRawInspectionControls();
   hideCleanupControls();
+  attachWorkspaceLibraryProductLanguageRefresh();
 }
 
 function renameWorkspaceLibrary(section) {
@@ -59,12 +60,33 @@ function hideCleanupControls() {
   if (cleanupSummary) registerDeveloperSurface(cleanupSummary);
 }
 
+function attachWorkspaceLibraryProductLanguageRefresh() {
+  const refreshButton = document.getElementById("refreshSavedWorkspacesButton");
+  const inspectButton = document.getElementById("inspectSavedWorkspaceButton");
+  const select = document.getElementById("savedWorkspaceSelect");
+
+  refreshButton?.addEventListener("click", reapplyWorkspaceLibraryLanguageSoon);
+  inspectButton?.addEventListener("click", reapplyWorkspaceLibraryLanguageSoon);
+  select?.addEventListener("change", reapplyWorkspaceLibraryLanguageSoon);
+}
+
+function reapplyWorkspaceLibraryLanguageSoon() {
+  window.setTimeout(() => {
+    const section = document.getElementById("savedWorkspaceRegistrySection");
+    if (!section) return;
+
+    renameWorkspaceLibrary(section);
+    hideRawInspectionControls();
+    hideCleanupControls();
+    rewriteWorkspaceOptionLabels();
+  }, 250);
+}
+
 function rewriteSummaryText() {
   const summary = document.getElementById("savedWorkspaceRegistrySummary");
   if (!summary) return;
 
   summary.textContent = summary.textContent
-    .replaceAll("Saved workspaces", "Saved workspaces")
     .replaceAll("Active DB records", "Active records")
     .replaceAll("Active DB workspace", "Active saved workspace")
     .replaceAll("Session DB", "saved");
@@ -77,7 +99,19 @@ function rewriteStatusText() {
   status.textContent = status.textContent
     .replaceAll("Saved workspace registry", "Workspace Library")
     .replaceAll("Session DB", "saved")
-    .replaceAll("inspection packet", "workspace details");
+    .replaceAll("inspection packet", "workspace details")
+    .replaceAll("Inspected saved workspace", "Viewed saved workspace");
+}
+
+function rewriteWorkspaceOptionLabels() {
+  const select = document.getElementById("savedWorkspaceSelect");
+  if (!select) return;
+
+  for (const option of Array.from(select.options)) {
+    option.textContent = option.textContent
+      .replaceAll(" [active DB]", " [active saved]")
+      .replaceAll("Session DB", "saved");
+  }
 }
 
 function setButtonText(id, text) {
