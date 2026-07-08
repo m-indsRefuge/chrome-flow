@@ -2,6 +2,7 @@ const WORKSPACE_KEY = "chromeFlowWorkspace";
 const WORKSPACE_ARCHIVE_KEY = "chromeFlowWorkspaceArchive";
 const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const MAX_DIAGNOSTICS = 200;
+const DEDICATED_WINDOW_THRESHOLD_TAB_COUNT = 4;
 
 installWorkspaceArchiveRestoreControl();
 
@@ -25,11 +26,12 @@ async function restoreSelectedArchive() {
   }
 
   const archivedWorkspace = sanitizeWorkspace(selectedArchive.workspace || {});
+  const restoreTargetMode = determineRestoreTargetMode(archivedWorkspace);
   const restorableTabs = getRestorableTabs(archivedWorkspace);
   const skippedTabCount = archivedWorkspace.tabs.length - restorableTabs.length;
   const confirmed = window.confirm(
     "Restore archive: " + selectedArchive.archiveName + "?\n\n" +
-    "Chrome Flow will make this the active workspace, reopen " + restorableTabs.length + " saved web tab(s) in a new Chrome window, and recreate saved role groups where possible. " +
+    "Chrome Flow will make this the active workspace, reopen " + restorableTabs.length + " saved web tab(s) " + buildRestoreTargetMessage(restoreTargetMode) + ", and recreate saved role groups where possible. " +
     "The archive record will be kept. " +
     (skippedTabCount > 0 ? skippedTabCount + " non-web or missing URL tab record(s) will stay saved but will not be reopened." : "")
   );
@@ -38,32 +40,35 @@ async function restoreSelectedArchive() {
     setWorkspaceSessionStatus("Restore cancelled. No action was taken.");
     await recordDiagnostic("info", "archive_restore_cancelled", "Operator cancelled archive restore.", {
       archiveId: selectedArchive.archiveId,
-      archiveName: selectedArchive.archiveName
+      archiveName: selectedArchive.archiveName,
+      restoreTargetMode
     });
     return;
   }
 
   try {
-    const restoreResult = await restoreWorkspaceTabsInNewWindow(restorableTabs);
+    const groupEvidenceByWorkspaceTabId = buildSavedGroupEvidenceByWorkspaceTabId(archivedWorkspace);
+    const restoreResult = await restoreWorkspaceTabs(restorableTabs, restoreTargetMode, groupEvidenceByWorkspaceTabId);
     const groupResult = await recreateRestoredChromeGroups(restoreResult.openedTabs, restoreResult.windowId);
-    await refocusRestoredWindow(restoreResult.windowId, restoreResult.openedTabs[0]?.tabId || null);
-    const restoredWorkspace = buildRestoredWorkspace(archivedWorkspace, selectedArchive, restoreResult.openedTabs, groupResult);
+    const focusRequested = await refocusRestoredWindow(restoreResult.windowId, restoreResult.openedTabs[0]?.tabId || null);
+    const restoredWorkspace = buildRestoredWorkspace(archivedWorkspace, selectedArchive, restoreResult.openedTabs, groupResult, restoreTargetMode);
 
     await chrome.storage.local.set({ [WORKSPACE_KEY]: restoredWorkspace });
     await recordDiagnostic("info", "archive_restored", "Archived workspace restored as active workspace.", {
       archiveId: selectedArchive.archiveId,
       archiveName: selectedArchive.archiveName,
       workspaceId: restoredWorkspace.workspaceId,
+      restoreTargetMode,
       reopenedTabCount: restoreResult.openedTabs.length,
       skippedTabCount,
       windowId: restoreResult.windowId,
       recreatedGroupCount: groupResult.recreatedGroupCount,
       skippedGroupCount: groupResult.skippedGroupCount,
-      focusRequested: groupResult.focusRequested,
+      focusRequested,
       archiveRecordKept: true
     });
 
-    setWorkspaceSessionStatus("Restored archive: " + selectedArchive.archiveName + ". Reopened " + restoreResult.openedTabs.length + " tab(s) and recreated " + groupResult.recreatedGroupCount + " group(s) in a new window.");
+    setWorkspaceSessionStatus("Restored archive: " + selectedArchive.archiveName + ". Reopened " + restoreResult.openedTabs.length + " tab(s) and recreated " + groupResult.recreatedGroupCount + " group(s) " + buildRestoreTargetMessage(restoreTargetMode) + ".");
     window.setTimeout(() => window.location.reload(), 500);
   } catch (error) {
     await recordDiagnostic("error", "archive_restore_failed", "Archive restore failed.", {
@@ -75,7 +80,15 @@ async function restoreSelectedArchive() {
   }
 }
 
-async function restoreWorkspaceTabsInNewWindow(restorableTabs) {
+async function restoreWorkspaceTabs(restorableTabs, restoreTargetMode, groupEvidenceByWorkspaceTabId) {
+  if (restoreTargetMode === "dedicated_window") {
+    return restoreWorkspaceTabsInDedicatedWindow(restorableTabs, groupEvidenceByWorkspaceTabId);
+  }
+
+  return restoreWorkspaceTabsInCurrentWindow(restorableTabs, groupEvidenceByWorkspaceTabId);
+}
+
+async function restoreWorkspaceTabsInDedicatedWindow(restorableTabs, groupEvidenceByWorkspaceTabId) {
   if (!restorableTabs.length) {
     return { windowId: null, openedTabs: [] };
   }
@@ -90,24 +103,63 @@ async function restoreWorkspaceTabsInNewWindow(restorableTabs) {
   const firstOpenedTab = Array.isArray(createdWindow.tabs) ? createdWindow.tabs[0] : null;
 
   if (firstOpenedTab?.id) {
-    openedTabs.push(createOpenedTabRecord(firstTab, firstOpenedTab));
+    openedTabs.push(createOpenedTabRecord(firstTab, firstOpenedTab, groupEvidenceByWorkspaceTabId));
   }
 
   const windowId = createdWindow.id || firstOpenedTab?.windowId;
 
   for (const tab of restorableTabs.slice(1)) {
     const openedTab = await chrome.tabs.create({ windowId, url: tab.url, active: false });
-    openedTabs.push(createOpenedTabRecord(tab, openedTab));
+    openedTabs.push(createOpenedTabRecord(tab, openedTab, groupEvidenceByWorkspaceTabId));
   }
 
   return { windowId, openedTabs };
+}
+
+async function restoreWorkspaceTabsInCurrentWindow(restorableTabs, groupEvidenceByWorkspaceTabId) {
+  if (!restorableTabs.length) {
+    return { windowId: null, openedTabs: [] };
+  }
+
+  if (!globalThis.chrome?.tabs?.create) {
+    throw new Error("Chrome tabs API is unavailable.");
+  }
+
+  const currentWindow = await getCurrentWindowSafe();
+  const windowId = currentWindow?.id || null;
+  const openedTabs = [];
+
+  for (const [index, tab] of restorableTabs.entries()) {
+    const createArgs = {
+      url: tab.url,
+      active: index === 0
+    };
+
+    if (Number.isInteger(windowId)) {
+      createArgs.windowId = windowId;
+    }
+
+    const openedTab = await chrome.tabs.create(createArgs);
+    openedTabs.push(createOpenedTabRecord(tab, openedTab, groupEvidenceByWorkspaceTabId));
+  }
+
+  return { windowId: openedTabs[0]?.windowId || windowId, openedTabs };
+}
+
+async function getCurrentWindowSafe() {
+  if (!globalThis.chrome?.windows?.getCurrent) return null;
+
+  try {
+    return await chrome.windows.getCurrent();
+  } catch (_error) {
+    return null;
+  }
 }
 
 async function recreateRestoredChromeGroups(openedTabs, windowId) {
   const result = {
     groupAvailable: Boolean(globalThis.chrome?.tabs?.group && globalThis.chrome?.tabGroups?.update),
     windowId,
-    focusRequested: false,
     recreatedGroupCount: 0,
     skippedGroupCount: 0,
     groups: []
@@ -167,7 +219,7 @@ async function recreateRestoredChromeGroups(openedTabs, windowId) {
 }
 
 async function refocusRestoredWindow(windowId, activeTabId) {
-  if (!windowId || !globalThis.chrome?.windows?.update) return;
+  if (!windowId || !globalThis.chrome?.windows?.update) return false;
 
   try {
     if (activeTabId && globalThis.chrome?.tabs?.update) {
@@ -179,16 +231,18 @@ async function refocusRestoredWindow(windowId, activeTabId) {
       windowId,
       activeTabId
     });
+    return true;
   } catch (error) {
     await recordDiagnostic("warn", "archive_restore_window_focus_failed", "Could not refocus restored archive window.", {
       windowId,
       activeTabId,
       error: summarizeError(error)
     });
+    return false;
   }
 }
 
-function buildRestoredWorkspace(archivedWorkspace, selectedArchive, openedTabs, groupResult) {
+function buildRestoredWorkspace(archivedWorkspace, selectedArchive, openedTabs, groupResult, restoreTargetMode) {
   const openedByWorkspaceTabId = new Map(openedTabs.map((openedTab) => [openedTab.workspaceTabId, openedTab]));
   const now = new Date().toISOString();
   const restoredTabs = archivedWorkspace.tabs.map((tab) => {
@@ -212,9 +266,10 @@ function buildRestoredWorkspace(archivedWorkspace, selectedArchive, openedTabs, 
     eventId: crypto.randomUUID(),
     type: "archive_restored",
     createdAt: now,
-    message: "Restored archived workspace, reopened " + openedTabs.length + " tab(s), and recreated " + groupResult.recreatedGroupCount + " role group(s) in a new Chrome window.",
+    message: "Restored archived workspace, reopened " + openedTabs.length + " tab(s), and recreated " + groupResult.recreatedGroupCount + " role group(s) " + buildRestoreTargetMessage(restoreTargetMode) + ".",
     archiveId: selectedArchive.archiveId,
     archiveName: selectedArchive.archiveName,
+    restoreTargetMode,
     openedTabCount: openedTabs.length,
     recreatedGroupCount: groupResult.recreatedGroupCount,
     skippedGroupCount: groupResult.skippedGroupCount,
@@ -234,14 +289,17 @@ function buildRestoredWorkspace(archivedWorkspace, selectedArchive, openedTabs, 
   };
 }
 
-function createOpenedTabRecord(sourceTab, openedTab) {
+function createOpenedTabRecord(sourceTab, openedTab, groupEvidenceByWorkspaceTabId) {
+  const groupEvidence = groupEvidenceByWorkspaceTabId.get(sourceTab.workspaceTabId || "") || {};
+
   return {
     workspaceTabId: sourceTab.workspaceTabId || "",
     tabId: openedTab.id,
     windowId: openedTab.windowId,
     groupId: -1,
-    role: normalizeRole(sourceTab.role),
-    roleLabel: getRoleLabel(sourceTab.role),
+    role: normalizeRole(groupEvidence.role || sourceTab.role),
+    roleLabel: groupEvidence.roleLabel || getRoleLabel(sourceTab.role),
+    savedGroupTitle: groupEvidence.title || "",
     url: openedTab.url || sourceTab.url,
     title: openedTab.title || sourceTab.title || ""
   };
@@ -267,13 +325,54 @@ function groupOpenedTabsByRole(openedTabs) {
 
   return Array.from(groupsByRole.values()).map((group) => ({
     ...group,
+    roleLabel: group.openedTabs.find((openedTab) => openedTab.roleLabel)?.roleLabel || group.roleLabel,
     tabIds: group.openedTabs.map((openedTab) => openedTab.tabId).filter((tabId) => Number.isInteger(tabId)),
-    title: buildRestoreGroupTitle(group.role, group.roleLabel)
+    title: buildRestoreGroupTitle(group)
   }));
+}
+
+function buildSavedGroupEvidenceByWorkspaceTabId(workspace) {
+  const evidence = new Map();
+  const timeline = Array.isArray(workspace.timeline) ? workspace.timeline : [];
+
+  for (const event of [...timeline].reverse()) {
+    const groups = Array.isArray(event.groups) ? event.groups : [];
+
+    for (const group of groups) {
+      const workspaceTabIds = Array.isArray(group.workspaceTabIds) ? group.workspaceTabIds : [];
+
+      for (const workspaceTabId of workspaceTabIds) {
+        if (!workspaceTabId || evidence.has(workspaceTabId)) continue;
+
+        evidence.set(workspaceTabId, {
+          role: group.role || group.roleId || "",
+          roleLabel: group.roleLabel || getRoleLabel(group.role || group.roleId),
+          title: group.title || group.roleLabel || getRoleLabel(group.role || group.roleId)
+        });
+      }
+    }
+  }
+
+  return evidence;
 }
 
 function countRestorableRoleGroups(openedTabs) {
   return groupOpenedTabsByRole(openedTabs).length;
+}
+
+function determineRestoreTargetMode(workspace) {
+  if (hasDedicatedWindowEvidence(workspace)) return "dedicated_window";
+  if ((Array.isArray(workspace.tabs) ? workspace.tabs.length : 0) >= DEDICATED_WINDOW_THRESHOLD_TAB_COUNT) return "dedicated_window";
+  return "current_window";
+}
+
+function hasDedicatedWindowEvidence(workspace) {
+  const timeline = Array.isArray(workspace.timeline) ? workspace.timeline : [];
+  return timeline.some((event) => event?.type === "workspace_threshold_dedicated_window_executed" || Number.isInteger(event?.dedicatedWindowId));
+}
+
+function buildRestoreTargetMessage(restoreTargetMode) {
+  return restoreTargetMode === "dedicated_window" ? "in a dedicated Chrome window" : "in the current Chrome window";
 }
 
 function normalizeRole(role) {
@@ -296,12 +395,15 @@ function getRoleLabel(role) {
   return labels[normalizedRole] || normalizedRole.charAt(0).toUpperCase() + normalizedRole.slice(1);
 }
 
-function buildRestoreGroupTitle(role, roleLabel) {
+function buildRestoreGroupTitle(group) {
+  const savedTitle = group.openedTabs.find((openedTab) => openedTab.savedGroupTitle)?.savedGroupTitle;
+  if (savedTitle) return savedTitle;
+
   const shortLabels = {
     reference: "Ref"
   };
 
-  return (shortLabels[role] || roleLabel || "Group") + " · Restored";
+  return shortLabels[group.role] || group.roleLabel || "Group";
 }
 
 function getRestorableTabs(workspace) {
