@@ -1,4 +1,8 @@
 import { registerDeveloperSurface } from "./developer-mode.js";
+import {
+  evaluateSavedWorkspaceResumeGate,
+  formatSavedWorkspaceResumeGateForUser
+} from "./workspace-library-resume-gate.js";
 
 installWorkspaceLibraryProductSurface();
 
@@ -94,13 +98,13 @@ function ensureWorkspaceLibraryActionSkeleton(section) {
   const actionStatus = document.createElement("p");
   actionStatus.id = "workspaceLibraryActionStatus";
   actionStatus.className = "status-message";
-  actionStatus.textContent = "Preview is available. Resume is intentionally gated until the saved-workspace resume gate is connected.";
+  actionStatus.textContent = "Preview is available. Resume is intentionally gated until the saved-workspace resume gate is connected to execution.";
 
   const alignment = document.createElement("div");
   alignment.id = "workspaceLibraryActionAlignment";
   alignment.className = "workspace-library-action-alignment";
   alignment.appendChild(createActionReadinessLine("Preview", "available", "Read-only saved workspace inspection."));
-  alignment.appendChild(createActionReadinessLine("Resume", "gated", "Next slice: connect saved workspace resume to internal precheck, confirmation, execution, and verification."));
+  alignment.appendChild(createActionReadinessLine("Resume", "gated", "Internal resume gate exists; execution remains disabled until confirmation and verification are connected."));
   alignment.appendChild(createActionReadinessLine("Archive", "active-control", "Use Workspace Controls for active workspace archive/restore actions."));
 
   anchor.insertAdjacentElement("afterend", alignment);
@@ -135,6 +139,8 @@ function renderStructuredWorkspaceDetail() {
   const detail = parseLegacyDetailLines(card);
   if (!detail.Workspace) return;
 
+  const resumeGate = evaluateSavedWorkspaceResumeGate(detail);
+
   clearElement(card);
   card.dataset.workspaceLibraryStructured = "true";
   card.classList.add("workspace-library-detail-card");
@@ -164,9 +170,10 @@ function renderStructuredWorkspaceDetail() {
   card.appendChild(createDetailSection("Aim", detail.Aim || "No aim recorded"));
   card.appendChild(createDetailSection("Summary", detail.Summary || "No summary available yet."));
   card.appendChild(createDetailSection("Continuation", detail.Continuation || "No continuation note recorded."));
-  card.appendChild(createDetailSection("Action readiness", buildActionReadinessText(detail)));
+  card.appendChild(createDetailSection("Resume readiness", formatSavedWorkspaceResumeGateForUser(resumeGate)));
+  card.appendChild(createDetailSection("Gate status", buildGateStatusText(resumeGate)));
 
-  setLibraryActionStatus("Workspace preview is ready. Resume remains gated until saved-workspace resume uses the internal lifecycle gate.");
+  setLibraryActionStatus("Workspace preview is ready. Resume gate status: " + resumeGate.status + ". Execution remains disabled until confirmation and verification are connected.");
 }
 
 function parseLegacyDetailLines(card) {
@@ -222,13 +229,10 @@ function createActionReadinessLine(label, state, detail) {
   return line;
 }
 
-function buildActionReadinessText(detail) {
-  const tabCount = Number(detail.Tabs || 0);
-  const projection = detail.Projection || "unknown projection";
-  const lifecycle = detail.Lifecycle || "unknown lifecycle";
-  const restoreMode = tabCount >= 4 || String(projection).includes("dedicated") ? "dedicated-window resume path" : "current-window resume path";
-
-  return "Preview is safe now. Resume will use the " + restoreMode + " after precheck and Operator confirmation. Lifecycle: " + lifecycle + ".";
+function buildGateStatusText(gate) {
+  const passed = gate.checks.filter((check) => check.status === "pass").length;
+  const failed = gate.failedChecks.length;
+  return gate.gateName + ": " + gate.status + " | target: " + gate.restoreTargetMode + " | passed: " + passed + " | failed: " + failed + ".";
 }
 
 function createActionButton(id, text, disabled) {
@@ -238,7 +242,7 @@ function createActionButton(id, text, disabled) {
   button.className = "secondary-button";
   button.textContent = text;
   button.disabled = disabled;
-  if (disabled) button.title = "Gated until internal saved-workspace resume checks are connected.";
+  if (disabled) button.title = "Gated until internal saved-workspace resume execution is connected.";
   return button;
 }
 
