@@ -26,7 +26,7 @@ async function restoreSelectedArchive() {
   }
 
   const archivedWorkspace = sanitizeWorkspace(selectedArchive.workspace || {});
-  const restoreTargetMode = determineRestoreTargetMode(archivedWorkspace);
+  const restoreTargetMode = determineRestoreTargetMode(archivedWorkspace, selectedArchive);
   const restorableTabs = getRestorableTabs(archivedWorkspace);
   const skippedTabCount = archivedWorkspace.tabs.length - restorableTabs.length;
   const confirmed = window.confirm(
@@ -59,6 +59,7 @@ async function restoreSelectedArchive() {
       archiveName: selectedArchive.archiveName,
       workspaceId: restoredWorkspace.workspaceId,
       restoreTargetMode,
+      restorePolicy: buildRestorePolicyEvidence(archivedWorkspace, selectedArchive),
       reopenedTabCount: restoreResult.openedTabs.length,
       skippedTabCount,
       windowId: restoreResult.windowId,
@@ -299,7 +300,7 @@ function createOpenedTabRecord(sourceTab, openedTab, groupEvidenceByWorkspaceTab
     groupId: -1,
     role: normalizeRole(groupEvidence.role || sourceTab.role),
     roleLabel: groupEvidence.roleLabel || getRoleLabel(sourceTab.role),
-    savedGroupTitle: groupEvidence.title || "",
+    savedGroupTitle: normalizeSavedGroupTitle(groupEvidence.title),
     url: openedTab.url || sourceTab.url,
     title: openedTab.title || sourceTab.title || ""
   };
@@ -347,7 +348,7 @@ function buildSavedGroupEvidenceByWorkspaceTabId(workspace) {
         evidence.set(workspaceTabId, {
           role: group.role || group.roleId || "",
           roleLabel: group.roleLabel || getRoleLabel(group.role || group.roleId),
-          title: group.title || group.roleLabel || getRoleLabel(group.role || group.roleId)
+          title: normalizeSavedGroupTitle(group.title || group.roleLabel || getRoleLabel(group.role || group.roleId))
         });
       }
     }
@@ -360,15 +361,42 @@ function countRestorableRoleGroups(openedTabs) {
   return groupOpenedTabsByRole(openedTabs).length;
 }
 
-function determineRestoreTargetMode(workspace) {
-  if (hasDedicatedWindowEvidence(workspace)) return "dedicated_window";
-  if ((Array.isArray(workspace.tabs) ? workspace.tabs.length : 0) >= DEDICATED_WINDOW_THRESHOLD_TAB_COUNT) return "dedicated_window";
+function determineRestoreTargetMode(workspace, selectedArchive = {}) {
+  const tabCount = getArchivedWorkspaceTabCount(workspace, selectedArchive);
+
+  if (hasDedicatedWindowEvidence(workspace, selectedArchive)) return "dedicated_window";
+  if (tabCount >= DEDICATED_WINDOW_THRESHOLD_TAB_COUNT) return "dedicated_window";
   return "current_window";
 }
 
-function hasDedicatedWindowEvidence(workspace) {
+function getArchivedWorkspaceTabCount(workspace, selectedArchive = {}) {
+  const workspaceTabCount = Array.isArray(workspace.tabs) ? workspace.tabs.length : 0;
+  const summaryTabCount = Number(selectedArchive.summary?.tabCount || 0);
+  return Math.max(workspaceTabCount, summaryTabCount);
+}
+
+function hasDedicatedWindowEvidence(workspace, selectedArchive = {}) {
   const timeline = Array.isArray(workspace.timeline) ? workspace.timeline : [];
-  return timeline.some((event) => event?.type === "workspace_threshold_dedicated_window_executed" || Number.isInteger(event?.dedicatedWindowId));
+  const archiveName = String(selectedArchive.archiveName || "").toLowerCase();
+
+  return archiveName.includes("dedicated")
+    || timeline.some((event) => {
+      const eventType = String(event?.type || "").toLowerCase();
+      const eventMessage = String(event?.message || "").toLowerCase();
+      return eventType.includes("dedicated_window")
+        || eventMessage.includes("dedicated window")
+        || Number.isInteger(event?.dedicatedWindowId)
+        || Number.isInteger(event?.windowId) && eventType.includes("threshold");
+    });
+}
+
+function buildRestorePolicyEvidence(workspace, selectedArchive = {}) {
+  return {
+    thresholdTabCount: DEDICATED_WINDOW_THRESHOLD_TAB_COUNT,
+    archivedWorkspaceTabCount: getArchivedWorkspaceTabCount(workspace, selectedArchive),
+    dedicatedWindowEvidence: hasDedicatedWindowEvidence(workspace, selectedArchive),
+    productRule: "0-3 tabs without dedicated-window history restore into the current window; 4+ tabs or dedicated-window history restore into a dedicated window."
+  };
 }
 
 function buildRestoreTargetMessage(restoreTargetMode) {
@@ -404,6 +432,19 @@ function buildRestoreGroupTitle(group) {
   };
 
   return shortLabels[group.role] || group.roleLabel || "Group";
+}
+
+function normalizeSavedGroupTitle(title) {
+  const candidate = typeof title === "string" ? title.trim() : "";
+  const lowerCandidate = candidate.toLowerCase();
+
+  if (!candidate) return "";
+  if (lowerCandidate.includes("legacy")) return "";
+  if (lowerCandidate.includes("workspace_snapshot")) return "";
+  if (lowerCandidate.includes("active_workspace")) return "";
+  if (lowerCandidate.includes("restored")) return "";
+
+  return candidate;
 }
 
 function getRestorableTabs(workspace) {
