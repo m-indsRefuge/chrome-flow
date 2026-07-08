@@ -1,8 +1,14 @@
+import {
+  DEVELOPER_MODE_CHANGED_EVENT,
+  isDeveloperModeEnabled
+} from "./developer-mode.js";
+
 const VALIDATION_MODE_STORAGE_KEY = "chromeFlowValidationSurfacesVisible";
 const VALIDATION_MODE_QUERY_PARAM = "chromeFlowValidation";
 
 function isValidationSurfaceDebugModeEnabled() {
-  return readValidationModeFromQuery() || readValidationModeFromStorage() || document.body?.dataset?.chromeFlowValidationMode === "true";
+  return isDeveloperModeEnabled()
+    && (readValidationModeFromQuery() || readValidationModeFromStorage() || document.body?.dataset?.chromeFlowValidationMode === "true");
 }
 
 function registerValidationSurface(section) {
@@ -35,10 +41,12 @@ function installValidationSurfaceDebugToggle(anchor) {
 
   safeAnchor.insertAdjacentElement("afterend", section);
   document.getElementById("toggleValidationSurfaceDebugModeButton")?.addEventListener("click", toggleValidationSurfaceDebugMode);
+  window.addEventListener(DEVELOPER_MODE_CHANGED_EVENT, refreshValidationSurfaceVisibility);
   refreshValidationSurfaceVisibility();
 }
 
 function toggleValidationSurfaceDebugMode() {
+  if (!isDeveloperModeEnabled()) return;
   setValidationSurfaceDebugModeEnabled(!isValidationSurfaceDebugModeEnabled());
 }
 
@@ -53,10 +61,20 @@ function setValidationSurfaceDebugModeEnabled(enabled) {
 }
 
 function refreshValidationSurfaceVisibility() {
+  const developerModeEnabled = isDeveloperModeEnabled();
   const enabled = isValidationSurfaceDebugModeEnabled();
+
   document.querySelectorAll("[data-validation-surface='true']").forEach((section) => applyValidationSurfaceVisibility(section, enabled));
+
+  const section = document.getElementById("validationSurfaceDebugModeSection");
+  if (section) {
+    section.hidden = !developerModeEnabled;
+    section.setAttribute("aria-hidden", developerModeEnabled ? "false" : "true");
+  }
+
   const summary = document.getElementById("validationSurfaceDebugModeSummary");
   if (summary) summary.textContent = enabled ? "Validation surfaces are visible." : "Validation surfaces are hidden.";
+
   const button = document.getElementById("toggleValidationSurfaceDebugModeButton");
   if (button) button.textContent = enabled ? "Hide Validation Surfaces" : "Show Validation Surfaces";
 }
