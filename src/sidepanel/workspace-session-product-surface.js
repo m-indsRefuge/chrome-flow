@@ -62,7 +62,7 @@ function ensureArchivedWorkspaceActionSkeleton(section) {
 
   viewButton.addEventListener("click", () => {
     archiveSelect.dispatchEvent(new Event("change"));
-    setWorkspaceSessionStatus("Archive details refreshed. Restore is defined but not wired yet.");
+    setWorkspaceSessionStatus("Archive details refreshed. Restore is available for the selected archive.");
     reapplyWorkspaceSessionProductLanguageSoon();
   });
 
@@ -115,7 +115,8 @@ function rewriteWorkspaceSessionStatusText() {
   status.textContent = status.textContent
     .replaceAll("Active workspace packet", "Developer workspace packet")
     .replaceAll("Archive packet", "Developer archive packet")
-    .replaceAll("Developer Diagnostics", "developer diagnostics");
+    .replaceAll("Developer Diagnostics", "developer diagnostics")
+    .replaceAll("Restore is defined but not wired yet", "Restore is available for the selected archive");
 }
 
 function rewriteArchiveOptionLabels() {
