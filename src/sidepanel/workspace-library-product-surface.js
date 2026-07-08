@@ -22,7 +22,7 @@ function renameWorkspaceLibrary(section) {
 
   const help = section.querySelector(".section-help");
   if (help) {
-    help.textContent = "Review saved workspaces without reopening tabs or changing your current browser workspace.";
+    help.textContent = "Review saved workspaces, preview their structure, and decide whether to resume them through a checked workspace action.";
   }
 
   const label = document.querySelector("label[for='savedWorkspaceSelect']");
@@ -68,24 +68,42 @@ function ensureWorkspaceLibraryActionSkeleton(section) {
   panel.id = "workspaceLibraryActionSkeleton";
   panel.className = "workspace-library-action-skeleton workspace-session-actions";
 
-  const previewButton = createActionButton("workspaceLibraryPreviewButton", "Preview Workspace", false);
-  const resumeButton = createActionButton("workspaceLibraryResumeButton", "Resume Workspace", true);
-  const archiveButton = createActionButton("workspaceLibraryArchiveButton", "Archive Workspace", true);
+  const previewButton = createActionButton("workspaceLibraryPreviewButton", "Preview Saved Workspace", false);
+  const resumeButton = createActionButton("workspaceLibraryResumeButton", "Resume Saved Workspace", true);
+  const controlsButton = createActionButton("workspaceLibraryOpenControlsButton", "Open Workspace Controls", false);
 
   previewButton.addEventListener("click", () => {
     document.getElementById("inspectSavedWorkspaceButton")?.click();
-    setLibraryActionStatus("Preview loaded. Resume and Archive actions will be wired in the next end-user action slice.");
+    setLibraryActionStatus("Preview loaded. This is read-only and does not reopen tabs or change your active browser workspace.");
+  });
+
+  controlsButton.addEventListener("click", () => {
+    const controls = document.getElementById("workspaceSessionControlSection");
+    if (controls) {
+      controls.scrollIntoView({ behavior: "smooth", block: "start" });
+      setLibraryActionStatus("Workspace Controls opened. Use that surface for active archive/restore lifecycle actions.");
+    } else {
+      setLibraryActionStatus("Workspace Controls are not available in this sidepanel session.");
+    }
   });
 
   panel.appendChild(previewButton);
   panel.appendChild(resumeButton);
-  panel.appendChild(archiveButton);
+  panel.appendChild(controlsButton);
 
   const actionStatus = document.createElement("p");
   actionStatus.id = "workspaceLibraryActionStatus";
   actionStatus.className = "status-message";
-  actionStatus.textContent = "Preview is available. Resume and Archive are defined but not wired yet.";
+  actionStatus.textContent = "Preview is available. Resume is intentionally gated until the saved-workspace resume gate is connected.";
 
+  const alignment = document.createElement("div");
+  alignment.id = "workspaceLibraryActionAlignment";
+  alignment.className = "workspace-library-action-alignment";
+  alignment.appendChild(createActionReadinessLine("Preview", "available", "Read-only saved workspace inspection."));
+  alignment.appendChild(createActionReadinessLine("Resume", "gated", "Next slice: connect saved workspace resume to internal precheck, confirmation, execution, and verification."));
+  alignment.appendChild(createActionReadinessLine("Archive", "active-control", "Use Workspace Controls for active workspace archive/restore actions."));
+
+  anchor.insertAdjacentElement("afterend", alignment);
   anchor.insertAdjacentElement("afterend", actionStatus);
   anchor.insertAdjacentElement("afterend", panel);
 }
@@ -146,8 +164,9 @@ function renderStructuredWorkspaceDetail() {
   card.appendChild(createDetailSection("Aim", detail.Aim || "No aim recorded"));
   card.appendChild(createDetailSection("Summary", detail.Summary || "No summary available yet."));
   card.appendChild(createDetailSection("Continuation", detail.Continuation || "No continuation note recorded."));
+  card.appendChild(createDetailSection("Action readiness", buildActionReadinessText(detail)));
 
-  setLibraryActionStatus("Workspace preview is ready. Resume and Archive are still intentionally disabled until their gates are wired into product actions.");
+  setLibraryActionStatus("Workspace preview is ready. Resume remains gated until saved-workspace resume uses the internal lifecycle gate.");
 }
 
 function parseLegacyDetailLines(card) {
@@ -196,14 +215,30 @@ function createDetailSection(label, value) {
   return section;
 }
 
+function createActionReadinessLine(label, state, detail) {
+  const line = document.createElement("p");
+  line.className = "workspace-library-action-readiness-line";
+  line.textContent = label + ": " + state + " — " + detail;
+  return line;
+}
+
+function buildActionReadinessText(detail) {
+  const tabCount = Number(detail.Tabs || 0);
+  const projection = detail.Projection || "unknown projection";
+  const lifecycle = detail.Lifecycle || "unknown lifecycle";
+  const restoreMode = tabCount >= 4 || String(projection).includes("dedicated") ? "dedicated-window resume path" : "current-window resume path";
+
+  return "Preview is safe now. Resume will use the " + restoreMode + " after precheck and Operator confirmation. Lifecycle: " + lifecycle + ".";
+}
+
 function createActionButton(id, text, disabled) {
   const button = document.createElement("button");
   button.id = id;
   button.type = "button";
-  button.className = disabled ? "secondary-button" : "secondary-button";
+  button.className = "secondary-button";
   button.textContent = text;
   button.disabled = disabled;
-  if (disabled) button.title = "Defined for the next end-user action slice.";
+  if (disabled) button.title = "Gated until internal saved-workspace resume checks are connected.";
   return button;
 }
 
