@@ -3,6 +3,7 @@ const WORKSPACE_ARCHIVE_KEY = "chromeFlowWorkspaceArchive";
 const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const MAX_DIAGNOSTICS = 200;
 const DEDICATED_WINDOW_THRESHOLD_TAB_COUNT = 4;
+const WINDOW_SETTLE_DELAY_MS = 350;
 
 installWorkspaceArchiveRestoreControl();
 
@@ -49,7 +50,9 @@ async function restoreSelectedArchive() {
   try {
     const groupEvidenceByWorkspaceTabId = buildSavedGroupEvidenceByWorkspaceTabId(archivedWorkspace);
     const restoreResult = await restoreWorkspaceTabs(restorableTabs, restoreTargetMode, groupEvidenceByWorkspaceTabId);
+    await delay(WINDOW_SETTLE_DELAY_MS);
     const groupResult = await recreateRestoredChromeGroups(restoreResult.openedTabs, restoreResult.windowId);
+    await delay(WINDOW_SETTLE_DELAY_MS);
     const focusRequested = await refocusRestoredWindow(restoreResult.windowId, restoreResult.openedTabs[0]?.tabId || null);
     const restoredWorkspace = buildRestoredWorkspace(archivedWorkspace, selectedArchive, restoreResult.openedTabs, groupResult, restoreTargetMode);
 
@@ -60,9 +63,12 @@ async function restoreSelectedArchive() {
       workspaceId: restoredWorkspace.workspaceId,
       restoreTargetMode,
       restorePolicy: buildRestorePolicyEvidence(archivedWorkspace, selectedArchive),
+      restoreCreationMode: restoreResult.creationMode,
       reopenedTabCount: restoreResult.openedTabs.length,
       skippedTabCount,
       windowId: restoreResult.windowId,
+      temporaryTabIds: restoreResult.temporaryTabIds || [],
+      removedTemporaryTabIds: restoreResult.removedTemporaryTabIds || [],
       recreatedGroupCount: groupResult.recreatedGroupCount,
       skippedGroupCount: groupResult.skippedGroupCount,
       focusRequested,
@@ -70,7 +76,8 @@ async function restoreSelectedArchive() {
     });
 
     setWorkspaceSessionStatus("Restored archive: " + selectedArchive.archiveName + ". Reopened " + restoreResult.openedTabs.length + " tab(s) and recreated " + groupResult.recreatedGroupCount + " group(s) " + buildRestoreTargetMessage(restoreTargetMode) + ".");
-    window.setTimeout(() => window.location.reload(), 500);
+    window.setTimeout(() => void refocusRestoredWindow(restoreResult.windowId, restoreResult.openedTabs[0]?.tabId || null), 650);
+    window.setTimeout(() => window.location.reload(), 1200);
   } catch (error) {
     await recordDiagnostic("error", "archive_restore_failed", "Archive restore failed.", {
       archiveId: selectedArchive.archiveId,
@@ -91,35 +98,85 @@ async function restoreWorkspaceTabs(restorableTabs, restoreTargetMode, groupEvid
 
 async function restoreWorkspaceTabsInDedicatedWindow(restorableTabs, groupEvidenceByWorkspaceTabId) {
   if (!restorableTabs.length) {
-    return { windowId: null, openedTabs: [] };
+    return {
+      windowId: null,
+      openedTabs: [],
+      temporaryTabIds: [],
+      removedTemporaryTabIds: [],
+      creationMode: "empty_dedicated_window_no_restorable_tabs"
+    };
   }
 
   if (!globalThis.chrome?.windows?.create || !globalThis.chrome?.tabs?.create) {
     throw new Error("Chrome windows/tabs API is unavailable.");
   }
 
-  const firstTab = restorableTabs[0];
-  const createdWindow = await chrome.windows.create({ url: firstTab.url, focused: true });
+  const createdWindow = await chrome.windows.create({
+    focused: true,
+    state: "normal"
+  });
+  const windowId = createdWindow.id;
+  const temporaryTabIds = Array.isArray(createdWindow.tabs)
+    ? createdWindow.tabs.map((tab) => tab.id).filter((tabId) => Number.isInteger(tabId))
+    : [];
   const openedTabs = [];
-  const firstOpenedTab = Array.isArray(createdWindow.tabs) ? createdWindow.tabs[0] : null;
 
-  if (firstOpenedTab?.id) {
-    openedTabs.push(createOpenedTabRecord(firstTab, firstOpenedTab, groupEvidenceByWorkspaceTabId));
+  if (!Number.isInteger(windowId)) {
+    throw new Error("Chrome did not return a valid dedicated restore window id.");
   }
 
-  const windowId = createdWindow.id || firstOpenedTab?.windowId;
+  await chrome.windows.update(windowId, { focused: true, state: "normal" });
+  await delay(WINDOW_SETTLE_DELAY_MS);
 
-  for (const tab of restorableTabs.slice(1)) {
-    const openedTab = await chrome.tabs.create({ windowId, url: tab.url, active: false });
+  for (const [index, tab] of restorableTabs.entries()) {
+    const openedTab = await chrome.tabs.create({
+      windowId,
+      url: tab.url,
+      active: index === 0
+    });
     openedTabs.push(createOpenedTabRecord(tab, openedTab, groupEvidenceByWorkspaceTabId));
   }
 
-  return { windowId, openedTabs };
+  await delay(WINDOW_SETTLE_DELAY_MS);
+
+  const openedTabIds = openedTabs.map((tab) => tab.tabId).filter((tabId) => Number.isInteger(tabId));
+  const removedTemporaryTabIds = [];
+
+  for (const temporaryTabId of temporaryTabIds) {
+    if (openedTabIds.includes(temporaryTabId)) continue;
+
+    try {
+      await chrome.tabs.remove(temporaryTabId);
+      removedTemporaryTabIds.push(temporaryTabId);
+    } catch (error) {
+      await recordDiagnostic("warn", "archive_restore_temporary_tab_remove_failed", "Could not remove temporary tab from dedicated restore window.", {
+        temporaryTabId,
+        windowId,
+        error: summarizeError(error)
+      });
+    }
+  }
+
+  await chrome.windows.update(windowId, { focused: true, state: "normal" });
+
+  return {
+    windowId,
+    openedTabs,
+    temporaryTabIds,
+    removedTemporaryTabIds,
+    creationMode: "empty_window_then_create_restored_tabs"
+  };
 }
 
 async function restoreWorkspaceTabsInCurrentWindow(restorableTabs, groupEvidenceByWorkspaceTabId) {
   if (!restorableTabs.length) {
-    return { windowId: null, openedTabs: [] };
+    return {
+      windowId: null,
+      openedTabs: [],
+      temporaryTabIds: [],
+      removedTemporaryTabIds: [],
+      creationMode: "current_window_no_restorable_tabs"
+    };
   }
 
   if (!globalThis.chrome?.tabs?.create) {
@@ -144,7 +201,13 @@ async function restoreWorkspaceTabsInCurrentWindow(restorableTabs, groupEvidence
     openedTabs.push(createOpenedTabRecord(tab, openedTab, groupEvidenceByWorkspaceTabId));
   }
 
-  return { windowId: openedTabs[0]?.windowId || windowId, openedTabs };
+  return {
+    windowId: openedTabs[0]?.windowId || windowId,
+    openedTabs,
+    temporaryTabIds: [],
+    removedTemporaryTabIds: [],
+    creationMode: "current_window_create_restored_tabs"
+  };
 }
 
 async function getCurrentWindowSafe() {
@@ -223,6 +286,10 @@ async function refocusRestoredWindow(windowId, activeTabId) {
   if (!windowId || !globalThis.chrome?.windows?.update) return false;
 
   try {
+    if (globalThis.chrome?.windows?.get) {
+      await chrome.windows.get(windowId);
+    }
+
     if (activeTabId && globalThis.chrome?.tabs?.update) {
       await chrome.tabs.update(activeTabId, { active: true });
     }
@@ -384,9 +451,12 @@ function hasDedicatedWindowEvidence(workspace, selectedArchive = {}) {
       const eventType = String(event?.type || "").toLowerCase();
       const eventMessage = String(event?.message || "").toLowerCase();
       return eventType.includes("dedicated_window")
+        || eventType.includes("workspace_tabs_moved_to_new_window")
         || eventMessage.includes("dedicated window")
+        || eventMessage.includes("new chrome window")
         || Number.isInteger(event?.dedicatedWindowId)
-        || Number.isInteger(event?.windowId) && eventType.includes("threshold");
+        || (Number.isInteger(event?.newWindowId) && eventType.includes("window"))
+        || (Number.isInteger(event?.windowId) && eventType.includes("threshold"));
     });
 }
 
@@ -424,14 +494,7 @@ function getRoleLabel(role) {
 }
 
 function buildRestoreGroupTitle(group) {
-  const savedTitle = group.openedTabs.find((openedTab) => openedTab.savedGroupTitle)?.savedGroupTitle;
-  if (savedTitle) return savedTitle;
-
-  const shortLabels = {
-    reference: "Ref"
-  };
-
-  return shortLabels[group.role] || group.roleLabel || "Group";
+  return group.roleLabel || getRoleLabel(group.role) || "Group";
 }
 
 function normalizeSavedGroupTitle(title) {
@@ -511,4 +574,8 @@ function summarizeError(error) {
 function setWorkspaceSessionStatus(message) {
   const status = document.getElementById("workspaceSessionStatus");
   if (status) status.textContent = message;
+}
+
+function delay(milliseconds) {
+  return new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 }
