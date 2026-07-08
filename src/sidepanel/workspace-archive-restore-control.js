@@ -51,7 +51,7 @@ async function restoreSelectedArchive() {
     const groupEvidenceByWorkspaceTabId = buildSavedGroupEvidenceByWorkspaceTabId(archivedWorkspace);
     const restoreResult = await restoreWorkspaceTabs(restorableTabs, restoreTargetMode, groupEvidenceByWorkspaceTabId);
     await delay(WINDOW_SETTLE_DELAY_MS);
-    const groupResult = await recreateRestoredChromeGroups(restoreResult.openedTabs, restoreResult.windowId);
+    const groupResult = await recreateRestoredChromeGroups(restoreResult.openedTabs, restoreResult.windowId, archivedWorkspace);
     await delay(WINDOW_SETTLE_DELAY_MS);
     const focusRequested = await refocusRestoredWindow(restoreResult.windowId, restoreResult.openedTabs[0]?.tabId || null);
     const restoredWorkspace = buildRestoredWorkspace(archivedWorkspace, selectedArchive, restoreResult.openedTabs, groupResult, restoreTargetMode);
@@ -220,7 +220,7 @@ async function getCurrentWindowSafe() {
   }
 }
 
-async function recreateRestoredChromeGroups(openedTabs, windowId) {
+async function recreateRestoredChromeGroups(openedTabs, windowId, workspace = {}) {
   const result = {
     groupAvailable: Boolean(globalThis.chrome?.tabs?.group && globalThis.chrome?.tabGroups?.update),
     windowId,
@@ -232,12 +232,12 @@ async function recreateRestoredChromeGroups(openedTabs, windowId) {
   if (!openedTabs.length) return result;
 
   if (!result.groupAvailable) {
-    result.skippedGroupCount = countRestorableRoleGroups(openedTabs);
+    result.skippedGroupCount = countRestorableRoleGroups(openedTabs, workspace);
     await recordDiagnostic("warn", "archive_restore_groups_skipped", "Chrome tab group API is unavailable during archive restore.", result);
     return result;
   }
 
-  const groupsByRole = groupOpenedTabsByRole(openedTabs);
+  const groupsByRole = groupOpenedTabsByRole(openedTabs, workspace);
 
   for (const group of groupsByRole) {
     if (!group.tabIds.length) {
@@ -389,7 +389,7 @@ function createOpenedTabRecord(sourceTab, openedTab, groupEvidenceByWorkspaceTab
   };
 }
 
-function groupOpenedTabsByRole(openedTabs) {
+function groupOpenedTabsByRole(openedTabs, workspace = {}) {
   const groupsByRole = new Map();
 
   for (const openedTab of openedTabs) {
@@ -411,7 +411,7 @@ function groupOpenedTabsByRole(openedTabs) {
     ...group,
     roleLabel: group.openedTabs.find((openedTab) => openedTab.roleLabel)?.roleLabel || group.roleLabel,
     tabIds: group.openedTabs.map((openedTab) => openedTab.tabId).filter((tabId) => Number.isInteger(tabId)),
-    title: buildRestoreGroupTitle(group)
+    title: buildRestoreGroupTitle(group, workspace)
   }));
 }
 
@@ -440,8 +440,8 @@ function buildSavedGroupEvidenceByWorkspaceTabId(workspace) {
   return evidence;
 }
 
-function countRestorableRoleGroups(openedTabs) {
-  return groupOpenedTabsByRole(openedTabs).length;
+function countRestorableRoleGroups(openedTabs, workspace = {}) {
+  return groupOpenedTabsByRole(openedTabs, workspace).length;
 }
 
 function determineRestoreTargetMode(workspace, selectedArchive = {}) {
@@ -509,8 +509,25 @@ function getRoleLabel(role) {
   return labels[normalizedRole] || normalizedRole.charAt(0).toUpperCase() + normalizedRole.slice(1);
 }
 
-function buildRestoreGroupTitle(group) {
-  return group.roleLabel || getRoleLabel(group.role) || "Group";
+function buildRestoreGroupTitle(group, workspace = {}) {
+  return createChromeGroupTitle(workspace, group.roleLabel || getRoleLabel(group.role) || "Group");
+}
+
+function createChromeGroupTitle(workspace, roleLabel) {
+  const initials = createWorkspaceInitials(workspace.name || "Chrome Flow");
+  const title = roleLabel + " · " + initials;
+  return title.length <= 32 ? title : title.slice(0, 32);
+}
+
+function createWorkspaceInitials(name) {
+  const initials = String(name || "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((part) => part[0]?.toUpperCase() || "")
+    .join("")
+    .slice(0, 4);
+
+  return initials || "CF";
 }
 
 function normalizeSavedGroupTitle(title) {
