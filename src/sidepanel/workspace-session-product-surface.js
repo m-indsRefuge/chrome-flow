@@ -6,28 +6,58 @@ function installWorkspaceSessionProductSurface() {
   const section = document.getElementById("workspaceSessionControlSection");
   if (!section) return;
 
-  section.dataset.productSurface = "workspace-controls";
+  section.dataset.productSurface = "current-workspace-actions";
 
+  composeCurrentWorkspaceSurface(section);
   renameWorkspaceSessionControl(section);
   hideWorkspaceSessionPacketControls();
+  demoteLegacyArchiveBrowserToDeveloperSurface(section);
   ensureArchivedWorkspaceActionSkeleton(section);
   attachWorkspaceSessionProductLanguageRefresh();
 }
 
+function composeCurrentWorkspaceSurface(section) {
+  const currentWorkspaceSection = document.querySelector(".workspace-section");
+  if (!currentWorkspaceSection) return;
+
+  currentWorkspaceSection.dataset.productSurface = "current-workspace";
+  currentWorkspaceSection.classList.add("current-workspace-section");
+  ensureCurrentWorkspaceHeading(currentWorkspaceSection);
+
+  if (section.parentElement !== currentWorkspaceSection) {
+    currentWorkspaceSection.appendChild(section);
+  }
+}
+
+function ensureCurrentWorkspaceHeading(currentWorkspaceSection) {
+  if (document.getElementById("currentWorkspaceHeading")) return;
+
+  const heading = document.createElement("h2");
+  heading.id = "currentWorkspaceHeading";
+  heading.textContent = "Current Workspace";
+  currentWorkspaceSection.insertAdjacentElement("afterbegin", heading);
+
+  const help = document.createElement("p");
+  help.id = "currentWorkspaceHelp";
+  help.className = "section-help";
+  help.textContent = "Name, describe, save, pause, or archive the workspace you are actively using.";
+  heading.insertAdjacentElement("afterend", help);
+}
+
 function renameWorkspaceSessionControl(section) {
   const heading = section.querySelector("h2");
-  if (heading) heading.textContent = "Workspace Controls";
+  if (heading) heading.textContent = "Current Workspace Actions";
 
   const help = section.querySelector(".section-help");
   if (help) {
-    help.textContent = "Save, archive, and manage the current workspace without clearing your browser tabs.";
+    help.textContent = "Pause or archive the active workspace. Saved workspaces are resumed from the Workspace Library.";
   }
 
   setButtonText("archiveWorkspaceButton", "Archive Current Workspace");
   setButtonText("archiveAndStartFreshButton", "Archive + Start Fresh Workspace");
 
   const archiveLabel = document.querySelector("label[for='archiveWorkspaceSelect']");
-  if (archiveLabel) archiveLabel.textContent = "Archived Workspaces";
+  if (archiveLabel) archiveLabel.textContent = "Legacy Archive Restore";
 
   rewriteWorkspaceSessionSummaryText();
   rewriteWorkspaceSessionStatusText();
@@ -47,6 +77,14 @@ function hideWorkspaceSessionPacketControls() {
   }
 }
 
+function demoteLegacyArchiveBrowserToDeveloperSurface(section) {
+  const archiveBrowser = section.querySelector(".archive-browser-panel");
+  if (!archiveBrowser) return;
+
+  archiveBrowser.dataset.legacyArchiveRestoreSurface = "true";
+  registerDeveloperSurface(archiveBrowser);
+}
+
 function ensureArchivedWorkspaceActionSkeleton(section) {
   if (document.getElementById("workspaceArchiveActionSkeleton")) return;
 
@@ -56,13 +94,14 @@ function ensureArchivedWorkspaceActionSkeleton(section) {
   const panel = document.createElement("div");
   panel.id = "workspaceArchiveActionSkeleton";
   panel.className = "workspace-archive-action-skeleton workspace-session-actions";
+  panel.dataset.legacyArchiveRestoreActions = "true";
 
-  const viewButton = createActionButton("workspaceArchiveViewButton", "View Archive", false);
-  const restoreButton = createActionButton("workspaceArchiveRestoreButton", "Restore Archive", true);
+  const viewButton = createActionButton("workspaceArchiveViewButton", "View Legacy Archive", false);
+  const restoreButton = createActionButton("workspaceArchiveRestoreButton", "Restore Legacy Archive", true);
 
   viewButton.addEventListener("click", () => {
     archiveSelect.dispatchEvent(new Event("change"));
-    setWorkspaceSessionStatus("Archive details refreshed. Restore is available for the selected archive.");
+    setWorkspaceSessionStatus("Legacy archive details refreshed. Unified Resume will live in Workspace Library.");
     reapplyWorkspaceSessionProductLanguageSoon();
   });
 
@@ -73,6 +112,7 @@ function ensureArchivedWorkspaceActionSkeleton(section) {
   const selectedArchiveSummary = document.getElementById("selectedArchiveSummary");
   const anchor = selectedArchiveSummary || archiveBrowser;
   anchor.insertAdjacentElement("afterend", panel);
+  registerDeveloperSurface(panel);
 }
 
 function attachWorkspaceSessionProductLanguageRefresh() {
@@ -90,8 +130,10 @@ function reapplyWorkspaceSessionProductLanguageSoon() {
     const section = document.getElementById("workspaceSessionControlSection");
     if (!section) return;
 
+    composeCurrentWorkspaceSurface(section);
     renameWorkspaceSessionControl(section);
     hideWorkspaceSessionPacketControls();
+    demoteLegacyArchiveBrowserToDeveloperSurface(section);
     ensureArchivedWorkspaceActionSkeleton(section);
     rewriteArchiveOptionLabels();
   }, 250);
@@ -116,7 +158,8 @@ function rewriteWorkspaceSessionStatusText() {
     .replaceAll("Active workspace packet", "Developer workspace packet")
     .replaceAll("Archive packet", "Developer archive packet")
     .replaceAll("Developer Diagnostics", "developer diagnostics")
-    .replaceAll("Restore is defined but not wired yet", "Restore is available for the selected archive");
+    .replaceAll("Restore is defined but not wired yet", "Restore is available for the selected archive")
+    .replaceAll("Archive details refreshed. Restore is available for the selected archive.", "Legacy archive details refreshed. Unified Resume will live in Workspace Library.");
 }
 
 function rewriteArchiveOptionLabels() {
@@ -137,7 +180,7 @@ function createActionButton(id, text, disabled) {
   button.className = "secondary-button";
   button.textContent = text;
   button.disabled = disabled;
-  if (disabled) button.title = "Defined for the next end-user action slice.";
+  if (disabled) button.title = "Legacy restore remains available in Developer Mode until unified Resume is connected.";
   return button;
 }
 
