@@ -4,53 +4,126 @@ import { saveRuntimeWorkspaceToWorkspaceLibrary } from "../core/workspace-memory
 
 import { appendRuntimeDiagnostic } from "../core/workspace-runtime-store.js";
 
+const WORKSPACE_STORAGE_KEY = "chromeFlowWorkspace";
 const SAVE_SETTLE_DELAY_MS = 450;
+const AUTO_SAVE_DEBOUNCE_MS = 900;
+const AUTO_SAVE_MINIMUM_INTERVAL_MS = 1500;
+const MEANINGFUL_WORKSPACE_EVENT_TYPES = new Set([
+  "selected_tabs_added",
+  "active_tab_added",
+  "workspace_tab_metadata_refreshed",
+  "tab_role_updated",
+  "tab_alias_updated",
+  "tab_removed_from_workspace",
+  "workspace_tabs_cleared",
+  "chrome_tab_groups_created",
+  "chrome_tab_groups_removed",
+  "chrome_tab_groups_collapsed",
+  "chrome_tab_groups_expanded",
+  "workspace_tabs_arranged_by_role",
+  "workspace_tabs_moved_to_new_window",
+  "user_journal_added",
+  "workspace_archived"
+]);
+
 let workspaceLibrarySaveInProgress = false;
 let pendingWorkspaceLibrarySave = false;
+let autoSaveTimer = null;
+let lastSavedSignature = "";
+let lastSaveStartedAtMs = 0;
+let storageListenerInstalled = false;
 
 installWorkspaceLibrarySaveBridge();
 
 function installWorkspaceLibrarySaveBridge() {
   const saveButton = document.getElementById("saveWorkspaceButton");
-  if (!saveButton) return;
+  if (saveButton) {
+    saveButton.addEventListener("click", () => {
+      void scheduleWorkspaceLibrarySaveFromProductionButton();
+    });
+  }
 
-  saveButton.addEventListener("click", () => {
-    void scheduleWorkspaceLibrarySaveFromProductionButton();
+  installWorkspaceStorageChangeListener();
+}
+
+function installWorkspaceStorageChangeListener() {
+  if (storageListenerInstalled || !globalThis.chrome?.storage?.onChanged?.addListener) return;
+  storageListenerInstalled = true;
+
+  chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== "local" || !changes?.[WORKSPACE_STORAGE_KEY]?.newValue) return;
+
+    const newWorkspace = changes[WORKSPACE_STORAGE_KEY].newValue;
+    const oldWorkspace = changes[WORKSPACE_STORAGE_KEY].oldValue || null;
+    const source = inferAutoSaveSource(newWorkspace, oldWorkspace);
+
+    if (!source) return;
+
+    scheduleWorkspaceLibraryAutoSave(source);
   });
 }
 
 async function scheduleWorkspaceLibrarySaveFromProductionButton() {
+  await runWorkspaceLibrarySave("save_workspace_button", {
+    statusMessage: "Workspace saved and added to Workspace Library.",
+    continuationNote: "Saved from the end-user Save Workspace action into Workspace Library."
+  });
+}
+
+function scheduleWorkspaceLibraryAutoSave(source) {
+  if (autoSaveTimer) window.clearTimeout(autoSaveTimer);
+
+  autoSaveTimer = window.setTimeout(() => {
+    autoSaveTimer = null;
+    void runWorkspaceLibrarySave(source, {
+      statusMessage: "Workspace Library updated from latest workspace changes.",
+      continuationNote: "Auto-saved from active runtime changes into Workspace Library."
+    });
+  }, AUTO_SAVE_DEBOUNCE_MS);
+}
+
+async function runWorkspaceLibrarySave(source, options = {}) {
   if (workspaceLibrarySaveInProgress) {
     pendingWorkspaceLibrarySave = true;
-    return;
+    return null;
   }
 
   workspaceLibrarySaveInProgress = true;
 
   try {
     await delay(SAVE_SETTLE_DELAY_MS);
-    await saveActiveRuntimeToWorkspaceLibrary("save_workspace_button");
+    const runtimeWorkspace = await getWorkspace();
+    const signature = createWorkspaceLibrarySaveSignature(runtimeWorkspace);
+    const nowMs = Date.now();
+
+    if (signature === lastSavedSignature && nowMs - lastSaveStartedAtMs < AUTO_SAVE_MINIMUM_INTERVAL_MS) {
+      return null;
+    }
+
+    lastSavedSignature = signature;
+    lastSaveStartedAtMs = nowMs;
+    return await saveActiveRuntimeToWorkspaceLibrary(source, options);
   } finally {
     workspaceLibrarySaveInProgress = false;
 
     if (pendingWorkspaceLibrarySave) {
       pendingWorkspaceLibrarySave = false;
-      void scheduleWorkspaceLibrarySaveFromProductionButton();
+      scheduleWorkspaceLibraryAutoSave("coalesced_runtime_workspace_change");
     }
   }
 }
 
-async function saveActiveRuntimeToWorkspaceLibrary(source) {
+async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
   try {
     const runtimeWorkspace = await getWorkspace();
     const savedAt = new Date().toISOString();
     const result = await saveRuntimeWorkspaceToWorkspaceLibrary(runtimeWorkspace, {
       savedAt,
       lifecycleState: "paused",
-      continuationNote: "Saved from the end-user Save Workspace action into Workspace Library."
+      continuationNote: options.continuationNote || "Saved from the end-user Save Workspace action into Workspace Library."
     });
 
-    await appendRuntimeDiagnostic("info", "workspace_saved_to_workspace_library", "Active workspace saved to Workspace Library from production Save Workspace action.", {
+    await appendRuntimeDiagnostic("info", "workspace_saved_to_workspace_library", "Active workspace saved to Workspace Library from production runtime path.", {
       source,
       saveMode: result.saveMode,
       productionSave: true,
@@ -67,7 +140,7 @@ async function saveActiveRuntimeToWorkspaceLibrary(source) {
     });
 
     refreshWorkspaceLibraryProductSurface();
-    setProductionSaveStatus("Workspace saved and added to Workspace Library.");
+    setProductionSaveStatus(options.statusMessage || "Workspace saved and added to Workspace Library.");
     window.dispatchEvent(new CustomEvent("chrome-flow-workspace-library-save-completed", {
       detail: {
         workspaceId: result.workspaceId,
@@ -86,6 +159,85 @@ async function saveActiveRuntimeToWorkspaceLibrary(source) {
     setProductionSaveStatus("Workspace saved locally, but Workspace Library save failed. Check Developer Diagnostics.");
     return null;
   }
+}
+
+function inferAutoSaveSource(newWorkspace, oldWorkspace) {
+  if (!isMeaningfulWorkspaceForLibrary(newWorkspace)) return "";
+
+  const newTabs = Array.isArray(newWorkspace.tabs) ? newWorkspace.tabs : [];
+  const oldTabs = Array.isArray(oldWorkspace?.tabs) ? oldWorkspace.tabs : [];
+  const newJournal = Array.isArray(newWorkspace.journal) ? newWorkspace.journal : [];
+  const oldJournal = Array.isArray(oldWorkspace?.journal) ? oldWorkspace.journal : [];
+  const latestEventType = getLatestTimelineEventType(newWorkspace);
+
+  if (latestEventType && MEANINGFUL_WORKSPACE_EVENT_TYPES.has(latestEventType)) {
+    return "runtime_event_" + latestEventType;
+  }
+
+  if (newTabs.length !== oldTabs.length) return "runtime_tabs_changed";
+  if (newJournal.length !== oldJournal.length) return "runtime_journal_changed";
+  if (tabRoleSignature(newTabs) !== tabRoleSignature(oldTabs)) return "runtime_tab_roles_changed";
+  if (tabProjectionSignature(newTabs) !== tabProjectionSignature(oldTabs)) return "runtime_tab_projection_changed";
+
+  return "";
+}
+
+function isMeaningfulWorkspaceForLibrary(workspace) {
+  if (!workspace?.workspaceId) return false;
+  const hasName = Boolean(String(workspace.name || "").trim());
+  const hasAim = Boolean(String(workspace.aim || "").trim());
+  const hasTabs = Array.isArray(workspace.tabs) && workspace.tabs.length > 0;
+  const hasJournal = Array.isArray(workspace.journal) && workspace.journal.length > 0;
+
+  return hasName || hasAim || hasTabs || hasJournal;
+}
+
+function getLatestTimelineEventType(workspace) {
+  const timeline = Array.isArray(workspace?.timeline) ? workspace.timeline : [];
+  return timeline.length ? timeline[timeline.length - 1]?.type || "" : "";
+}
+
+function createWorkspaceLibrarySaveSignature(workspace) {
+  const tabs = Array.isArray(workspace?.tabs) ? workspace.tabs : [];
+  const journal = Array.isArray(workspace?.journal) ? workspace.journal : [];
+  const timeline = Array.isArray(workspace?.timeline) ? workspace.timeline : [];
+
+  return JSON.stringify({
+    workspaceId: workspace?.workspaceId || "",
+    name: workspace?.name || "",
+    aim: workspace?.aim || "",
+    workspaceType: workspace?.workspaceType || "",
+    tabCount: tabs.length,
+    journalCount: journal.length,
+    timelineCount: timeline.length,
+    latestTimelineEventType: getLatestTimelineEventType(workspace),
+    latestTimelineEventId: timeline.length ? timeline[timeline.length - 1]?.eventId || "" : "",
+    tabRoles: tabRoleSignature(tabs),
+    tabProjection: tabProjectionSignature(tabs)
+  });
+}
+
+function tabRoleSignature(tabs) {
+  return tabs.map((tab) => [
+    tab?.workspaceTabId || "",
+    tab?.tabId || "",
+    tab?.role || "",
+    tab?.alias || ""
+  ].join(":"))
+    .sort()
+    .join("|");
+}
+
+function tabProjectionSignature(tabs) {
+  return tabs.map((tab) => [
+    tab?.workspaceTabId || "",
+    tab?.tabId || "",
+    tab?.windowId || "",
+    tab?.groupId || "",
+    tab?.isOpen === false ? "closed" : "open"
+  ].join(":"))
+    .sort()
+    .join("|");
 }
 
 function refreshWorkspaceLibraryProductSurface() {
