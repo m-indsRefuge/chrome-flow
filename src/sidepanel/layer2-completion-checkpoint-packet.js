@@ -12,13 +12,15 @@ const MAX_DIAGNOSTICS_TO_SCAN = 250;
 const REQUIRED_PACKET_ACTIONS = Object.freeze({
   lifecycle: "layer2_lifecycle_packet_prepared",
   memoryContract: "layer2_memory_contract_packet_prepared",
-  postResume: "layer2_post_resume_verification_packet_prepared"
+  postResume: "layer2_post_resume_verification_packet_prepared",
+  productionSave: "layer2_production_save_validation_packet_prepared"
 });
 
 installLayer2CompletionCheckpointPacketSurface();
 
 function installLayer2CompletionCheckpointPacketSurface() {
-  const anchor = document.getElementById("layer2PostResumeVerificationPacketSection")
+  const anchor = document.getElementById("layer2ProductionSaveValidationPacketSection")
+    || document.getElementById("layer2PostResumeVerificationPacketSection")
     || document.getElementById("layer2MemoryContractValidationPacketSection")
     || document.getElementById("layer2LifecycleValidationPacketSection")
     || document.getElementById("developerDiagnosticsSection")
@@ -31,12 +33,12 @@ function installLayer2CompletionCheckpointPacketSurface() {
   section.className = "layer2-completion-checkpoint-packet-section";
   section.innerHTML = `
     <h2>Layer 2 Completion Checkpoint Packet</h2>
-    <p class="section-help">Developer-only final checkpoint for Layer 2 workspace persistence, archive/resume lifecycle, memory boundary, product-surface split, and verification evidence. This is read-only.</p>
+    <p class="section-help">Developer-only final checkpoint for Layer 2 workspace persistence, archive/resume lifecycle, memory boundary, product-surface split, production save wiring, and verification evidence. This is read-only.</p>
     <div class="workspace-session-actions">
       <button id="prepareLayer2CompletionCheckpointPacketButton" type="button" class="secondary-button">Prepare Layer 2 Completion Packet</button>
       <button id="copyLayer2CompletionCheckpointPacketButton" type="button" class="secondary-button" disabled>Copy Layer 2 Completion Packet</button>
     </div>
-    <p id="layer2CompletionCheckpointPacketStatus" class="status-message">Prepare this packet after lifecycle, memory-contract, and post-resume verification packets have passed.</p>
+    <p id="layer2CompletionCheckpointPacketStatus" class="status-message">Prepare this packet after lifecycle, memory-contract, production-save, and post-resume verification packets have passed.</p>
     <pre id="layer2CompletionCheckpointPacketOutput" class="diagnostic-output"></pre>
   `;
 
@@ -104,7 +106,7 @@ async function buildLayer2CompletionCheckpointPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "layer2-completion-checkpoint-packet-v0.3"
+      schema: "layer2-completion-checkpoint-packet-v0.4"
     },
     source: {
       type: "layer2_completion_checkpoint_packet",
@@ -134,6 +136,7 @@ async function buildLayer2CompletionCheckpointPacket() {
     layer2Capabilities: {
       completed: [
         "Current Workspace product surface groups naming, aim, type, save, archive, and archive-start-fresh controls.",
+        "Save Workspace persists active runtime into Workspace Library / Session DB while preserving chrome.storage.local as runtime authority.",
         "Workspace Library product surface supports Recent, All, and Archived views.",
         "Workspace Library Preview is read-only and does not reopen tabs or change browser windows.",
         "Workspace Library Resume hydrates Session DB workspace memory into active runtime after Operator confirmation.",
@@ -153,10 +156,10 @@ async function buildLayer2CompletionCheckpointPacket() {
       ]
     },
     nextDecision: {
-      recommendation: failedChecks.length ? "repair_layer2_completion_blockers" : "proceed_to_algorithmic_and_mathematical_foundation_phase",
+      recommendation: failedChecks.length ? "repair_layer2_completion_blockers" : "proceed_to_codex_external_validation_and_algorithmic_foundation_phase",
       notes: [
         "This packet is a checkpoint and does not rerun any browser-changing actions.",
-        "Layer 2 completion means workspace persistence, archive/resume lifecycle, memory boundary, product-surface split, and verification evidence are stable enough to build the deterministic intelligence layer on top.",
+        "Layer 2 completion means workspace persistence, production save-to-library, archive/resume lifecycle, memory boundary, product-surface split, and verification evidence are stable enough to build the deterministic intelligence layer on top.",
         "Future algorithmic work should read durable workspace context through WorkspaceMemoryStore and active context through WorkspaceRuntimeStore."
       ]
     }
@@ -183,6 +186,8 @@ function buildCompletionChecks(runtimeSummary, memorySummary, evidence, productS
     createCheck("validation_panels_registered", developerSurfaceState.validationSurfaceRegisteredCount > 0, "Validation panels are explicitly registered as validation surfaces."),
     createCheck("lifecycle_packet_passed", evidence.lifecycle?.details?.status === "ready_for_layer2_completion_checkpoint", "Layer 2 lifecycle packet passed."),
     createCheck("memory_contract_packet_passed", evidence.memoryContract?.details?.status === "ready_for_recent_resume_archive_restore_split", "Layer 2 memory contract packet passed."),
+    createCheck("production_save_packet_passed", evidence.productionSave?.details?.status === "production_save_to_workspace_library_validated", "Layer 2.1C production Save Workspace packet passed."),
+    createCheck("production_save_executed", Boolean(evidence.productionSaveExecuted), "Production Save Workspace to Workspace Library evidence exists."),
     createCheck("post_resume_packet_passed", evidence.postResume?.details?.status === "ready_for_layer2_completion_checkpoint", "Layer 2 post-resume verification packet passed."),
     createCheck("unified_resume_executed", Boolean(evidence.unifiedResumeExecuted), "Workspace Library unified resume execution evidence exists."),
     createCheck("resume_groups_recreated", Boolean(evidence.resumeGroupsRecreated), "Workspace Library resume group recreation evidence exists."),
@@ -196,7 +201,9 @@ function buildLayer2Evidence(diagnostics) {
   return {
     lifecycle: summarizeDiagnostic(findLatestDiagnostic(diagnostics, REQUIRED_PACKET_ACTIONS.lifecycle)),
     memoryContract: summarizeDiagnostic(findLatestDiagnostic(diagnostics, REQUIRED_PACKET_ACTIONS.memoryContract)),
+    productionSave: summarizeDiagnostic(findLatestDiagnostic(diagnostics, REQUIRED_PACKET_ACTIONS.productionSave)),
     postResume: summarizeDiagnostic(findLatestDiagnostic(diagnostics, REQUIRED_PACKET_ACTIONS.postResume)),
+    productionSaveExecuted: summarizeDiagnostic(findLatestDiagnostic(diagnostics, "workspace_saved_to_workspace_library")),
     unifiedResumeExecuted: summarizeDiagnostic(findLatestDiagnostic(diagnostics, "workspace_library_resume_executed")),
     resumeGroupsRecreated: summarizeDiagnostic(findLatestDiagnostic(diagnostics, "workspace_resume_groups_recreated")),
     resumeWindowFocused: summarizeDiagnostic(findLatestDiagnostic(diagnostics, "workspace_resume_window_focused")),
@@ -239,6 +246,7 @@ function summarizeDeveloperSurfaceState() {
     layer2LifecyclePacketDeveloperOnly: isDeveloperSurface("layer2LifecycleValidationPacketSection"),
     layer2MemoryContractPacketDeveloperOnly: isDeveloperSurface("layer2MemoryContractValidationPacketSection"),
     layer2PostResumePacketDeveloperOnly: isDeveloperSurface("layer2PostResumeVerificationPacketSection"),
+    layer2ProductionSavePacketDeveloperOnly: isDeveloperSurface("layer2ProductionSaveValidationPacketSection"),
     layer2CompletionCheckpointPacketDeveloperOnly: isDeveloperSurface("layer2CompletionCheckpointPacketSection")
   };
 }
@@ -265,15 +273,6 @@ function createCheck(check, condition, message, severity = "layer2_completion") 
   };
 }
 
-function createWarning(check, message, severity = "layer2_completion") {
-  return {
-    check,
-    status: "warn",
-    severity,
-    message
-  };
-}
-
 function summarizeDiagnostic(diagnostic) {
   if (!diagnostic) return null;
 
@@ -294,7 +293,7 @@ function buildClipboardEnvelope(jsonText) {
   return [
     "CHROME_FLOW_PACKET_START",
     "packetType: Chrome Flow Layer 2 Completion Checkpoint Packet",
-    "schema: layer2-completion-checkpoint-packet-v0.3",
+    "schema: layer2-completion-checkpoint-packet-v0.4",
     "clipboardFormat: chrome_flow_packet_envelope_v0.1",
     "createdAt: " + new Date().toISOString(),
     "contentType: application/json",
