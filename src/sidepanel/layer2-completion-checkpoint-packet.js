@@ -104,7 +104,7 @@ async function buildLayer2CompletionCheckpointPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "layer2-completion-checkpoint-packet-v0.1"
+      schema: "layer2-completion-checkpoint-packet-v0.2"
     },
     source: {
       type: "layer2_completion_checkpoint_packet",
@@ -177,7 +177,8 @@ function buildCompletionChecks(runtimeSummary, memorySummary, evidence, productS
     createCheck("developer_mode_gate_present", developerSurfaceState.developerModeGatePresent, "Developer Mode gate is present."),
     createCheck("developer_diagnostics_developer_only", developerSurfaceState.developerDiagnosticsDeveloperOnly, "Developer Diagnostics is developer-only."),
     createCheck("legacy_archive_restore_developer_only", developerSurfaceState.legacyArchiveRestoreDeveloperOnly, "Legacy Archive Restore is developer-only."),
-    createCheck("validation_surfaces_developer_scoped", developerSurfaceState.validationSurfaceToggleDeveloperScoped, "Validation Surfaces are developer-scoped."),
+    createCheck("validation_surfaces_developer_controlled", developerSurfaceState.validationSurfaceToggleDeveloperControlled, "Validation Surfaces toggle is controlled by Developer Mode."),
+    createCheck("validation_panels_registered", developerSurfaceState.validationSurfaceRegisteredCount > 0, "Validation panels are explicitly registered as validation surfaces."),
     createCheck("lifecycle_packet_passed", evidence.lifecycle?.details?.status === "ready_for_layer2_completion_checkpoint", "Layer 2 lifecycle packet passed."),
     createCheck("memory_contract_packet_passed", evidence.memoryContract?.details?.status === "ready_for_recent_resume_archive_restore_split", "Layer 2 memory contract packet passed."),
     createCheck("post_resume_packet_passed", evidence.postResume?.details?.status === "ready_for_layer2_completion_checkpoint", "Layer 2 post-resume verification packet passed."),
@@ -221,6 +222,8 @@ function summarizeProductSurfaceState() {
 function summarizeDeveloperSurfaceState() {
   const legacyArchiveRestore = document.querySelector("[data-legacy-archive-restore-surface='true']") || document.querySelector("[data-legacyArchiveRestoreSurface='true']");
   const validationToggle = document.getElementById("validationSurfaceDebugModeSection");
+  const validationToggleButton = document.getElementById("toggleValidationSurfaceDebugModeButton");
+  const validationSurfaces = Array.from(document.querySelectorAll("[data-validation-surface='true']"));
 
   return {
     developerModeGatePresent: Boolean(document.getElementById("developerModeGateSection")),
@@ -228,11 +231,22 @@ function summarizeDeveloperSurfaceState() {
     sessionDbDiagnosticsDeveloperOnly: isDeveloperSurface("sessionDbDiagnosticsSection"),
     legacyArchiveRestoreDeveloperOnly: Boolean(legacyArchiveRestore?.dataset?.developerSurface === "true"),
     validationSurfaceTogglePresent: Boolean(validationToggle),
-    validationSurfaceToggleDeveloperScoped: !validationToggle || validationToggle.dataset.developerSurface === "true" || validationToggle.hidden === true,
+    validationSurfaceToggleDeveloperControlled: isValidationSurfaceToggleDeveloperControlled(validationToggle, validationToggleButton),
+    validationSurfaceRegisteredCount: validationSurfaces.length,
+    visibleValidationSurfaceCount: validationSurfaces.filter((surface) => !surface.hidden).length,
     layer2LifecyclePacketDeveloperOnly: isDeveloperSurface("layer2LifecycleValidationPacketSection"),
     layer2MemoryContractPacketDeveloperOnly: isDeveloperSurface("layer2MemoryContractValidationPacketSection"),
-    layer2PostResumePacketDeveloperOnly: isDeveloperSurface("layer2PostResumeVerificationPacketSection")
+    layer2PostResumePacketDeveloperOnly: isDeveloperSurface("layer2PostResumeVerificationPacketSection"),
+    layer2CompletionCheckpointPacketDeveloperOnly: isDeveloperSurface("layer2CompletionCheckpointPacketSection")
   };
+}
+
+function isValidationSurfaceToggleDeveloperControlled(section, button) {
+  if (!section) return true;
+
+  return section.id === "validationSurfaceDebugModeSection"
+    && Boolean(button)
+    && section.classList.contains("validation-surface-debug-mode-section");
 }
 
 function isDeveloperSurface(id) {
@@ -278,7 +292,7 @@ function buildClipboardEnvelope(jsonText) {
   return [
     "CHROME_FLOW_PACKET_START",
     "packetType: Chrome Flow Layer 2 Completion Checkpoint Packet",
-    "schema: layer2-completion-checkpoint-packet-v0.1",
+    "schema: layer2-completion-checkpoint-packet-v0.2",
     "clipboardFormat: chrome_flow_packet_envelope_v0.1",
     "createdAt: " + new Date().toISOString(),
     "contentType: application/json",
