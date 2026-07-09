@@ -43,6 +43,30 @@ async function saveRuntimeWorkspaceSnapshotToMemory(runtimeWorkspace, details = 
   });
 }
 
+async function saveRuntimeWorkspaceToWorkspaceLibrary(runtimeWorkspace, details = {}) {
+  const savedAt = details.savedAt || new Date().toISOString();
+  const result = await importLegacyWorkspaceToSessionDb(runtimeWorkspace, {
+    lifecycleState: details.lifecycleState || "paused",
+    lastPausedAt: details.lastPausedAt || savedAt,
+    continuationNote: details.continuationNote || "Saved from the production Save Workspace action into Workspace Library."
+  });
+
+  return {
+    ...result,
+    savedAt,
+    saveMode: "production_save_to_workspace_library",
+    productionSave: true,
+    workspaceId: result.workspace.workspaceId,
+    workspaceName: result.workspace.name,
+    counts: {
+      ...result.counts,
+      tabs: result.counts.workspaceTabs,
+      journalEntries: result.counts.journalEntries,
+      timelineEvents: result.counts.timelineEvents
+    }
+  };
+}
+
 async function getWorkspaceMemoryRecord(workspaceId) {
   const workspace = await getWorkspaceRecord(workspaceId);
   if (!workspace) return null;
@@ -136,5 +160,6 @@ export {
   listRecentResumableWorkspaceMemoryRecords,
   listWorkspaceMemoryRecords,
   saveRuntimeWorkspaceSnapshotToMemory,
+  saveRuntimeWorkspaceToWorkspaceLibrary,
   summarizeWorkspaceMemoryRecord
 };
