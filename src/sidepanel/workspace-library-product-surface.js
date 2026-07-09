@@ -1,4 +1,9 @@
-import { listRecentResumableWorkspaceMemoryRecords } from "../core/workspace-memory-store.js";
+import {
+  getWorkspaceMemoryRecord,
+  listRecentResumableWorkspaceMemoryRecords
+} from "../core/workspace-memory-store.js";
+
+import { hydrateWorkspaceMemoryRecordToRuntime } from "../core/workspace-hydration-engine.js";
 
 import { registerDeveloperSurface } from "./developer-mode.js";
 import {
@@ -98,6 +103,7 @@ function createLibraryViewButton(view, text) {
   button.textContent = text;
   button.addEventListener("click", () => {
     currentLibraryView = view;
+    setResumeButtonState(null, "Switching library view. Preview a workspace before resuming.");
     void refreshWorkspaceLibraryViewState();
   });
   return button;
@@ -205,6 +211,10 @@ function ensureWorkspaceLibraryActionSkeleton(section) {
     setLibraryActionStatus("Preview loaded. This is read-only and does not reopen tabs or change your active browser workspace.");
   });
 
+  resumeButton.addEventListener("click", () => {
+    void resumeSelectedWorkspaceFromLibrary();
+  });
+
   controlsButton.addEventListener("click", () => {
     const controls = document.getElementById("workspaceSessionControlSection") || document.querySelector(".workspace-section");
     if (controls) {
@@ -222,7 +232,7 @@ function ensureWorkspaceLibraryActionSkeleton(section) {
   const actionStatus = document.createElement("p");
   actionStatus.id = "workspaceLibraryActionStatus";
   actionStatus.className = "status-message";
-  actionStatus.textContent = "Preview is available. Resume is intentionally gated until the saved-workspace resume engine is connected to execution.";
+  actionStatus.textContent = "Preview a workspace to run the resume gate. Resume becomes available only when the gate passes.";
 
   const alignment = document.createElement("div");
   alignment.id = "workspaceLibraryActionAlignment";
@@ -230,7 +240,7 @@ function ensureWorkspaceLibraryActionSkeleton(section) {
   alignment.appendChild(createActionReadinessLine("Recent", "quick resume", "Last 3 resumable workspaces for fast continuation."));
   alignment.appendChild(createActionReadinessLine("All", "library", "Full saved workspace memory."));
   alignment.appendChild(createActionReadinessLine("Archived", "recovery", "Older archived/recovery workspaces."));
-  alignment.appendChild(createActionReadinessLine("Resume", "gated", "One future Resume Workspace action will handle recent, saved, and archived records through the same gate."));
+  alignment.appendChild(createActionReadinessLine("Resume", "checked action", "One Resume Workspace action handles recent, saved, and archived records through the same gate."));
 
   anchor.insertAdjacentElement("afterend", alignment);
   anchor.insertAdjacentElement("afterend", actionStatus);
@@ -264,6 +274,7 @@ function renderStructuredWorkspaceDetail() {
   const detail = parseLegacyDetailLines(card);
   if (!detail.Workspace) return;
 
+  const selectedWorkspaceId = getSelectedWorkspaceId();
   const resumeGate = evaluateSavedWorkspaceResumeGate(detail);
 
   clearElement(card);
@@ -298,7 +309,115 @@ function renderStructuredWorkspaceDetail() {
   card.appendChild(createDetailSection("Resume readiness", formatSavedWorkspaceResumeGateForUser(resumeGate)));
   card.appendChild(createDetailSection("Gate status", buildGateStatusText(resumeGate)));
 
-  setLibraryActionStatus("Workspace preview is ready. Resume gate status: " + resumeGate.status + ". Execution remains disabled until confirmation and verification are connected.");
+  setResumeButtonState(resumeGate, selectedWorkspaceId);
+  setLibraryActionStatus(createResumeStatusMessage(resumeGate));
+}
+
+async function resumeSelectedWorkspaceFromLibrary() {
+  const workspaceId = getSelectedWorkspaceId();
+  const resumeButton = document.getElementById("workspaceLibraryResumeButton");
+
+  if (!workspaceId) {
+    setLibraryActionStatus("Select and preview a workspace before resuming.");
+    return;
+  }
+
+  resumeButton?.setAttribute("disabled", "disabled");
+  setLibraryActionStatus("Preparing workspace resume gate...");
+
+  try {
+    const record = await getWorkspaceMemoryRecord(workspaceId);
+    if (!record) {
+      setLibraryActionStatus("Selected workspace could not be found in long-term memory.");
+      return;
+    }
+
+    const detail = createGateDetailFromMemoryRecord(record);
+    const resumeGate = evaluateSavedWorkspaceResumeGate(detail);
+
+    if (resumeGate.status !== "ready_for_precheck") {
+      setResumeButtonState(resumeGate, workspaceId);
+      setLibraryActionStatus("Resume blocked: " + resumeGate.failedChecks.map((check) => check.check).join(", ") + ".");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      "Resume workspace: " + (record.workspace.name || "Untitled Workspace") + "?\n\n" +
+      "Chrome Flow will make this the active workspace, reopen " + record.counts.tabs + " saved tab(s), recreate role groups, and use the " + formatTargetMode(resumeGate.restoreTargetMode) + ".\n\n" +
+      "This will not close your current browser tabs. Archive the current workspace first if you want a clean switch."
+    );
+
+    if (!confirmed) {
+      setResumeButtonState(resumeGate, workspaceId);
+      setLibraryActionStatus("Resume cancelled. No tabs or windows were changed.");
+      return;
+    }
+
+    setLibraryActionStatus("Resuming workspace. Chrome Flow is reopening tabs and recreating groups...");
+    const result = await hydrateWorkspaceMemoryRecordToRuntime(record, { source: "workspace_library_resume_button" });
+
+    setLibraryActionStatus(
+      "Workspace resumed: " + result.hydratedWorkspace.name + ". Reopened " + result.restoreResult.openedTabs.length + " tab(s), recreated " + result.groupResult.recreatedGroupCount + " group(s), target: " + result.restoreTargetMode + "."
+    );
+
+    window.setTimeout(() => window.location.reload(), 1200);
+  } catch (error) {
+    setLibraryActionStatus("Resume failed. Check Developer Diagnostics. " + (error?.message || String(error)));
+  } finally {
+    window.setTimeout(() => {
+      if (resumeButton?.dataset?.resumeGateStatus === "ready_for_precheck") {
+        resumeButton.removeAttribute("disabled");
+      }
+    }, 1500);
+  }
+}
+
+function setResumeButtonState(resumeGate, workspaceIdOrMessage = "") {
+  const resumeButton = document.getElementById("workspaceLibraryResumeButton");
+  if (!resumeButton) return;
+
+  if (!resumeGate || resumeGate.status !== "ready_for_precheck" || !workspaceIdOrMessage) {
+    resumeButton.setAttribute("disabled", "disabled");
+    resumeButton.dataset.workspaceId = "";
+    resumeButton.dataset.resumeGateStatus = resumeGate?.status || "not_ready";
+    resumeButton.title = typeof workspaceIdOrMessage === "string" && workspaceIdOrMessage && !workspaceIdOrMessage.includes("-")
+      ? workspaceIdOrMessage
+      : "Preview a resumable workspace before resuming.";
+    return;
+  }
+
+  resumeButton.removeAttribute("disabled");
+  resumeButton.dataset.workspaceId = workspaceIdOrMessage;
+  resumeButton.dataset.resumeGateStatus = resumeGate.status;
+  resumeButton.dataset.resumeTargetMode = resumeGate.restoreTargetMode;
+  resumeButton.title = "Resume this workspace after confirmation.";
+}
+
+function createResumeStatusMessage(resumeGate) {
+  if (resumeGate.status === "ready_for_precheck") {
+    return "Workspace preview is ready. Resume Workspace is available after confirmation. Target: " + resumeGate.restoreTargetMode + ".";
+  }
+
+  return "Workspace preview is ready. Resume is blocked until checks are repaired: " + resumeGate.failedChecks.map((check) => check.check).join(", ") + ".";
+}
+
+function createGateDetailFromMemoryRecord(record) {
+  const projection = record.projections[0] || {};
+  const summary = record.summaryCard || {};
+
+  return {
+    Workspace: record.workspace.name || "Untitled Workspace",
+    Type: record.workspace.workspaceType || "workspace",
+    Lifecycle: record.workspace.lifecycleState || "unknown",
+    Projection: [projection.projectionState || "none", projection.projectionMode || "none"].join(" / "),
+    Tabs: String(record.counts.tabs || 0),
+    Sessions: String(record.counts.sessions || 0),
+    "Timeline events": String(record.counts.timelineEvents || 0),
+    "Journal entries": String(record.counts.journalEntries || 0),
+    Aim: record.workspace.aim || summary.workspaceAim || "No aim recorded",
+    Summary: summary.deterministicSummary || "No summary available yet.",
+    Continuation: summary.continuationSummary || "No continuation note recorded."
+  };
 }
 
 function parseLegacyDetailLines(card) {
@@ -367,7 +486,7 @@ function createActionButton(id, text, disabled) {
   button.className = "secondary-button";
   button.textContent = text;
   button.disabled = disabled;
-  if (disabled) button.title = "Gated until internal saved-workspace resume execution is connected.";
+  if (disabled) button.title = "Preview a resumable workspace before resuming.";
   return button;
 }
 
@@ -378,7 +497,10 @@ function attachWorkspaceLibraryProductLanguageRefresh() {
 
   refreshButton?.addEventListener("click", reapplyWorkspaceLibraryLanguageSoon);
   inspectButton?.addEventListener("click", reapplyWorkspaceLibraryLanguageSoon);
-  select?.addEventListener("change", reapplyWorkspaceLibraryLanguageSoon);
+  select?.addEventListener("change", () => {
+    setResumeButtonState(null, "Preview the selected workspace before resuming.");
+    reapplyWorkspaceLibraryLanguageSoon();
+  });
 }
 
 function reapplyWorkspaceLibraryLanguageSoon() {
@@ -427,6 +549,15 @@ function rewriteWorkspaceOptionLabels() {
       .replaceAll(" [active DB]", " [active saved]")
       .replaceAll("Session DB", "saved");
   }
+}
+
+function getSelectedWorkspaceId() {
+  const select = document.getElementById("savedWorkspaceSelect");
+  return select?.value || "";
+}
+
+function formatTargetMode(targetMode) {
+  return targetMode === "dedicated_window" ? "dedicated-window path" : "current-window path";
 }
 
 function setLibraryActionStatus(message) {
