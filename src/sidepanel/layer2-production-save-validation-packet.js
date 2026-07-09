@@ -97,7 +97,7 @@ async function buildLayer2ProductionSaveValidationPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "layer2-production-save-validation-packet-v0.1"
+      schema: "layer2-production-save-validation-packet-v0.2"
     },
     source: {
       type: "layer2_production_save_validation_packet",
@@ -121,6 +121,7 @@ async function buildLayer2ProductionSaveValidationPacket() {
     },
     activeRuntimeWorkspace: summarizeRuntimeWorkspace(runtimeWorkspace),
     workspaceLibraryRecord: summarizeMemoryRecord(memoryRecord),
+    timelineEvidence: summarizeTimelineEvidence(runtimeWorkspace, memoryRecord, latestProductionSave),
     latestProductionSaveEvidence: summarizeDiagnostic(latestProductionSave),
     latestProductionSaveFailure: summarizeDiagnostic(latestProductionSaveFailure),
     nextDecision: {
@@ -128,7 +129,8 @@ async function buildLayer2ProductionSaveValidationPacket() {
       notes: [
         "This packet verifies that Save Workspace now persists the active runtime workspace into Workspace Library / Session DB.",
         "This packet is read-only and does not perform a save itself.",
-        "The Save Workspace action keeps chrome.storage.local as active runtime authority while Session DB remains long-term memory authority."
+        "The Save Workspace action keeps chrome.storage.local as active runtime authority while Session DB remains long-term memory authority.",
+        "Timeline preservation is measured against the latest production-save snapshot because later runtime actions, such as Resume Workspace, may append new active-runtime events after the saved record is created."
       ]
     }
   };
@@ -137,10 +139,10 @@ async function buildLayer2ProductionSaveValidationPacket() {
 function buildValidationChecks(runtimeWorkspace, memoryRecord, latestProductionSave, latestProductionSaveFailure) {
   const runtimeTabs = Array.isArray(runtimeWorkspace?.tabs) ? runtimeWorkspace.tabs : [];
   const runtimeJournal = Array.isArray(runtimeWorkspace?.journal) ? runtimeWorkspace.journal : [];
-  const runtimeTimeline = Array.isArray(runtimeWorkspace?.timeline) ? runtimeWorkspace.timeline : [];
   const memoryTabs = Array.isArray(memoryRecord?.tabs) ? memoryRecord.tabs : [];
   const memoryJournal = Array.isArray(memoryRecord?.journalEntries) ? memoryRecord.journalEntries : [];
   const memoryTimeline = Array.isArray(memoryRecord?.timelineEvents) ? memoryRecord.timelineEvents : [];
+  const savedTimelineCount = Number(latestProductionSave?.details?.timelineEventCount || 0);
 
   return [
     createCheck("active_runtime_workspace_exists", Boolean(runtimeWorkspace?.workspaceId), "Active runtime workspace exists."),
@@ -154,7 +156,7 @@ function buildValidationChecks(runtimeWorkspace, memoryRecord, latestProductionS
     createCheck("workspace_type_matches", String(memoryRecord?.workspace?.workspaceType || "") === String(runtimeWorkspace?.workspaceType || ""), "Workspace type matches between runtime and Workspace Library."),
     createCheck("tab_count_matches", memoryTabs.length === runtimeTabs.length, "Workspace Library tab count matches active runtime tab count."),
     createCheck("journal_count_matches", memoryJournal.length === runtimeJournal.length, "Workspace Library journal count matches active runtime journal count."),
-    createCheck("timeline_count_preserved", memoryTimeline.length >= runtimeTimeline.length, "Workspace Library timeline count preserves active runtime timeline evidence."),
+    createCheck("timeline_count_preserved_at_latest_save", memoryTimeline.length >= savedTimelineCount, "Workspace Library timeline count preserves the latest production-save timeline evidence."),
     createCheck("summary_card_exists", Boolean(memoryRecord?.summaryCard), "Workspace Library summary card exists."),
     createCheck("workspace_record_resumable", memoryRecord?.workspace?.lifecycleState === "paused", "Workspace Library record is saved as a resumable paused snapshot."),
     createCheck("source_of_truth_boundary_preserved", latestProductionSave?.details?.sessionDbRuntimeSourceOfTruth === false && latestProductionSave?.details?.activeWorkspaceRuntimeSource === "chrome.storage.local", "Production save preserves runtime/memory source-of-truth boundary.")
@@ -171,6 +173,7 @@ function summarizeRuntimeWorkspace(workspace) {
     tabCount: tabs.length,
     journalCount: Array.isArray(workspace?.journal) ? workspace.journal.length : 0,
     timelineCount: Array.isArray(workspace?.timeline) ? workspace.timeline.length : 0,
+    latestTimelineEventType: getLatestTimelineEventType(workspace),
     updatedAt: workspace?.updatedAt || ""
   };
 }
@@ -192,6 +195,30 @@ function summarizeMemoryRecord(record) {
     hasSummaryCard: Boolean(record.summaryCard),
     updatedAt: record.workspace?.updatedAt || ""
   };
+}
+
+function summarizeTimelineEvidence(runtimeWorkspace, memoryRecord, latestProductionSave) {
+  const runtimeTimeline = Array.isArray(runtimeWorkspace?.timeline) ? runtimeWorkspace.timeline : [];
+  const memoryTimeline = Array.isArray(memoryRecord?.timelineEvents) ? memoryRecord.timelineEvents : [];
+  const latestSaveTimelineCount = Number(latestProductionSave?.details?.timelineEventCount || 0);
+  const postSaveRuntimeEventCount = Math.max(0, runtimeTimeline.length - memoryTimeline.length);
+
+  return {
+    runtimeTimelineCount: runtimeTimeline.length,
+    memoryTimelineCount: memoryTimeline.length,
+    latestProductionSaveTimelineCount: latestSaveTimelineCount,
+    postSaveRuntimeEventCount,
+    latestRuntimeTimelineEventType: getLatestTimelineEventType(runtimeWorkspace),
+    latestProductionSaveCreatedAt: latestProductionSave?.createdAt || "",
+    interpretation: postSaveRuntimeEventCount > 0
+      ? "Active runtime contains events added after the latest saved Workspace Library snapshot. This is allowed when resume or other runtime actions occur after saving."
+      : "Workspace Library timeline evidence is current with active runtime timeline count."
+  };
+}
+
+function getLatestTimelineEventType(workspace) {
+  const timeline = Array.isArray(workspace?.timeline) ? workspace.timeline : [];
+  return timeline.length ? timeline[timeline.length - 1]?.type || "" : "";
 }
 
 function summarizeDiagnostic(diagnostic) {
@@ -223,7 +250,7 @@ function buildClipboardEnvelope(jsonText) {
   return [
     "CHROME_FLOW_PACKET_START",
     "packetType: Chrome Flow Layer 2.1C Production Save Validation Packet",
-    "schema: layer2-production-save-validation-packet-v0.1",
+    "schema: layer2-production-save-validation-packet-v0.2",
     "clipboardFormat: chrome_flow_packet_envelope_v0.1",
     "createdAt: " + new Date().toISOString(),
     "contentType: application/json",
