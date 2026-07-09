@@ -104,7 +104,7 @@ async function buildLayer2CompletionCheckpointPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "layer2-completion-checkpoint-packet-v0.2"
+      schema: "layer2-completion-checkpoint-packet-v0.3"
     },
     source: {
       type: "layer2_completion_checkpoint_packet",
@@ -140,7 +140,8 @@ async function buildLayer2CompletionCheckpointPacket() {
         "Resume target policy supports current-window and dedicated-window behavior using the 4-tab threshold.",
         "Chrome tab groups are recreated with role labels and workspace initials.",
         "Active runtime memory and long-term workspace memory boundaries are explicit and validated.",
-        "Developer Mode separates diagnostics, packets, validation surfaces, and legacy restore controls from normal product view."
+        "Developer Mode separates diagnostics, packets, validation surfaces, and legacy restore controls from normal product view.",
+        "Standalone Recent Workspaces surface has been absorbed into Workspace Library and removed from the normal runtime surface model."
       ],
       deferred: [
         "Final immersive Workspace Library overlay / 3D gallery UI.",
@@ -174,6 +175,7 @@ function buildCompletionChecks(runtimeSummary, memorySummary, evidence, productS
     createCheck("workspace_library_surface_present", productSurfaceState.workspaceLibrarySurfacePresent, "Workspace Library product surface is present."),
     createCheck("workspace_library_views_present", productSurfaceState.recentViewPresent && productSurfaceState.allViewPresent && productSurfaceState.archivedViewPresent, "Workspace Library Recent / All / Archived views are present."),
     createCheck("workspace_library_resume_action_present", productSurfaceState.resumeWorkspaceButtonPresent, "Workspace Library Resume Workspace action is present."),
+    createCheck("standalone_recent_resume_surface_absent", !productSurfaceState.standaloneRecentResumeSurfacePresent, "Standalone Recent Workspaces surface is absent from the runtime UI."),
     createCheck("developer_mode_gate_present", developerSurfaceState.developerModeGatePresent, "Developer Mode gate is present."),
     createCheck("developer_diagnostics_developer_only", developerSurfaceState.developerDiagnosticsDeveloperOnly, "Developer Diagnostics is developer-only."),
     createCheck("legacy_archive_restore_developer_only", developerSurfaceState.legacyArchiveRestoreDeveloperOnly, "Legacy Archive Restore is developer-only."),
@@ -186,8 +188,7 @@ function buildCompletionChecks(runtimeSummary, memorySummary, evidence, productS
     createCheck("resume_groups_recreated", Boolean(evidence.resumeGroupsRecreated), "Workspace Library resume group recreation evidence exists."),
     createCheck("resume_window_focused", Boolean(evidence.resumeWindowFocused), "Workspace Library resume window focus evidence exists."),
     createCheck("resume_projection_verified_zero_failures", Number(evidence.postResume?.details?.failedCheckCount || 0) === 0, "Post-resume verification has zero failed checks."),
-    createCheck("archive_close_behavior_evidenced", Boolean(evidence.archiveCloseCompleted) || Boolean(evidence.unifiedResumeExecuted), "Archive/restore lifecycle evidence exists for Layer 2 completion."),
-    createWarning("legacy_recent_resume_file_unloaded_not_deleted", "Standalone recent resume surface is expected to be unloaded; deletion can happen after final Layer 2 acceptance.")
+    createCheck("archive_close_behavior_evidenced", Boolean(evidence.archiveCloseCompleted) || Boolean(evidence.unifiedResumeExecuted), "Archive/restore lifecycle evidence exists for Layer 2 completion.")
   ];
 }
 
@@ -209,6 +210,7 @@ function summarizeProductSurfaceState() {
     currentWorkspaceSurfacePresent: Boolean(document.querySelector("[data-product-surface='current-workspace']")),
     currentWorkspaceActionsSurfacePresent: Boolean(document.querySelector("[data-product-surface='current-workspace-actions']")),
     workspaceLibrarySurfacePresent: Boolean(document.querySelector("[data-product-surface='workspace-library']")),
+    standaloneRecentResumeSurfacePresent: Boolean(document.getElementById("workspaceRecentResumeSection") || document.querySelector("[data-product-surface='recent-resume']")),
     recentViewPresent: Boolean(document.getElementById("workspaceLibraryViewRecentButton")),
     allViewPresent: Boolean(document.getElementById("workspaceLibraryViewAllButton")),
     archivedViewPresent: Boolean(document.getElementById("workspaceLibraryViewArchivedButton")),
@@ -292,7 +294,7 @@ function buildClipboardEnvelope(jsonText) {
   return [
     "CHROME_FLOW_PACKET_START",
     "packetType: Chrome Flow Layer 2 Completion Checkpoint Packet",
-    "schema: layer2-completion-checkpoint-packet-v0.2",
+    "schema: layer2-completion-checkpoint-packet-v0.3",
     "clipboardFormat: chrome_flow_packet_envelope_v0.1",
     "createdAt: " + new Date().toISOString(),
     "contentType: application/json",
