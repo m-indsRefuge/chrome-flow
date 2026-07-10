@@ -18,6 +18,10 @@
   "side_panel": {
     "default_path": "src/sidepanel/sidepanel.html"
   },
+  "options_ui": {
+    "page": "src/migration/migration.html",
+    "open_in_tab": true
+  },
   "action": {
     "default_title": "Open Constellation"
   }
