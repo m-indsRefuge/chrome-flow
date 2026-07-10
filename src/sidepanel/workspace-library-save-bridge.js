@@ -4,6 +4,8 @@ import { saveRuntimeWorkspaceToWorkspaceLibrary } from "../core/workspace-memory
 
 import { appendRuntimeDiagnostic } from "../core/workspace-runtime-store.js";
 
+import { refreshWorkspaceLibrarySurfaceDirectly } from "./workspace-library-direct-refresh.js";
+
 const WORKSPACE_STORAGE_KEY = "chromeFlowWorkspace";
 const SAVE_SETTLE_DELAY_MS = 450;
 const AUTO_SAVE_DEBOUNCE_MS = 900;
@@ -213,7 +215,7 @@ async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
       migrationMode: result.bridgeStatus.migrationMode
     });
 
-    refreshWorkspaceLibraryProductSurface();
+    await refreshWorkspaceLibrarySurfaceDirectly();
     setProductionSaveStatus(options.statusMessage || "Workspace saved to Workspace Library.");
     window.dispatchEvent(new CustomEvent("chrome-flow-workspace-library-save-completed", {
       detail: {
@@ -390,14 +392,6 @@ function isRecentMatchingCoordinator(coordinator, signature) {
   return elapsedMs >= 0 && elapsedMs < CROSS_CONTEXT_DUPLICATE_WINDOW_MS;
 }
 
-function refreshWorkspaceLibraryProductSurface() {
-  const refreshButton = document.getElementById("refreshSavedWorkspacesButton");
-  if (!refreshButton) return;
-
-  window.setTimeout(() => {
-    refreshButton.click();
-  }, 150);
-}
 
 function setProductionSaveStatus(message) {
   ensureWorkspaceLibrarySaveStatusSurface();
