@@ -36,6 +36,8 @@ let storageListenerInstalled = false;
 installWorkspaceLibrarySaveBridge();
 
 function installWorkspaceLibrarySaveBridge() {
+  ensureWorkspaceLibrarySaveStatusSurface();
+
   const saveButton = document.getElementById("saveWorkspaceButton");
   if (saveButton) {
     saveButton.addEventListener("click", () => {
@@ -44,6 +46,20 @@ function installWorkspaceLibrarySaveBridge() {
   }
 
   installWorkspaceStorageChangeListener();
+}
+
+function ensureWorkspaceLibrarySaveStatusSurface() {
+  if (document.getElementById("workspaceLibrarySaveStatus")) return;
+
+  const saveButton = document.getElementById("saveWorkspaceButton");
+  if (!saveButton) return;
+
+  const status = document.createElement("p");
+  status.id = "workspaceLibrarySaveStatus";
+  status.className = "status-message workspace-library-save-status";
+  status.textContent = "Save Workspace also updates the Workspace Library.";
+
+  saveButton.insertAdjacentElement("afterend", status);
 }
 
 function installWorkspaceStorageChangeListener() {
@@ -64,8 +80,9 @@ function installWorkspaceStorageChangeListener() {
 }
 
 async function scheduleWorkspaceLibrarySaveFromProductionButton() {
+  setProductionSaveStatus("Saving workspace to Workspace Library...");
   await runWorkspaceLibrarySave("save_workspace_button", {
-    statusMessage: "Workspace saved and added to Workspace Library.",
+    statusMessage: "Workspace saved to Workspace Library.",
     continuationNote: "Saved from the end-user Save Workspace action into Workspace Library."
   });
 }
@@ -85,6 +102,7 @@ function scheduleWorkspaceLibraryAutoSave(source) {
 async function runWorkspaceLibrarySave(source, options = {}) {
   if (workspaceLibrarySaveInProgress) {
     pendingWorkspaceLibrarySave = true;
+    setProductionSaveStatus("Workspace Library save is already running; latest changes are queued.");
     return null;
   }
 
@@ -97,6 +115,7 @@ async function runWorkspaceLibrarySave(source, options = {}) {
     const nowMs = Date.now();
 
     if (signature === lastSavedSignature && nowMs - lastSaveStartedAtMs < AUTO_SAVE_MINIMUM_INTERVAL_MS) {
+      setProductionSaveStatus("Workspace Library is already current.");
       return null;
     }
 
@@ -140,7 +159,7 @@ async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
     });
 
     refreshWorkspaceLibraryProductSurface();
-    setProductionSaveStatus(options.statusMessage || "Workspace saved and added to Workspace Library.");
+    setProductionSaveStatus(options.statusMessage || "Workspace saved to Workspace Library.");
     window.dispatchEvent(new CustomEvent("chrome-flow-workspace-library-save-completed", {
       detail: {
         workspaceId: result.workspaceId,
@@ -250,10 +269,17 @@ function refreshWorkspaceLibraryProductSurface() {
 }
 
 function setProductionSaveStatus(message) {
-  const intakeStatus = document.getElementById("intakeStatus");
-  if (!intakeStatus) return;
+  ensureWorkspaceLibrarySaveStatusSurface();
 
-  intakeStatus.textContent = message;
+  const primaryStatus = document.getElementById("workspaceLibrarySaveStatus");
+  if (primaryStatus) {
+    primaryStatus.textContent = message;
+  }
+
+  const intakeStatus = document.getElementById("intakeStatus");
+  if (intakeStatus && message.includes("failed")) {
+    intakeStatus.textContent = message;
+  }
 }
 
 function summarizeError(error) {
