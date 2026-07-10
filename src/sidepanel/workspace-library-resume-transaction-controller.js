@@ -1,4 +1,5 @@
 import { getWorkspaceMemoryRecord } from "../core/workspace-memory-store.js";
+import { CONSTELLATION_PRODUCT_NAME } from "../core/product-identity.js";
 
 import {
   WorkspaceResumeOperationError,
@@ -69,7 +70,7 @@ async function handleTransactionalResumeClick(resumeButton) {
 
     const confirmed = window.confirm(
       "Resume workspace: " + (record.workspace.name || "Untitled Workspace") + "?\n\n"
-      + "Chrome Flow will transactionally reopen " + record.counts.tabs + " saved tab(s), recreate role groups, and use the " + formatTargetMode(resumeGate.restoreTargetMode) + ".\n\n"
+      + CONSTELLATION_PRODUCT_NAME + " will transactionally reopen " + record.counts.tabs + " saved tab(s), recreate role groups, and use the " + formatTargetMode(resumeGate.restoreTargetMode) + ".\n\n"
       + "If resume fails before active-runtime commit, browser tabs and windows created by this operation will be rolled back. Existing browser tabs will not be closed."
     );
 
