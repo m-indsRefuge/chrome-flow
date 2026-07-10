@@ -1,4 +1,6 @@
 import { registerDeveloperSurface } from "./developer-mode.js";
+import "./workspace-archive-close-ownership-controller.js";
+import "./layer2-archive-close-ownership-validation.js";
 
 installWorkspaceSessionProductSurface();
 
