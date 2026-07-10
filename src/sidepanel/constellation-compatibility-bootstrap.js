@@ -11,6 +11,8 @@ import {
   stableStringify
 } from "../core/constellation-storage-compatibility.js";
 
+import "./layer2-2c-compatibility-validation-surface.js";
+
 const MIRRORED_LOCAL_IDENTITIES = Object.freeze([
   STORAGE_IDENTITIES.activeWorkspace,
   STORAGE_IDENTITIES.diagnostics,
