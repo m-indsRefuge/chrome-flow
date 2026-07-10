@@ -11,6 +11,8 @@ import {
   listWorkspacesByLifecycleState
 } from "./session-repository.js";
 
+import { saveRuntimeWorkspaceSnapshotToSessionDb } from "./workspace-snapshot-repository.js";
+
 const WORKSPACE_MEMORY_CONTRACT = Object.freeze({
   layer: "long_term_workspace_memory",
   authority: "Session DB / IndexedDB",
@@ -31,6 +33,7 @@ const WORKSPACE_MEMORY_CONTRACT = Object.freeze({
   notes: [
     "Session DB is long-term memory authority, not live browser authority.",
     "Resume/hydrate actions copy selected memory records into active runtime memory after Operator confirmation.",
+    "Production Workspace Library saves replace snapshot-owned child collections atomically.",
     "Algorithmic and AI layers should read durable workspace context through this memory boundary."
   ]
 });
@@ -45,7 +48,8 @@ async function saveRuntimeWorkspaceSnapshotToMemory(runtimeWorkspace, details = 
 
 async function saveRuntimeWorkspaceToWorkspaceLibrary(runtimeWorkspace, details = {}) {
   const savedAt = details.savedAt || new Date().toISOString();
-  const result = await importLegacyWorkspaceToSessionDb(runtimeWorkspace, {
+  const result = await saveRuntimeWorkspaceSnapshotToSessionDb(runtimeWorkspace, {
+    savedAt,
     lifecycleState: details.lifecycleState || "paused",
     lastPausedAt: details.lastPausedAt || savedAt,
     continuationNote: details.continuationNote || "Saved from the production Save Workspace action into Workspace Library."
@@ -55,6 +59,7 @@ async function saveRuntimeWorkspaceToWorkspaceLibrary(runtimeWorkspace, details 
     ...result,
     savedAt,
     saveMode: "production_save_to_workspace_library",
+    persistenceMode: "exact_atomic_snapshot_replacement",
     productionSave: true,
     workspaceId: result.workspace.workspaceId,
     workspaceName: result.workspace.name,
