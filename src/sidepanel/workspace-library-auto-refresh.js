@@ -1,4 +1,5 @@
 import { appendRuntimeDiagnostic } from "../core/workspace-runtime-store.js";
+import { refreshWorkspaceLibrarySurfaceDirectly } from "./workspace-library-direct-refresh.js";
 
 const SHARED_SAVE_COORDINATOR_KEY = "chromeFlowWorkspaceLibrarySaveCoordinator";
 const AUTO_REFRESH_DEBOUNCE_MS = 220;
@@ -95,46 +96,64 @@ function scheduleAutomaticLibraryRefresh(coordinator, areaName) {
 }
 
 async function refreshWorkspaceLibraryFromSharedRevision(coordinator, areaName) {
-  const refreshButton = document.getElementById("refreshSavedWorkspacesButton");
-  if (!refreshButton) return;
+  try {
+    const refreshResult = await refreshWorkspaceLibrarySurfaceDirectly();
+    if (!refreshResult.refreshed) return;
 
-  invokeInternalLibraryRefresh(refreshButton);
-
-  window.setTimeout(() => {
     applyAutomaticLibraryProductContract();
 
     const status = document.getElementById("savedWorkspaceRegistryStatus");
-    if (status && !/failed|could not|error/i.test(status.textContent || "")) {
+    if (status) {
       status.textContent = "Workspace Library updated automatically.";
     }
-  }, 350);
 
-  await appendRuntimeDiagnostic(
-    "info",
-    "workspace_library_surface_auto_refreshed",
-    "Workspace Library product surface refreshed automatically after a shared durable-save revision.",
-    {
-      contextId: refreshContextId,
-      areaName,
-      workspaceId: coordinator.workspaceId || "",
-      source: coordinator.source || "",
-      savedAt: coordinator.savedAt || "",
-      saveContextId: coordinator.contextId || "",
-      manualRefreshRequired: false,
-      operatorClickRecorded: false,
-      invocationMode: "non_bubbling_internal_refresh_event"
+    await appendRuntimeDiagnostic(
+      "info",
+      "workspace_library_surface_auto_refreshed",
+      "Workspace Library product surface refreshed automatically after a shared durable-save revision.",
+      {
+        contextId: refreshContextId,
+        areaName,
+        workspaceId: coordinator.workspaceId || "",
+        source: coordinator.source || "",
+        savedAt: coordinator.savedAt || "",
+        saveContextId: coordinator.contextId || "",
+        workspaceCount: refreshResult.workspaceCount,
+        activeWorkspaceId: refreshResult.activeWorkspaceId,
+        selectedWorkspaceId: refreshResult.selectedWorkspaceId,
+        currentView: refreshResult.currentView,
+        visibleCount: refreshResult.visibleCount,
+        selectionChanged: refreshResult.selectionChanged === true,
+        manualRefreshRequired: false,
+        operatorClickRecorded: false,
+        invocationMode: "direct_internal_function"
+      }
+    );
+  } catch (error) {
+    const status = document.getElementById("savedWorkspaceRegistryStatus");
+    if (status) {
+      status.textContent = "Workspace Library could not update automatically. Check Developer Diagnostics.";
     }
-  );
-}
 
-function invokeInternalLibraryRefresh(refreshButton) {
-  // Run the already-registered target handler without producing a bubbling
-  // Operator click. The event reaches the refresh control itself, but cannot
-  // reach document-level click diagnostics.
-  refreshButton.dispatchEvent(new Event("click", {
-    bubbles: false,
-    cancelable: false
-  }));
+    await appendRuntimeDiagnostic(
+      "error",
+      "workspace_library_surface_auto_refresh_failed",
+      "Workspace Library product surface could not refresh after a shared durable-save revision.",
+      {
+        contextId: refreshContextId,
+        areaName,
+        workspaceId: coordinator.workspaceId || "",
+        savedAt: coordinator.savedAt || "",
+        manualRefreshRequired: false,
+        operatorClickRecorded: false,
+        invocationMode: "direct_internal_function",
+        error: {
+          name: error?.name || "Error",
+          message: error?.message || String(error)
+        }
+      }
+    );
+  }
 }
 
 function createRevisionSignature(coordinator) {
