@@ -3,6 +3,7 @@ import { appendRuntimeDiagnostic } from "../core/workspace-runtime-store.js";
 const SHARED_SAVE_COORDINATOR_KEY = "chromeFlowWorkspaceLibrarySaveCoordinator";
 const AUTO_REFRESH_DEBOUNCE_MS = 220;
 const LOCAL_SAVE_MEMORY_MS = 10000;
+const AUTOMATIC_LIBRARY_HELP_TEXT = "Browse saved workspaces, preview their structure, and resume a selected workspace through a checked action. The library updates automatically when saved workspace memory changes.";
 
 const refreshContextId = crypto.randomUUID();
 const locallyHandledSavedAt = new Map();
@@ -30,8 +31,8 @@ function applyAutomaticLibraryProductContract() {
 
   const section = document.getElementById("savedWorkspaceRegistrySection");
   const help = section?.querySelector(".section-help");
-  if (help) {
-    help.textContent = "Browse saved workspaces, preview their structure, and resume a selected workspace through a checked action. The library updates automatically when saved workspace memory changes.";
+  if (help && help.textContent !== AUTOMATIC_LIBRARY_HELP_TEXT) {
+    help.textContent = AUTOMATIC_LIBRARY_HELP_TEXT;
   }
 }
 
