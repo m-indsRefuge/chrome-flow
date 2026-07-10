@@ -1,7 +1,8 @@
 import { scheduleWorkspaceProjectionReconciliation } from "../core/automatic-workspace-projection-reconciler.js";
+import { CONSTELLATION_PRODUCT_NAME } from "../core/product-identity.js";
 
 chrome.runtime.onInstalled.addListener(() => {
-  console.log("Chrome Flow installed.");
+  console.log(CONSTELLATION_PRODUCT_NAME + " installed.");
 
   chrome.sidePanel
     .setPanelBehavior({
