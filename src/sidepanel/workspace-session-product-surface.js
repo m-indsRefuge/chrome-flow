@@ -6,6 +6,7 @@ import "./legacy-archive-projection-cleanup.js";
 import "./layer2-legacy-archive-projection-validation.js";
 import "./layer2-hardening-regression-evidence-guard.js";
 import "./layer2-hardening-regression-harness.js";
+import "./layer2-hardening-correlation-completeness.js";
 
 installWorkspaceSessionProductSurface();
 
