@@ -8,7 +8,8 @@ import {
   getWorkspaceTimelineEvents,
   importLegacyWorkspaceToSessionDb,
   listWorkspaceRecords,
-  listWorkspacesByLifecycleState
+  listWorkspacesByLifecycleState,
+  setActiveWorkspaceId
 } from "./session-repository.js";
 
 import { saveRuntimeWorkspaceSnapshotToSessionDb } from "./workspace-snapshot-repository.js";
@@ -55,12 +56,16 @@ async function saveRuntimeWorkspaceToWorkspaceLibrary(runtimeWorkspace, details 
     continuationNote: details.continuationNote || "Saved from the production Save Workspace action into Workspace Library."
   });
 
+  await setActiveWorkspaceId(result.workspace.workspaceId);
+
   return {
     ...result,
     savedAt,
     saveMode: "production_save_to_workspace_library",
     persistenceMode: "exact_atomic_snapshot_replacement",
     productionSave: true,
+    activeWorkspaceSettingUpdated: true,
+    durableActiveWorkspaceId: result.workspace.workspaceId,
     workspaceId: result.workspace.workspaceId,
     workspaceName: result.workspace.name,
     counts: {
