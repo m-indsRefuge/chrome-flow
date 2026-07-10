@@ -7,8 +7,9 @@ import {
 } from "./legacy-archive-projection-cleanup.js";
 
 const MAX_DIAGNOSTICS_TO_SCAN = 250;
-const PACKET_SCHEMA = "layer2-legacy-archive-projection-validation-packet-v0.2";
+const PACKET_SCHEMA = "layer2-legacy-archive-projection-validation-packet-v0.3";
 const DEFAULT_SEVERITY = "layer2_1g_legacy_cleanup";
+const VALIDATION_EVIDENCE_KEY = "chromeFlowLayer21GLegacyProjectionValidation";
 
 installLegacyArchiveProjectionValidationSurface();
 
@@ -104,8 +105,7 @@ async function runControlledPartialCleanupTest() {
         && result.summary.failedVerificationCount === 1
     };
     const passed = Object.values(assertions).every(Boolean);
-
-    await appendRuntimeDiagnostic(
+    const evidence = createEvidenceRecord(
       passed ? "info" : "error",
       "layer2_legacy_archive_projection_cleanup_test_completed",
       "Layer 2.1G controlled legacy partial-restore projection cleanup test completed.",
@@ -119,13 +119,31 @@ async function runControlledPartialCleanupTest() {
       }
     );
 
+    await persistValidationEvidence({ controlledTest: evidence });
+    await appendRuntimeDiagnostic(
+      evidence.level,
+      evidence.action,
+      evidence.message,
+      evidence.details
+    );
+
     setStatus(passed
       ? "Controlled partial cleanup passed. Skipped and failed legacy tabs contain no live Chrome identifiers."
       : "Controlled partial cleanup needs attention. Do not run a normal legacy restore yet.");
   } catch (error) {
-    await appendRuntimeDiagnostic("error", "layer2_legacy_archive_projection_cleanup_test_failed", "Layer 2.1G controlled cleanup test failed unexpectedly.", {
-      error: summarizeError(error)
-    });
+    const failureEvidence = createEvidenceRecord(
+      "error",
+      "layer2_legacy_archive_projection_cleanup_test_failed",
+      "Layer 2.1G controlled cleanup test failed unexpectedly.",
+      { error: summarizeError(error) }
+    );
+    await persistValidationEvidence({ controlledTestFailure: failureEvidence });
+    await appendRuntimeDiagnostic(
+      failureEvidence.level,
+      failureEvidence.action,
+      failureEvidence.message,
+      failureEvidence.details
+    );
     setStatus("Controlled cleanup test failed unexpectedly. Inspect Developer Diagnostics.");
   } finally {
     setButtonsDisabled(false);
@@ -150,7 +168,9 @@ async function prepareLegacyProjectionCleanupPacket() {
       status: packet.validation.status,
       passedCheckCount: packet.validation.passedCheckCount,
       warningCheckCount: packet.validation.warningCheckCount,
-      failedCheckCount: packet.validation.failedCheckCount
+      failedCheckCount: packet.validation.failedCheckCount,
+      controlledEvidenceSource: packet.evidenceSources.controlledTest,
+      liveCleanupEvidenceSource: packet.evidenceSources.liveCleanup
     });
   } catch (error) {
     await appendRuntimeDiagnostic("error", "layer2_legacy_archive_projection_validation_packet_failed", "Layer 2.1G legacy cleanup packet preparation failed.", {
@@ -178,14 +198,19 @@ async function copyLegacyProjectionCleanupPacket() {
 }
 
 async function buildLegacyProjectionCleanupPacket() {
-  const [workspace, allDiagnostics] = await Promise.all([
+  const [workspace, allDiagnostics, storedEvidence] = await Promise.all([
     getWorkspace(),
-    getRuntimeDiagnostics()
+    getRuntimeDiagnostics(),
+    getStoredValidationEvidence()
   ]);
   const diagnostics = allDiagnostics.slice(-MAX_DIAGNOSTICS_TO_SCAN);
-  const controlledTest = findLatestDiagnostic(diagnostics, "layer2_legacy_archive_projection_cleanup_test_completed");
-  const liveCleanup = findLatestDiagnostic(diagnostics, "legacy_archive_projection_cleanup_applied");
-  const cleanupFailure = findLatestDiagnostic(diagnostics, "legacy_archive_projection_cleanup_failed");
+  const diagnosticControlledTest = findLatestDiagnostic(diagnostics, "layer2_legacy_archive_projection_cleanup_test_completed");
+  const diagnosticLiveCleanup = findLatestDiagnostic(diagnostics, "legacy_archive_projection_cleanup_applied");
+  const controlledTest = selectNewestEvidence(diagnosticControlledTest, storedEvidence.controlledTest);
+  const liveCleanup = selectNewestEvidence(diagnosticLiveCleanup, buildLiveCleanupEvidenceFromWorkspace(workspace));
+  const cleanupFailure = findLatestDiagnostic(diagnostics, "legacy_archive_projection_cleanup_failed")
+    || storedEvidence.cleanupFailure
+    || null;
   const checks = buildChecks({ controlledTest, liveCleanup, cleanupFailure, workspace });
   const failedChecks = checks.filter((check) => check.status === "fail");
   const warningChecks = checks.filter((check) => check.status === "warn");
@@ -203,7 +228,8 @@ async function buildLegacyProjectionCleanupPacket() {
       developerOnly: true,
       controlledTestBrowserMutation: false,
       unifiedWorkspaceLibraryResumeChanged: false,
-      activeRuntimeAuthority: "chrome.storage.local"
+      activeRuntimeAuthority: "chrome.storage.local",
+      validationEvidenceAuthority: "dedicated local validation evidence with diagnostic fallback"
     },
     policy: {
       cleanupVersion: CLEANUP_VERSION,
@@ -226,6 +252,18 @@ async function buildLegacyProjectionCleanupPacket() {
       warningChecks
     },
     activeWorkspace: summarizeWorkspace(workspace),
+    evidenceSources: {
+      controlledTest: diagnosticControlledTest
+        ? "runtime_diagnostics"
+        : storedEvidence.controlledTest
+          ? "dedicated_local_validation_evidence"
+          : "missing",
+      liveCleanup: diagnosticLiveCleanup
+        ? "runtime_diagnostics"
+        : liveCleanup
+          ? "active_workspace_cleanup_metadata"
+          : "missing"
+    },
     evidence: {
       controlledTest: summarizeDiagnostic(controlledTest),
       liveCleanup: summarizeDiagnostic(liveCleanup),
@@ -239,6 +277,7 @@ async function buildLegacyProjectionCleanupPacket() {
           : "run_one_normal_developer_mode_legacy_restore_then_prepare_packet_again",
       notes: [
         "The controlled test proves partial-restore cleanup without opening or closing browser tabs.",
+        "Controlled validation evidence is stored under a dedicated local key so concurrent diagnostic writes cannot erase the test result.",
         "Full acceptance also requires one normal Developer Mode legacy archive restore so the storage-change compatibility adapter is exercised.",
         "Unified Workspace Library Resume is not modified by this compatibility adapter."
       ]
@@ -323,6 +362,79 @@ function summarizeWorkspace(workspace) {
   };
 }
 
+async function getStoredValidationEvidence() {
+  const result = await chrome.storage.local.get(VALIDATION_EVIDENCE_KEY);
+  const stored = result?.[VALIDATION_EVIDENCE_KEY];
+  return stored && typeof stored === "object" ? stored : {};
+}
+
+async function persistValidationEvidence(partialEvidence) {
+  const current = await getStoredValidationEvidence();
+  await chrome.storage.local.set({
+    [VALIDATION_EVIDENCE_KEY]: {
+      ...current,
+      ...cloneValue(partialEvidence),
+      updatedAt: new Date().toISOString()
+    }
+  });
+}
+
+function buildLiveCleanupEvidenceFromWorkspace(workspace) {
+  const metadata = workspace?.legacyArchiveProjectionCleanup;
+  if (!metadata || metadata.version !== CLEANUP_VERSION || !metadata.restoreEventId) return null;
+
+  const reopenedVerifiedCount = Number(metadata.reopenedVerifiedCount || 0);
+  const notReopenedClearedCount = Number(metadata.notReopenedClearedCount || 0);
+  const failedVerificationCount = Number(metadata.failedVerificationCount || 0);
+
+  return createEvidenceRecord(
+    failedVerificationCount > 0 ? "warn" : "info",
+    "legacy_archive_projection_cleanup_applied",
+    "Legacy archive restore live projection identifiers were normalized before continued runtime use.",
+    {
+      source: "active_workspace_cleanup_metadata",
+      cleanupVersion: metadata.version,
+      workspaceId: workspace.workspaceId || "",
+      restoreEventId: metadata.restoreEventId,
+      archiveId: metadata.archiveId || "",
+      summary: {
+        applicable: true,
+        cleanupVersion: metadata.version,
+        restoreEventId: metadata.restoreEventId,
+        tabCount: reopenedVerifiedCount + notReopenedClearedCount + failedVerificationCount,
+        intendedReopenedCount: reopenedVerifiedCount + failedVerificationCount,
+        reopenedVerifiedCount,
+        notReopenedClearedCount,
+        failedVerificationCount,
+        staleIdentifierCountAfterCleanup: Number(metadata.staleIdentifierCountAfterCleanup || 0)
+      },
+      activeRuntimeAuthority: "chrome.storage.local",
+      unifiedWorkspaceLibraryResumeChanged: false
+    },
+    metadata.appliedAt || new Date().toISOString()
+  );
+}
+
+function selectNewestEvidence(primary, fallback) {
+  if (!primary) return fallback || null;
+  if (!fallback) return primary;
+
+  return new Date(primary.createdAt || 0) >= new Date(fallback.createdAt || 0)
+    ? primary
+    : fallback;
+}
+
+function createEvidenceRecord(level, action, message, details, createdAt = new Date().toISOString()) {
+  return {
+    diagnosticId: crypto.randomUUID(),
+    createdAt,
+    level,
+    action,
+    message,
+    details: cloneValue(details || {})
+  };
+}
+
 function findLatestDiagnostic(diagnostics, action) {
   return [...diagnostics].reverse().find((diagnostic) => diagnostic?.action === action) || null;
 }
@@ -366,6 +478,10 @@ function buildClipboardEnvelope(jsonText) {
     "",
     "CHROME_FLOW_PACKET_END"
   ].join("\n");
+}
+
+function cloneValue(value) {
+  return JSON.parse(JSON.stringify(value));
 }
 
 function summarizeError(error) {
