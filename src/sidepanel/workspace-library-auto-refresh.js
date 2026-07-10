@@ -98,7 +98,7 @@ async function refreshWorkspaceLibraryFromSharedRevision(coordinator, areaName) 
   const refreshButton = document.getElementById("refreshSavedWorkspacesButton");
   if (!refreshButton) return;
 
-  refreshButton.click();
+  invokeInternalLibraryRefresh(refreshButton);
 
   window.setTimeout(() => {
     applyAutomaticLibraryProductContract();
@@ -120,9 +120,26 @@ async function refreshWorkspaceLibraryFromSharedRevision(coordinator, areaName) 
       source: coordinator.source || "",
       savedAt: coordinator.savedAt || "",
       saveContextId: coordinator.contextId || "",
-      manualRefreshRequired: false
+      manualRefreshRequired: false,
+      operatorClickRecorded: false
     }
   );
+}
+
+function invokeInternalLibraryRefresh(refreshButton) {
+  // The saved-workspace registry registered its target listener before this
+  // module loaded. That listener performs the refresh first. This one-shot
+  // target listener then stops only the synthetic compatibility click from
+  // bubbling into document-level Operator click diagnostics.
+  refreshButton.addEventListener(
+    "click",
+    (event) => {
+      event.stopPropagation();
+    },
+    { once: true }
+  );
+
+  refreshButton.click();
 }
 
 function createRevisionSignature(coordinator) {
