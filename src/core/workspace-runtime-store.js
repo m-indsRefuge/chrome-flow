@@ -5,9 +5,14 @@ import {
   saveWorkspace
 } from "./workspace-store.js";
 
+import {
+  appendDiagnosticEvent,
+  clearDiagnosticEvents,
+  getDiagnosticEvents,
+  reconcileDiagnosticEventRing
+} from "./diagnostic-event-store.js";
+
 const WORKSPACE_ARCHIVE_KEY = "chromeFlowWorkspaceArchive";
-const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
-const MAX_DIAGNOSTICS = 200;
 
 const WORKSPACE_RUNTIME_CONTRACT = Object.freeze({
   layer: "active_runtime_memory",
@@ -63,21 +68,21 @@ async function saveLegacyRuntimeArchiveRecords(archives) {
 }
 
 async function getRuntimeDiagnostics() {
-  const result = await chrome.storage.local.get(DIAGNOSTICS_KEY);
-  return Array.isArray(result[DIAGNOSTICS_KEY]) ? result[DIAGNOSTICS_KEY] : [];
+  return getDiagnosticEvents();
 }
 
 async function appendRuntimeDiagnostic(level, action, message, details = {}) {
-  const diagnostics = await getRuntimeDiagnostics();
-  diagnostics.push({
-    diagnosticId: crypto.randomUUID(),
-    createdAt: new Date().toISOString(),
-    level,
-    action,
-    message,
-    details
-  });
-  await chrome.storage.local.set({ [DIAGNOSTICS_KEY]: diagnostics.slice(-MAX_DIAGNOSTICS) });
+  const diagnostic = await appendDiagnosticEvent(level, action, message, details);
+  await reconcileDiagnosticEventRing();
+  return diagnostic;
+}
+
+async function clearRuntimeDiagnostics() {
+  return clearDiagnosticEvents();
+}
+
+async function reconcileRuntimeDiagnostics() {
+  return reconcileDiagnosticEventRing();
 }
 
 async function getRuntimeMemorySummary() {
@@ -115,10 +120,12 @@ export {
   appendActiveWorkspaceJournalEntry,
   appendActiveWorkspaceTimelineEvent,
   appendRuntimeDiagnostic,
+  clearRuntimeDiagnostics,
   getActiveWorkspaceRuntime,
   getLegacyRuntimeArchiveRecords,
   getRuntimeDiagnostics,
   getRuntimeMemorySummary,
+  reconcileRuntimeDiagnostics,
   saveActiveWorkspaceRuntime,
   saveLegacyRuntimeArchiveRecords
 };
