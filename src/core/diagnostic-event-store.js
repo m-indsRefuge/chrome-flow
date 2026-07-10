@@ -1,12 +1,15 @@
 const LEGACY_DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const DIAGNOSTIC_EVENT_PREFIX = "chromeFlowDiagnosticEvent:";
 const MAX_DIAGNOSTICS = 200;
+const HARDENING_SOURCE_PREFIX = "layer2_1h_";
+const HARDENING_CORRELATION_WINDOW_MS = 30000;
 
 let diagnosticWriteQueue = Promise.resolve();
 
 function appendDiagnosticEvent(level, action, message, details = {}) {
   const operation = diagnosticWriteQueue.then(async () => {
-    const diagnostic = createDiagnosticEvent(level, action, message, details);
+    const correlatedDetails = await resolveDiagnosticCorrelation(action, details);
+    const diagnostic = createDiagnosticEvent(level, action, message, correlatedDetails);
     await chrome.storage.local.set({
       [DIAGNOSTIC_EVENT_PREFIX + diagnostic.diagnosticId]: diagnostic
     });
@@ -74,6 +77,69 @@ async function pruneDiagnosticEventShards() {
   if (obsoleteKeys.length) {
     await chrome.storage.local.remove(obsoleteKeys);
   }
+}
+
+async function resolveDiagnosticCorrelation(action, details = {}) {
+  const normalizedDetails = sanitizeValue(details) || {};
+
+  if (hasExplicitCorrelation(normalizedDetails)) {
+    return normalizedDetails;
+  }
+
+  if (
+    action !== "workspace_resume_operation_blocked"
+    || !String(normalizedDetails.source || "").startsWith(HARDENING_SOURCE_PREFIX)
+  ) {
+    return normalizedDetails;
+  }
+
+  const activeRun = await findRecentHardeningRunCorrelation();
+  if (!activeRun) return normalizedDetails;
+
+  return {
+    ...normalizedDetails,
+    correlationId: activeRun.regressionRunId,
+    regressionRunId: activeRun.regressionRunId,
+    correlationResolution: "inferred_from_active_layer2_1h_regression_run",
+    correlationEvidenceDiagnosticId: activeRun.diagnosticId
+  };
+}
+
+async function findRecentHardeningRunCorrelation() {
+  const diagnostics = await getDiagnosticEvents();
+  const cutoff = Date.now() - HARDENING_CORRELATION_WINDOW_MS;
+
+  for (let index = diagnostics.length - 1; index >= 0; index -= 1) {
+    const diagnostic = diagnostics[index];
+    const createdAtMs = Date.parse(diagnostic?.createdAt || "");
+    if (!Number.isFinite(createdAtMs) || createdAtMs < cutoff) continue;
+
+    const regressionRunId = String(diagnostic?.details?.regressionRunId || "");
+    if (!regressionRunId) continue;
+
+    const action = String(diagnostic?.action || "");
+    if (
+      action === "layer2_1h_concurrent_write_probe"
+      || action === "layer2_hardening_regression_case_completed"
+      || action === "layer2_hardening_regression_case_failed"
+    ) {
+      return {
+        regressionRunId,
+        diagnosticId: diagnostic.diagnosticId || ""
+      };
+    }
+  }
+
+  return null;
+}
+
+function hasExplicitCorrelation(details = {}) {
+  return Boolean(
+    details.correlationId
+    || details.regressionRunId
+    || details.operationId
+    || details.traceId
+  );
 }
 
 function createDiagnosticEvent(level, action, message, details) {
