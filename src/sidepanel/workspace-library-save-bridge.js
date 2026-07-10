@@ -8,6 +8,7 @@ const WORKSPACE_STORAGE_KEY = "chromeFlowWorkspace";
 const SAVE_SETTLE_DELAY_MS = 450;
 const AUTO_SAVE_DEBOUNCE_MS = 900;
 const AUTO_SAVE_MINIMUM_INTERVAL_MS = 1500;
+const LEGACY_IMPORT_EVENT_TYPE = "legacy_workspace_imported_to_session_db";
 const MEANINGFUL_WORKSPACE_EVENT_TYPES = new Set([
   "selected_tabs_added",
   "active_tab_added",
@@ -146,6 +147,7 @@ async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
       lifecycleState: "paused",
       continuationNote: options.continuationNote || "Saved from the end-user Save Workspace action into Workspace Library."
     });
+    const snapshotIdentity = createSnapshotIdentity(runtimeWorkspace, result);
 
     await appendRuntimeDiagnostic("info", "workspace_saved_to_workspace_library", "Active workspace saved to Workspace Library from production runtime path.", {
       source,
@@ -159,6 +161,7 @@ async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
       tabCount: result.counts.tabs,
       journalEntryCount: result.counts.journalEntries,
       timelineEventCount: result.counts.timelineEvents,
+      snapshotIdentity,
       replacementStats: result.replacementStats,
       sessionDbRuntimeSourceOfTruth: result.bridgeStatus.sessionDbRuntimeSourceOfTruth,
       activeWorkspaceRuntimeSource: result.bridgeStatus.activeWorkspaceRuntimeSource,
@@ -174,6 +177,7 @@ async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
         savedAt,
         source,
         persistenceMode: result.persistenceMode,
+        snapshotIdentity,
         replacementStats: result.replacementStats
       }
     }));
@@ -187,6 +191,25 @@ async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
     setProductionSaveStatus("Workspace saved locally, but Workspace Library save failed. Check Developer Diagnostics.");
     return null;
   }
+}
+
+function createSnapshotIdentity(runtimeWorkspace, result) {
+  const tabs = Array.isArray(runtimeWorkspace?.tabs) ? runtimeWorkspace.tabs : [];
+  const journal = Array.isArray(runtimeWorkspace?.journal) ? runtimeWorkspace.journal : [];
+  const timeline = Array.isArray(runtimeWorkspace?.timeline) ? runtimeWorkspace.timeline : [];
+
+  return {
+    workspaceId: result.workspaceId,
+    workspaceTabIds: sortUniqueStrings(tabs.map((tab) => tab?.workspaceTabId)),
+    journalEntryIds: sortUniqueStrings(journal.map((entry) => entry?.entryId || entry?.journalEntryId)),
+    timelineEventIds: sortUniqueStrings(
+      timeline
+        .filter((event) => event?.type !== LEGACY_IMPORT_EVENT_TYPE)
+        .map((event) => event?.eventId)
+    ),
+    sessionId: result.session?.sessionId || "",
+    projectionId: result.projection?.projectionId || ""
+  };
 }
 
 function inferAutoSaveSource(newWorkspace, oldWorkspace) {
@@ -279,6 +302,10 @@ function tabProjectionSignature(tabs) {
   ].join(":"))
     .sort()
     .join("|");
+}
+
+function sortUniqueStrings(values) {
+  return Array.from(new Set(values.filter((value) => typeof value === "string" && value))).sort();
 }
 
 function refreshWorkspaceLibraryProductSurface() {
