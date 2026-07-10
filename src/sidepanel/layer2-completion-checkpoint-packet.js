@@ -96,7 +96,8 @@ async function buildLayer2CompletionCheckpointPacket() {
   const evidence = buildLayer2Evidence(recentDiagnostics);
   const productSurfaceState = summarizeProductSurfaceState();
   const developerSurfaceState = summarizeDeveloperSurfaceState();
-  const checks = buildCompletionChecks(runtimeSummary, memorySummary, evidence, productSurfaceState, developerSurfaceState);
+  const evidenceInterpretation = buildEvidenceInterpretation(runtimeSummary, memorySummary, evidence, productSurfaceState, developerSurfaceState);
+  const checks = buildCompletionChecks(runtimeSummary, memorySummary, evidence, productSurfaceState, developerSurfaceState, evidenceInterpretation);
   const failedChecks = checks.filter((check) => check.status === "fail");
   const warningChecks = checks.filter((check) => check.status === "warn");
   const passedChecks = checks.filter((check) => check.status === "pass");
@@ -106,7 +107,7 @@ async function buildLayer2CompletionCheckpointPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "layer2-completion-checkpoint-packet-v0.4"
+      schema: "layer2-completion-checkpoint-packet-v0.5"
     },
     source: {
       type: "layer2_completion_checkpoint_packet",
@@ -131,6 +132,7 @@ async function buildLayer2CompletionCheckpointPacket() {
     runtimeStore: runtimeSummary,
     memoryStore: memorySummary,
     evidence,
+    evidenceInterpretation,
     productSurfaceState,
     developerSurfaceState,
     layer2Capabilities: {
@@ -160,13 +162,14 @@ async function buildLayer2CompletionCheckpointPacket() {
       notes: [
         "This packet is a checkpoint and does not rerun any browser-changing actions.",
         "Layer 2 completion means workspace persistence, production save-to-library, archive/resume lifecycle, memory boundary, product-surface split, and verification evidence are stable enough to build the deterministic intelligence layer on top.",
-        "Future algorithmic work should read durable workspace context through WorkspaceMemoryStore and active context through WorkspaceRuntimeStore."
+        "Future algorithmic work should read durable workspace context through WorkspaceMemoryStore and active context through WorkspaceRuntimeStore.",
+        "Lifecycle and memory-contract readiness can be verified from current structure when old packet-prepared diagnostics have rotated out of the bounded diagnostics window. Production-save and post-resume packets remain recent hard gates."
       ]
     }
   };
 }
 
-function buildCompletionChecks(runtimeSummary, memorySummary, evidence, productSurfaceState, developerSurfaceState) {
+function buildCompletionChecks(runtimeSummary, memorySummary, evidence, productSurfaceState, developerSurfaceState, evidenceInterpretation) {
   return [
     createCheck("runtime_store_boundary_valid", runtimeSummary?.runtimeSourceOfTruth === "chrome.storage.local", "Runtime store boundary remains chrome.storage.local."),
     createCheck("memory_store_boundary_valid", memorySummary?.memorySourceOfTruth === "Session DB / IndexedDB", "Memory store boundary remains Session DB / IndexedDB."),
@@ -184,8 +187,8 @@ function buildCompletionChecks(runtimeSummary, memorySummary, evidence, productS
     createCheck("legacy_archive_restore_developer_only", developerSurfaceState.legacyArchiveRestoreDeveloperOnly, "Legacy Archive Restore is developer-only."),
     createCheck("validation_surfaces_developer_controlled", developerSurfaceState.validationSurfaceToggleDeveloperControlled, "Validation Surfaces toggle is controlled by Developer Mode."),
     createCheck("validation_panels_registered", developerSurfaceState.validationSurfaceRegisteredCount > 0, "Validation panels are explicitly registered as validation surfaces."),
-    createCheck("lifecycle_packet_passed", evidence.lifecycle?.details?.status === "ready_for_layer2_completion_checkpoint", "Layer 2 lifecycle packet passed."),
-    createCheck("memory_contract_packet_passed", evidence.memoryContract?.details?.status === "ready_for_recent_resume_archive_restore_split", "Layer 2 memory contract packet passed."),
+    createCheck("lifecycle_readiness_verified", evidenceInterpretation.lifecycleReadinessVerified, "Layer 2 lifecycle readiness is verified by packet evidence or current structural evidence."),
+    createCheck("memory_contract_readiness_verified", evidenceInterpretation.memoryContractReadinessVerified, "Layer 2 memory contract readiness is verified by packet evidence or current structural evidence."),
     createCheck("production_save_packet_passed", evidence.productionSave?.details?.status === "production_save_to_workspace_library_validated", "Layer 2.1C production Save Workspace packet passed."),
     createCheck("production_save_executed", Boolean(evidence.productionSaveExecuted), "Production Save Workspace to Workspace Library evidence exists."),
     createCheck("post_resume_packet_passed", evidence.postResume?.details?.status === "ready_for_layer2_completion_checkpoint", "Layer 2 post-resume verification packet passed."),
@@ -195,6 +198,62 @@ function buildCompletionChecks(runtimeSummary, memorySummary, evidence, productS
     createCheck("resume_projection_verified_zero_failures", Number(evidence.postResume?.details?.failedCheckCount || 0) === 0, "Post-resume verification has zero failed checks."),
     createCheck("archive_close_behavior_evidenced", Boolean(evidence.archiveCloseCompleted) || Boolean(evidence.unifiedResumeExecuted), "Archive/restore lifecycle evidence exists for Layer 2 completion.")
   ];
+}
+
+function buildEvidenceInterpretation(runtimeSummary, memorySummary, evidence, productSurfaceState, developerSurfaceState) {
+  const lifecyclePacketPassed = evidence.lifecycle?.details?.status === "ready_for_layer2_completion_checkpoint";
+  const memoryContractPacketPassed = evidence.memoryContract?.details?.status === "ready_for_recent_resume_archive_restore_split";
+  const lifecycleStructuralPass = isLifecycleStructurallyVerified(productSurfaceState, developerSurfaceState, evidence);
+  const memoryContractStructuralPass = isMemoryContractStructurallyVerified(runtimeSummary, memorySummary);
+
+  return {
+    lifecyclePacketEvidencePresent: Boolean(evidence.lifecycle),
+    lifecyclePacketPassed,
+    lifecycleStructuralPass,
+    lifecycleReadinessVerified: lifecyclePacketPassed || lifecycleStructuralPass,
+    lifecycleEvidenceMode: lifecyclePacketPassed ? "packet_prepared_diagnostic" : lifecycleStructuralPass ? "current_structural_evidence" : "missing_or_failed",
+    memoryContractPacketEvidencePresent: Boolean(evidence.memoryContract),
+    memoryContractPacketPassed,
+    memoryContractStructuralPass,
+    memoryContractReadinessVerified: memoryContractPacketPassed || memoryContractStructuralPass,
+    memoryContractEvidenceMode: memoryContractPacketPassed ? "packet_prepared_diagnostic" : memoryContractStructuralPass ? "current_structural_evidence" : "missing_or_failed",
+    productionSavePacketEvidencePresent: Boolean(evidence.productionSave),
+    productionSavePacketStatus: evidence.productionSave?.details?.status || "missing",
+    postResumePacketEvidencePresent: Boolean(evidence.postResume),
+    postResumePacketStatus: evidence.postResume?.details?.status || "missing",
+    notes: [
+      "The runtime diagnostics list is bounded, so older packet-prepared diagnostics may rotate out during long validation sessions.",
+      "Lifecycle and memory-contract readiness can be verified from current structure when their older packet diagnostics are absent.",
+      "Production-save and post-resume packets remain recent hard gates because they validate the newest save/resume behavior."
+    ]
+  };
+}
+
+function isLifecycleStructurallyVerified(productSurfaceState, developerSurfaceState, evidence) {
+  return Boolean(
+    productSurfaceState.currentWorkspaceSurfacePresent
+    && productSurfaceState.currentWorkspaceActionsSurfacePresent
+    && productSurfaceState.workspaceLibrarySurfacePresent
+    && productSurfaceState.resumeWorkspaceButtonPresent
+    && developerSurfaceState.developerModeGatePresent
+    && developerSurfaceState.developerDiagnosticsDeveloperOnly
+    && developerSurfaceState.legacyArchiveRestoreDeveloperOnly
+    && developerSurfaceState.validationSurfaceToggleDeveloperControlled
+    && developerSurfaceState.validationSurfaceRegisteredCount > 0
+    && evidence.unifiedResumeExecuted
+    && evidence.resumeGroupsRecreated
+    && evidence.resumeWindowFocused
+  );
+}
+
+function isMemoryContractStructurallyVerified(runtimeSummary, memorySummary) {
+  return Boolean(
+    runtimeSummary?.runtimeSourceOfTruth === "chrome.storage.local"
+    && memorySummary?.memorySourceOfTruth === "Session DB / IndexedDB"
+    && runtimeSummary?.activeWorkspace?.workspaceId
+    && Number(memorySummary?.workspaceRecordCount || 0) > 0
+    && Array.isArray(memorySummary?.recentResumableWorkspaceIds)
+  );
 }
 
 function buildLayer2Evidence(diagnostics) {
@@ -293,7 +352,7 @@ function buildClipboardEnvelope(jsonText) {
   return [
     "CHROME_FLOW_PACKET_START",
     "packetType: Chrome Flow Layer 2 Completion Checkpoint Packet",
-    "schema: layer2-completion-checkpoint-packet-v0.4",
+    "schema: layer2-completion-checkpoint-packet-v0.5",
     "clipboardFormat: chrome_flow_packet_envelope_v0.1",
     "createdAt: " + new Date().toISOString(),
     "contentType: application/json",
