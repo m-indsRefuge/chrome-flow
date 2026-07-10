@@ -31,7 +31,7 @@ function installLayer2ResumeTransactionValidationSurface() {
   section.className = "layer2-resume-transaction-validation-section";
   section.innerHTML = `
     <h2>Layer 2.1E Resume Transaction Safety</h2>
-    <p class="section-help">Developer-only controlled validation for duplicate-resume blocking and rollback before active-runtime commit. The rollback test temporarily opens one saved tab and then removes it automatically.</p>
+    <p class="section-help">Developer-only controlled validation for duplicate-resume blocking, background provisional-tab rollback, browser-focus preservation, and rollback before active-runtime commit.</p>
     <div class="workspace-session-actions">
       <button id="runLayer2ResumeDuplicateGuardTestButton" type="button" class="secondary-button">Run Duplicate Guard Test</button>
       <button id="runLayer2ResumeRollbackTestButton" type="button" class="secondary-button">Run Controlled Rollback Test</button>
@@ -53,17 +53,10 @@ function installLayer2ResumeTransactionValidationSurface() {
 
 async function runDuplicateGuardTest() {
   const workspaceId = getSelectedWorkspaceId();
-
-  if (!workspaceId) {
-    setStatus("Select a saved workspace in Workspace Library first.");
-    return;
-  }
+  if (!workspaceId) return setStatus("Select a saved workspace in Workspace Library first.");
 
   const record = await getWorkspaceMemoryRecord(workspaceId);
-  if (!record) {
-    setStatus("Selected saved workspace could not be loaded.");
-    return;
-  }
+  if (!record) return setStatus("Selected saved workspace could not be loaded.");
 
   setTestButtonsDisabled(true);
   setStatus("Running duplicate guard test. No browser tab should be opened.");
@@ -86,18 +79,15 @@ async function runDuplicateGuardTest() {
       testFailureBeforeBrowserMutation: true
     }).catch((error) => error);
 
-    const [firstResult, secondResult] = await Promise.all([
-      firstOperation,
-      secondOperation
-    ]);
-
+    const [firstResult, secondResult] = await Promise.all([firstOperation, secondOperation]);
     const firstControlled = firstResult instanceof WorkspaceResumeOperationError
       && firstResult.code === "resume_controlled_validation_failure";
     const secondBlocked = secondResult instanceof WorkspaceResumeOperationError
       && secondResult.code === "resume_operation_in_progress";
+    const passed = firstControlled && secondBlocked;
 
     await appendRuntimeDiagnostic(
-      firstControlled && secondBlocked ? "info" : "error",
+      passed ? "info" : "error",
       "layer2_resume_duplicate_guard_test_completed",
       "Layer 2.1E duplicate resume guard test completed.",
       {
@@ -106,11 +96,11 @@ async function runDuplicateGuardTest() {
         secondOperationBlocked: secondBlocked,
         firstOperationCode: firstResult?.code || "",
         secondOperationCode: secondResult?.code || "",
-        passed: firstControlled && secondBlocked
+        passed
       }
     );
 
-    setStatus(firstControlled && secondBlocked
+    setStatus(passed
       ? "Duplicate guard test passed. Second resume was blocked before browser mutation."
       : "Duplicate guard test needs attention. Prepare the packet and inspect diagnostics.");
   } finally {
@@ -120,21 +110,15 @@ async function runDuplicateGuardTest() {
 
 async function runControlledRollbackTest() {
   const workspaceId = getSelectedWorkspaceId();
-
-  if (!workspaceId) {
-    setStatus("Select a saved workspace in Workspace Library first.");
-    return;
-  }
+  if (!workspaceId) return setStatus("Select a saved workspace in Workspace Library first.");
 
   const record = await getWorkspaceMemoryRecord(workspaceId);
-  if (!record) {
-    setStatus("Selected saved workspace could not be loaded.");
-    return;
-  }
+  if (!record) return setStatus("Selected saved workspace could not be loaded.");
 
   const activeBefore = await getActiveWorkspaceRuntime();
+  const focusBefore = await captureActiveBrowserFocus();
   setTestButtonsDisabled(true);
-  setStatus("Running controlled rollback test. One provisional tab may appear briefly and must be removed automatically.");
+  setStatus("Running controlled rollback test. One background provisional tab will be created and removed without changing your active browser tab.");
 
   try {
     let result = null;
@@ -144,6 +128,7 @@ async function runControlledRollbackTest() {
         source: "layer2_1e_controlled_rollback",
         validationMode: VALIDATION_MODE,
         bypassAlreadyActiveGuard: true,
+        keepCreatedTabsInBackground: true,
         testFailureAfterOpenedTabCount: 1
       });
     } catch (error) {
@@ -151,15 +136,19 @@ async function runControlledRollbackTest() {
     }
 
     const activeAfter = await getActiveWorkspaceRuntime();
+    const focusAfter = await captureActiveBrowserFocus();
     const rollback = result?.details?.rollback || null;
     const controlledFailure = result instanceof WorkspaceResumeOperationError
       && result.code === "resume_controlled_validation_failure";
     const runtimePreserved = activeAfter?.workspaceId === activeBefore?.workspaceId;
+    const browserFocusPreserved = sameBrowserFocus(focusBefore, focusAfter);
     const passed = controlledFailure
       && rollback?.complete === true
+      && rollback?.focusRestored === true
       && rollback.createdTabIds?.length === 1
       && rollback.remainingTabIds?.length === 0
-      && runtimePreserved;
+      && runtimePreserved
+      && browserFocusPreserved;
 
     await appendRuntimeDiagnostic(
       passed ? "info" : "error",
@@ -171,13 +160,16 @@ async function runControlledRollbackTest() {
         runtimeBeforeWorkspaceId: activeBefore?.workspaceId || "",
         runtimeAfterWorkspaceId: activeAfter?.workspaceId || "",
         runtimePreserved,
+        focusBefore,
+        focusAfter,
+        browserFocusPreserved,
         rollback,
         passed
       }
     );
 
     setStatus(passed
-      ? "Controlled rollback test passed. Provisional browser changes were removed and active runtime was preserved."
+      ? "Controlled rollback test passed. The provisional tab stayed in the background, was removed, browser focus was preserved, and active runtime remained unchanged."
       : "Controlled rollback test needs attention. Do not run a normal resume until the packet is inspected.");
   } finally {
     setTestButtonsDisabled(false);
@@ -204,11 +196,7 @@ async function prepareResumeTransactionPacket() {
 
 async function copyResumeTransactionPacket() {
   const output = document.getElementById("layer2ResumeTransactionValidationOutput");
-
-  if (!output?.textContent?.trim()) {
-    setStatus("Prepare the resume safety packet before copying.");
-    return;
-  }
+  if (!output?.textContent?.trim()) return setStatus("Prepare the resume safety packet before copying.");
 
   await navigator.clipboard.writeText(buildClipboardEnvelope(output.textContent));
   setStatus("Resume safety packet copied.");
@@ -250,19 +238,21 @@ async function buildResumeTransactionPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "layer2-resume-transaction-validation-packet-v0.1"
+      schema: "layer2-resume-transaction-validation-packet-v0.2"
     },
     source: {
       type: "layer2_resume_transaction_safety_validation",
       developerOnly: true,
       controlledBrowserMutationTest: true,
+      controlledTabsCreatedInBackground: true,
+      browserFocusPreservationRequired: true,
       activeRuntimeAuthority: "chrome.storage.local"
     },
     validation: {
       status: failedChecks.length
         ? "needs_attention"
         : warningChecks.length
-          ? "controlled_safety_validated_normal_commit_pending"
+          ? "controlled_safety_and_focus_validated_normal_commit_pending"
           : "resume_transaction_safety_validated",
       passedCheckCount: passedChecks.length,
       warningCheckCount: warningChecks.length,
@@ -295,6 +285,7 @@ async function buildResumeTransactionPacket() {
           : "run_one_normal_transactional_resume_then_prepare_packet_again",
       notes: [
         "Duplicate and rollback tests are controlled Developer Mode tests.",
+        "Controlled rollback tabs must remain in the background and browser focus must be preserved.",
         "A complete Layer 2.1E acceptance packet also requires one successful normal resume through the transactional controller.",
         "Rollback must remove all provisional browser resources and preserve the previous active runtime workspace."
       ]
@@ -309,11 +300,13 @@ function buildChecks(evidence) {
 
   return [
     createCheck("duplicate_guard_test_passed", evidence.duplicateTest?.details?.passed === true, "Controlled duplicate resume guard test passed."),
-    createCheck("duplicate_operation_blocked", evidence.blockedOperation?.details?.reason === "local_resume_operation_in_progress" || evidence.blockedOperation?.details?.reason === "cross_context_resume_lock_unavailable", "Second concurrent resume operation was blocked before browser mutation."),
+    createCheck("duplicate_operation_blocked", ["local_resume_operation_in_progress", "cross_context_resume_lock_unavailable"].includes(evidence.blockedOperation?.details?.reason), "Second concurrent resume operation was blocked before browser mutation."),
     createCheck("controlled_rollback_test_passed", evidence.rollbackTest?.details?.passed === true, "Controlled rollback test passed."),
     createCheck("one_provisional_tab_created", Array.isArray(rollback.createdTabIds) && rollback.createdTabIds.length === 1, "Controlled rollback created exactly one provisional tab."),
     createCheck("provisional_tabs_removed", Array.isArray(rollback.remainingTabIds) && rollback.remainingTabIds.length === 0, "No provisional tabs remain after rollback."),
     createCheck("previous_runtime_preserved", rollback.runtimePreserved === true, "Previous active runtime workspace was preserved."),
+    createCheck("rollback_focus_restored", rollback.focusRestored === true, "Rollback restored the captured browser tab and window focus."),
+    createCheck("browser_focus_preserved", evidence.rollbackTest?.details?.browserFocusPreserved === true, "Controlled rollback did not leave the Operator on a different browser tab."),
     createCheck("rollback_completed", rollback.complete === true, "Rollback completed successfully."),
     createCheck("no_incomplete_rollback_observed", !evidence.incompleteRollback || new Date(evidence.incompleteRollback.createdAt) < new Date(evidence.rolledBackOperation?.createdAt || 0), "No unresolved incomplete rollback exists after the latest successful controlled rollback."),
     createCheck("normal_transactional_resume_committed", committedAvailable, "A normal transactional resume committed successfully.", committedAvailable ? "layer2_1e_resume_safety" : "warning"),
@@ -322,16 +315,51 @@ function buildChecks(evidence) {
 }
 
 function createCheck(check, condition, message, severity = "layer2_1e_resume_safety") {
-  if (severity === "warning" && !condition) {
-    return { check, status: "warn", severity, message };
-  }
-
   return {
     check,
-    status: condition ? "pass" : "fail",
+    status: condition ? "pass" : severity === "warning" ? "warn" : "fail",
     severity,
     message
   };
+}
+
+async function captureActiveBrowserFocus() {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const tab = tabs[0] || null;
+    return {
+      activeTabId: Number.isInteger(tab?.id) ? tab.id : null,
+      windowId: Number.isInteger(tab?.windowId) ? tab.windowId : null
+    };
+  } catch (_error) {
+    return { activeTabId: null, windowId: null };
+  }
+}
+
+function sameBrowserFocus(before, after) {
+  if (!Number.isInteger(before?.activeTabId)) return true;
+  return before.activeTabId === after?.activeTabId
+    && (!Number.isInteger(before?.windowId) || before.windowId === after?.windowId);
+}
+
+function getSelectedWorkspaceId() {
+  return document.getElementById("savedWorkspaceSelect")?.value || "";
+}
+
+function setTestButtonsDisabled(disabled) {
+  for (const id of [
+    "runLayer2ResumeDuplicateGuardTestButton",
+    "runLayer2ResumeRollbackTestButton",
+    "prepareLayer2ResumeTransactionPacketButton"
+  ]) {
+    const button = document.getElementById(id);
+    if (button) button.disabled = disabled;
+  }
+}
+
+function setStatus(message) {
+  const status = document.getElementById("layer2ResumeTransactionValidationStatus");
+  if (status) status.textContent = message;
 }
 
 function findLatestDiagnostic(diagnostics, action) {
@@ -339,14 +367,11 @@ function findLatestDiagnostic(diagnostics, action) {
 }
 
 function findLatestDiagnosticMatching(diagnostics, action, predicate) {
-  return [...diagnostics].reverse().find((diagnostic) =>
-    diagnostic?.action === action && predicate(diagnostic)
-  ) || null;
+  return [...diagnostics].reverse().find((diagnostic) => diagnostic?.action === action && predicate(diagnostic)) || null;
 }
 
 function summarizeDiagnostic(diagnostic) {
   if (!diagnostic) return null;
-
   return {
     createdAt: diagnostic.createdAt || "",
     level: diagnostic.level || "",
@@ -356,25 +381,11 @@ function summarizeDiagnostic(diagnostic) {
   };
 }
 
-function getSelectedWorkspaceId() {
-  return document.getElementById("savedWorkspaceSelect")?.value || "";
-}
-
-function setTestButtonsDisabled(disabled) {
-  document.getElementById("runLayer2ResumeDuplicateGuardTestButton")?.toggleAttribute("disabled", disabled);
-  document.getElementById("runLayer2ResumeRollbackTestButton")?.toggleAttribute("disabled", disabled);
-}
-
-function setStatus(message) {
-  const status = document.getElementById("layer2ResumeTransactionValidationStatus");
-  if (status) status.textContent = message;
-}
-
 function buildClipboardEnvelope(jsonText) {
   return [
     "CHROME_FLOW_PACKET_START",
     "packetType: Chrome Flow Layer 2.1E Resume Transaction Safety Validation Packet",
-    "schema: layer2-resume-transaction-validation-packet-v0.1",
+    "schema: layer2-resume-transaction-validation-packet-v0.2",
     "clipboardFormat: chrome_flow_packet_envelope_v0.1",
     "createdAt: " + new Date().toISOString(),
     "contentType: application/json",
