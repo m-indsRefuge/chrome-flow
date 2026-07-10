@@ -73,16 +73,18 @@ export async function addTimelineEvent(type, message, details = {}) {
 
 function normalizeWorkspace(workspace) {
   const now = new Date().toISOString();
+  const source = workspace && typeof workspace === "object" ? workspace : {};
 
   return {
-    workspaceId: workspace.workspaceId || crypto.randomUUID(),
-    name: workspace.name || "",
-    aim: workspace.aim || "",
-    workspaceType: workspace.workspaceType || DEFAULT_WORKSPACE_TYPE,
-    createdAt: workspace.createdAt || now,
-    updatedAt: workspace.updatedAt || now,
-    tabs: Array.isArray(workspace.tabs) ? workspace.tabs : [],
-    journal: Array.isArray(workspace.journal) ? workspace.journal : [],
-    timeline: Array.isArray(workspace.timeline) ? workspace.timeline : []
+    ...source,
+    workspaceId: source.workspaceId || crypto.randomUUID(),
+    name: source.name || "",
+    aim: source.aim || "",
+    workspaceType: source.workspaceType || DEFAULT_WORKSPACE_TYPE,
+    createdAt: source.createdAt || now,
+    updatedAt: source.updatedAt || now,
+    tabs: Array.isArray(source.tabs) ? source.tabs : [],
+    journal: Array.isArray(source.journal) ? source.journal : [],
+    timeline: Array.isArray(source.timeline) ? source.timeline : []
   };
 }
