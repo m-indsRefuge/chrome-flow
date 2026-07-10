@@ -21,8 +21,8 @@ import { verifySavedWorkspaceTabAgainstCurrentLiveTab } from "../core/workspace-
 import { sanitizeLegacyRestoredWorkspaceProjection } from "./legacy-archive-projection-cleanup.js";
 
 const EVIDENCE_KEY = "chromeFlowLayer21HRegressionEvidence";
-const PACKET_SCHEMA = "layer2-hardening-regression-packet-v0.1";
-const EVIDENCE_SCHEMA = "layer2-hardening-regression-evidence-v0.1";
+const PACKET_SCHEMA = "layer2-hardening-regression-packet-v0.2";
+const EVIDENCE_SCHEMA = "layer2-hardening-regression-evidence-v0.2";
 const DIAGNOSTIC_PROBE_COUNT = 8;
 
 installLayer2HardeningRegressionHarness();
@@ -106,21 +106,16 @@ async function runFullRegressionSuite() {
     };
 
     await chrome.storage.local.set({ [EVIDENCE_KEY]: evidence });
-    await appendRuntimeDiagnostic(
-      passed ? "info" : "error",
-      "layer2_hardening_regression_suite_completed",
-      "Layer 2.1H correlated hardening regression suite completed.",
-      {
-        regressionRunId,
-        correlationId: regressionRunId,
-        passed,
-        runtimePreserved,
-        caseCount: cases.length,
-        passedCaseCount: cases.filter((testCase) => testCase.passed).length,
-        failedCaseIds: cases.filter((testCase) => !testCase.passed).map((testCase) => testCase.caseId),
-        evidenceSchema: EVIDENCE_SCHEMA
-      }
-    );
+    await appendRuntimeDiagnostic(passed ? "info" : "error", "layer2_hardening_regression_suite_completed", "Layer 2.1H correlated hardening regression suite completed.", {
+      regressionRunId,
+      correlationId: regressionRunId,
+      passed,
+      runtimePreserved,
+      caseCount: cases.length,
+      passedCaseCount: cases.filter((testCase) => testCase.passed).length,
+      failedCaseIds: cases.filter((testCase) => !testCase.passed).map((testCase) => testCase.caseId),
+      evidenceSchema: EVIDENCE_SCHEMA
+    });
 
     setStatus(passed
       ? "Hardening regression suite passed. All temporary browser and Session DB resources were removed, and active runtime remained unchanged."
@@ -155,21 +150,16 @@ async function runCase(caseId, regressionRunId, runner) {
       error: result?.error || null
     };
 
-    await appendRuntimeDiagnostic(
-      testCase.passed ? "info" : "error",
-      "layer2_hardening_regression_case_completed",
-      "Layer 2.1H regression case completed: " + caseId + ".",
-      {
-        regressionRunId,
-        correlationId: regressionRunId,
-        operationId,
-        caseOperationId: operationId,
-        caseId,
-        passed: testCase.passed,
-        assertions: testCase.assertions,
-        cleanup: testCase.cleanup
-      }
-    );
+    await appendRuntimeDiagnostic(testCase.passed ? "info" : "error", "layer2_hardening_regression_case_completed", "Layer 2.1H regression case completed: " + caseId + ".", {
+      regressionRunId,
+      correlationId: regressionRunId,
+      operationId,
+      caseOperationId: operationId,
+      caseId,
+      passed: testCase.passed,
+      assertions: testCase.assertions,
+      cleanup: testCase.cleanup
+    });
 
     return testCase;
   } catch (error) {
@@ -199,24 +189,25 @@ async function runCase(caseId, regressionRunId, runner) {
 }
 
 async function runDiagnosticConcurrencyRegression(context) {
-  await Promise.all(Array.from({ length: DIAGNOSTIC_PROBE_COUNT }, (_, probeIndex) => {
-    return appendRuntimeDiagnostic("info", "layer2_1h_concurrent_write_probe", "Layer 2.1H concurrent diagnostic write probe.", {
+  await Promise.all(Array.from({ length: DIAGNOSTIC_PROBE_COUNT }, (_, probeIndex) => appendRuntimeDiagnostic(
+    "info",
+    "layer2_1h_concurrent_write_probe",
+    "Layer 2.1H concurrent diagnostic write probe.",
+    {
       regressionRunId: context.regressionRunId,
       correlationId: context.regressionRunId,
       operationId: context.operationId,
       caseOperationId: context.operationId,
       caseId: context.caseId,
       probeIndex
-    });
-  }));
+    }
+  )));
 
   await reconcileRuntimeDiagnostics();
   const diagnostics = await getRuntimeDiagnostics();
-  const probes = diagnostics.filter((diagnostic) => {
-    return diagnostic?.action === "layer2_1h_concurrent_write_probe"
-      && diagnostic?.details?.regressionRunId === context.regressionRunId
-      && diagnostic?.details?.caseOperationId === context.operationId;
-  });
+  const probes = diagnostics.filter((diagnostic) => diagnostic?.action === "layer2_1h_concurrent_write_probe"
+    && diagnostic?.details?.regressionRunId === context.regressionRunId
+    && diagnostic?.details?.caseOperationId === context.operationId);
   const probeIndexes = Array.from(new Set(probes.map((diagnostic) => diagnostic?.details?.probeIndex))).sort((a, b) => a - b);
   const assertions = {
     expectedProbeCount: probes.length === DIAGNOSTIC_PROBE_COUNT,
@@ -226,21 +217,23 @@ async function runDiagnosticConcurrencyRegression(context) {
   };
 
   return {
-    passed: Object.values(assertions).every(Boolean),
+    passed: allTrue(assertions),
     assertions,
     evidence: {
       expectedProbeCount: DIAGNOSTIC_PROBE_COUNT,
       observedProbeCount: probes.length,
       observedProbeIndexes: probeIndexes,
       diagnosticIds: probes.map((diagnostic) => diagnostic.diagnosticId)
-    }
+    },
+    cleanup: { appendOnlyShardsRetainedWithinDiagnosticLimit: true }
   };
 }
 
 async function runExactSnapshotReplacementRegression(context) {
   const workspaceId = "layer2-1h-regression-" + context.regressionRunId;
   const now = new Date().toISOString();
-  let cleanup = { attempted: false, complete: false, workspaceId, remainingRecord: null, error: null };
+  let resultPayload = null;
+  let thrownError = null;
 
   const firstWorkspace = createRegressionWorkspace(workspaceId, now, {
     tabIds: ["tab-a", "tab-b"],
@@ -282,8 +275,7 @@ async function runExactSnapshotReplacementRegression(context) {
         && secondSave?.replacementStats?.timelineEvents?.deletedObsoleteCount === 1
     };
 
-    return {
-      passed: Object.values(assertions).every(Boolean),
+    resultPayload = {
       assertions,
       evidence: {
         workspaceId,
@@ -292,15 +284,25 @@ async function runExactSnapshotReplacementRegression(context) {
         timelineIds,
         replacementStats: secondSave.replacementStats,
         persistenceMode: secondSave.bridgeStatus?.migrationMode || ""
-      },
-      cleanup
+      }
     };
-  } finally {
-    cleanup = await deleteRegressionWorkspace(workspaceId);
+  } catch (error) {
+    thrownError = error;
   }
+
+  const cleanup = await deleteRegressionWorkspace(workspaceId);
+  if (thrownError) throw thrownError;
+
+  resultPayload.assertions.temporaryWorkspaceRemoved = cleanup.complete === true;
+  return {
+    passed: allTrue(resultPayload.assertions),
+    assertions: resultPayload.assertions,
+    evidence: resultPayload.evidence,
+    cleanup
+  };
 }
 
-async function runResumeRegression(context) {
+async function runResumeRegression() {
   const activeBefore = await getActiveWorkspaceRuntime();
   const workspaceId = activeBefore?.workspaceId || "";
   const record = workspaceId ? await getWorkspaceMemoryRecord(workspaceId) : null;
@@ -309,7 +311,8 @@ async function runResumeRegression(context) {
     return {
       passed: false,
       assertions: { savedWorkspaceAvailable: false },
-      evidence: { workspaceId, reason: "active_workspace_memory_record_with_web_tab_required" }
+      evidence: { workspaceId, reason: "active_workspace_memory_record_with_web_tab_required" },
+      cleanup: { complete: true, createdTabIds: [], remainingTabIds: [] }
     };
   }
 
@@ -350,12 +353,9 @@ async function runResumeRegression(context) {
   const focusAfter = await captureActiveBrowserFocus();
   const rollback = rollbackResult?.details?.rollback || null;
   const assertions = {
-    firstOperationControlled: firstResult instanceof WorkspaceResumeOperationError
-      && firstResult.code === "resume_controlled_validation_failure",
-    secondOperationBlocked: secondResult instanceof WorkspaceResumeOperationError
-      && secondResult.code === "resume_operation_in_progress",
-    rollbackControlledFailure: rollbackResult instanceof WorkspaceResumeOperationError
-      && rollbackResult.code === "resume_controlled_validation_failure",
+    firstOperationControlled: firstResult instanceof WorkspaceResumeOperationError && firstResult.code === "resume_controlled_validation_failure",
+    secondOperationBlocked: secondResult instanceof WorkspaceResumeOperationError && secondResult.code === "resume_operation_in_progress",
+    rollbackControlledFailure: rollbackResult instanceof WorkspaceResumeOperationError && rollbackResult.code === "resume_controlled_validation_failure",
     oneProvisionalTabCreated: rollback?.createdTabIds?.length === 1,
     provisionalTabsRemoved: rollback?.remainingTabIds?.length === 0,
     rollbackComplete: rollback?.complete === true,
@@ -364,7 +364,7 @@ async function runResumeRegression(context) {
   };
 
   return {
-    passed: Object.values(assertions).every(Boolean),
+    passed: allTrue(assertions),
     assertions,
     evidence: {
       workspaceId,
@@ -378,7 +378,7 @@ async function runResumeRegression(context) {
     cleanup: {
       createdTabIds: rollback?.createdTabIds || [],
       remainingTabIds: rollback?.remainingTabIds || [],
-      complete: rollback?.complete === true
+      complete: rollback?.complete === true && rollback?.remainingTabIds?.length === 0
     }
   };
 }
@@ -386,13 +386,15 @@ async function runResumeRegression(context) {
 async function runArchiveOwnershipRegression(context) {
   const focusBefore = await captureActiveBrowserFocus();
   let testTab = null;
+  let verification = null;
+  let stillLiveBeforeCleanup = false;
   let cleanupError = null;
 
   try {
     testTab = await chrome.tabs.create({ url: "about:blank", active: false });
     await delay(120);
     const liveTab = await chrome.tabs.get(testTab.id);
-    const fakeSavedTab = {
+    verification = await verifySavedWorkspaceTabAgainstCurrentLiveTab({
       workspaceTabId: "layer2-1h-unrelated-tab",
       tabId: liveTab.id,
       windowId: liveTab.windowId,
@@ -401,27 +403,8 @@ async function runArchiveOwnershipRegression(context) {
       url: "https://not-owned.invalid/regression",
       originalTitle: liveTab.title || "Background test tab",
       tabKey: "https://not-owned.invalid/regression::" + (liveTab.title || "Background test tab")
-    };
-    const verification = await verifySavedWorkspaceTabAgainstCurrentLiveTab(fakeSavedTab);
-    const stillLiveBeforeCleanup = await tabExists(liveTab.id);
-    const assertions = {
-      numericIdMatchedCandidate: verification?.identityEvidence?.idMatches === true,
-      ownershipRejected: verification?.verified === false,
-      mismatchReasonIsUrl: verification?.reason === "live_url_mismatch",
-      unrelatedTabRemainedOpen: stillLiveBeforeCleanup,
-      noCloseExecuted: true
-    };
-
-    return {
-      passed: Object.values(assertions).every(Boolean),
-      assertions,
-      evidence: {
-        testTabId: liveTab.id,
-        verificationReason: verification.reason,
-        identityEvidence: verification.identityEvidence
-      },
-      cleanup: { testTabId: liveTab.id, removed: false, error: null }
-    };
+    });
+    stillLiveBeforeCleanup = await tabExists(liveTab.id);
   } finally {
     if (Number.isInteger(testTab?.id)) {
       try {
@@ -430,23 +413,45 @@ async function runArchiveOwnershipRegression(context) {
         cleanupError = summarizeError(error);
       }
     }
-
-    const focusAfter = await captureActiveBrowserFocus();
-    if (!sameBrowserFocus(focusBefore, focusAfter)) {
-      await restoreBrowserFocus(focusBefore);
-    }
-
-    if (cleanupError) {
-      await appendRuntimeDiagnostic("error", "layer2_1h_archive_test_cleanup_failed", "Could not remove the Layer 2.1H archive ownership test tab.", {
-        regressionRunId: context.regressionRunId,
-        correlationId: context.regressionRunId,
-        operationId: context.operationId,
-        caseId: context.caseId,
-        testTabId: testTab?.id || null,
-        error: cleanupError
-      });
-    }
   }
+
+  const removed = Number.isInteger(testTab?.id) ? !(await tabExists(testTab.id)) : false;
+  const focusAfterCleanup = await captureActiveBrowserFocus();
+  if (!sameBrowserFocus(focusBefore, focusAfterCleanup)) await restoreBrowserFocus(focusBefore);
+  const focusAfterRestore = await captureActiveBrowserFocus();
+  const assertions = {
+    numericIdMatchedCandidate: verification?.identityEvidence?.idMatches === true,
+    ownershipRejected: verification?.verified === false,
+    mismatchReasonIsUrl: verification?.reason === "live_url_mismatch",
+    unrelatedTabRemainedOpenBeforeHarnessCleanup: stillLiveBeforeCleanup,
+    testTabRemovedByHarness: removed,
+    browserFocusPreserved: sameBrowserFocus(focusBefore, focusAfterRestore),
+    cleanupErrorAbsent: cleanupError == null
+  };
+
+  if (cleanupError) {
+    await appendRuntimeDiagnostic("error", "layer2_1h_archive_test_cleanup_failed", "Could not remove the Layer 2.1H archive ownership test tab.", {
+      regressionRunId: context.regressionRunId,
+      correlationId: context.regressionRunId,
+      operationId: context.operationId,
+      caseId: context.caseId,
+      testTabId: testTab?.id || null,
+      error: cleanupError
+    });
+  }
+
+  return {
+    passed: allTrue(assertions),
+    assertions,
+    evidence: {
+      testTabId: testTab?.id || null,
+      verificationReason: verification?.reason || "",
+      identityEvidence: verification?.identityEvidence || null,
+      focusBefore,
+      focusAfterRestore
+    },
+    cleanup: { testTabId: testTab?.id || null, removed, error: cleanupError, complete: removed && cleanupError == null }
+  };
 }
 
 async function runLegacyProjectionCleanupRegression() {
@@ -470,9 +475,7 @@ async function runLegacyProjectionCleanupRegression() {
   const result = await sanitizeLegacyRestoredWorkspaceProjection(workspace, {
     restoreEvent: workspace.timeline[0],
     resolveLiveTab: async (tabId) => {
-      if (tabId === 101) {
-        return { id: 101, windowId: 901, groupId: 17, url: "https://example.test/a", title: "Synthetic A" };
-      }
+      if (tabId === 101) return { id: 101, windowId: 901, groupId: 17, url: "https://example.test/a", title: "Synthetic A" };
       throw new Error("Synthetic tab is not live.");
     }
   });
@@ -490,10 +493,10 @@ async function runLegacyProjectionCleanupRegression() {
   };
 
   return {
-    passed: Object.values(assertions).every(Boolean),
+    passed: allTrue(assertions),
     assertions,
     evidence: { summary: result.summary },
-    cleanup: { browserMutationExecuted: false, activeRuntimeChanged: false }
+    cleanup: { browserMutationExecuted: false, activeRuntimeChanged: false, complete: true }
   };
 }
 
@@ -521,7 +524,6 @@ async function prepareHardeningPacket() {
 async function copyHardeningPacket() {
   const output = document.getElementById("layer2HardeningRegressionHarnessOutput");
   if (!output?.textContent?.trim()) return setStatus("Prepare the hardening packet before copying.");
-
   await navigator.clipboard.writeText(buildClipboardEnvelope(output.textContent));
   setStatus("Hardening regression packet copied.");
 }
@@ -538,6 +540,7 @@ function buildHardeningPacket(evidence) {
     createCheck("resume_duplicate_and_rollback_passed", byId.get("resume_duplicate_and_rollback")?.passed === true, "Resume duplicate guard and controlled rollback regression passed."),
     createCheck("resume_provisional_resources_removed", byId.get("resume_duplicate_and_rollback")?.cleanup?.complete === true, "Resume provisional browser resources were removed."),
     createCheck("archive_stale_id_rejection_passed", byId.get("archive_stale_id_rejection")?.passed === true, "Archive stale-ID ownership rejection regression passed."),
+    createCheck("archive_test_tab_removed", byId.get("archive_stale_id_rejection")?.cleanup?.complete === true, "Archive ownership test tab was removed by the harness."),
     createCheck("legacy_projection_cleanup_passed", byId.get("legacy_projection_cleanup")?.passed === true, "Legacy projection cleanup regression passed."),
     createCheck("active_runtime_preserved", evidence?.runtimeIntegrity?.preserved === true, "Active runtime remained byte-for-byte unchanged across the suite."),
     createCheck("case_operation_ids_present", operationIds.length === cases.length && operationIds.every(Boolean), "Every regression case has a stable operation ID."),
@@ -571,9 +574,7 @@ function buildHardeningPacket(evidence) {
     },
     regressionRun: evidence,
     nextDecision: {
-      recommendation: failedChecks.length
-        ? "repair_failed_layer2_hardening_regression_case"
-        : "proceed_to_final_codex_high_level_review",
+      recommendation: failedChecks.length ? "repair_failed_layer2_hardening_regression_case" : "proceed_to_final_codex_high_level_review",
       notes: [
         "Packet truth comes from dedicated run evidence rather than bounded diagnostic history.",
         "The suite executes the repaired persistence, resume, archive ownership, legacy cleanup, and diagnostic correlation paths.",
@@ -625,7 +626,6 @@ async function deleteRegressionWorkspace(workspaceId) {
   try {
     await runSessionDbTransaction(storeNames, "readwrite", (stores) => {
       stores.get(SESSION_DB_SCHEMA.stores.workspaces).delete(workspaceId);
-
       for (const storeName of storeNames.filter((name) => name !== SESSION_DB_SCHEMA.stores.workspaces)) {
         const store = stores.get(storeName);
         const request = store.index("workspaceId").getAllKeys(workspaceId);
@@ -660,12 +660,15 @@ function sameArray(left, right) {
   return left.length === right.length && left.every((value, index) => value === right[index]);
 }
 
+function allTrue(assertions) {
+  return Object.values(assertions).every(Boolean);
+}
+
 async function captureActiveBrowserFocus() {
   const [windowInfo, tabs] = await Promise.all([
     globalThis.chrome?.windows?.getLastFocused ? chrome.windows.getLastFocused().catch(() => null) : null,
     globalThis.chrome?.tabs?.query ? chrome.tabs.query({ active: true, lastFocusedWindow: true }).catch(() => []) : []
   ]);
-
   return {
     windowId: Number.isInteger(windowInfo?.id) ? windowInfo.id : null,
     tabId: Number.isInteger(tabs?.[0]?.id) ? tabs[0].id : null
@@ -678,12 +681,8 @@ function sameBrowserFocus(left, right) {
 
 async function restoreBrowserFocus(focus) {
   try {
-    if (Number.isInteger(focus?.windowId) && globalThis.chrome?.windows?.update) {
-      await chrome.windows.update(focus.windowId, { focused: true });
-    }
-    if (Number.isInteger(focus?.tabId) && globalThis.chrome?.tabs?.update) {
-      await chrome.tabs.update(focus.tabId, { active: true });
-    }
+    if (Number.isInteger(focus?.windowId) && globalThis.chrome?.windows?.update) await chrome.windows.update(focus.windowId, { focused: true });
+    if (Number.isInteger(focus?.tabId) && globalThis.chrome?.tabs?.update) await chrome.tabs.update(focus.tabId, { active: true });
   } catch (_error) {
     // Best-effort test cleanup only.
   }
@@ -703,11 +702,7 @@ function createCheck(check, condition, message) {
 }
 
 function setButtonsDisabled(disabled) {
-  for (const id of [
-    "runLayer2HardeningRegressionHarnessButton",
-    "prepareLayer2HardeningRegressionPacketButton",
-    "copyLayer2HardeningRegressionPacketButton"
-  ]) {
+  for (const id of ["runLayer2HardeningRegressionHarnessButton", "prepareLayer2HardeningRegressionPacketButton", "copyLayer2HardeningRegressionPacketButton"]) {
     const button = document.getElementById(id);
     if (button) button.disabled = disabled || (id === "copyLayer2HardeningRegressionPacketButton" && !document.getElementById("layer2HardeningRegressionHarnessOutput")?.textContent?.trim());
   }
