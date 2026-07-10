@@ -1,4 +1,7 @@
-import { getRuntimeDiagnostics } from "../core/workspace-runtime-store.js";
+import {
+  appendRuntimeDiagnostic,
+  getRuntimeDiagnostics
+} from "../core/workspace-runtime-store.js";
 
 const EVIDENCE_KEY = "chromeFlowLayer21HRegressionEvidence";
 const PACKET_SCHEMA = "layer2-hardening-regression-packet-v0.3";
@@ -42,6 +45,15 @@ async function prepareCorrelationCompletePacket() {
     if (output) output.textContent = JSON.stringify(packet, null, 2);
     if (copyButton) copyButton.disabled = false;
     setStatus("Hardening correlation packet prepared: " + packet.validation.status + ".");
+
+    await appendRuntimeDiagnostic("info", "layer2_hardening_correlation_packet_prepared", "Layer 2.1H correlation-complete hardening packet prepared.", {
+      regressionRunId: evidence?.regressionRunId || "",
+      correlationId: evidence?.regressionRunId || "",
+      schema: PACKET_SCHEMA,
+      status: packet.validation.status,
+      passedCheckCount: packet.validation.passedCheckCount,
+      failedCheckCount: packet.validation.failedCheckCount
+    });
   } catch (error) {
     const copyButton = document.getElementById(COPY_BUTTON_ID);
     if (copyButton) copyButton.disabled = true;
@@ -60,6 +72,14 @@ async function copyCorrelationCompletePacket() {
 
     await navigator.clipboard.writeText(buildClipboardEnvelope(output.textContent));
     setStatus("Hardening correlation packet copied.");
+
+    const packet = JSON.parse(output.textContent);
+    await appendRuntimeDiagnostic("info", "layer2_hardening_correlation_packet_copied", "Layer 2.1H correlation-complete hardening packet copied.", {
+      regressionRunId: packet?.regressionRun?.regressionRunId || "",
+      correlationId: packet?.regressionRun?.regressionRunId || "",
+      schema: packet?.extension?.schema || PACKET_SCHEMA,
+      status: packet?.validation?.status || ""
+    });
   } catch (error) {
     setStatus("Could not copy the hardening correlation packet.");
     console.warn("Chrome Flow hardening correlation packet copy failed:", error);
