@@ -2,7 +2,6 @@ import { registerDeveloperSurface } from "./developer-mode.js";
 import "./workspace-archive-close-ownership-controller.js";
 import "./layer2-archive-close-ownership-validation.js";
 import "./legacy-archive-projection-cleanup.js";
-import "./layer2-validation-check-helper.js";
 import "./layer2-legacy-archive-projection-validation.js";
 
 installWorkspaceSessionProductSurface();
