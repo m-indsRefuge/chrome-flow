@@ -8,6 +8,7 @@ import {
 } from "../core/constellation-storage-migration-engine.js";
 
 import {
+  mergeDiagnosticCollections,
   stableStringify
 } from "../core/constellation-storage-compatibility.js";
 
@@ -73,6 +74,11 @@ async function mirrorChangedIdentity(identity, changes, areaName) {
     : chrome.storage.local;
   if (!storageArea) return;
 
+  if (identity.id === STORAGE_IDENTITIES.diagnostics.id) {
+    await reconcileDiagnosticIdentity(storageArea, identity);
+    return;
+  }
+
   const canonicalChange = changes?.[identity.canonicalKey] || null;
   const legacyChange = changes?.[identity.legacyKey] || null;
 
@@ -128,6 +134,33 @@ async function mirrorChangedIdentity(identity, changes, areaName) {
 
   if (!valuesEquivalent(peerValue, newValue)) {
     await storageArea.set({ [peerKey]: cloneSerializable(newValue) });
+  }
+}
+
+async function reconcileDiagnosticIdentity(storageArea, identity) {
+  const result = await storageArea.get([
+    identity.canonicalKey,
+    identity.legacyKey
+  ]);
+  const canonicalValue = Array.isArray(result?.[identity.canonicalKey])
+    ? result[identity.canonicalKey]
+    : [];
+  const legacyValue = Array.isArray(result?.[identity.legacyKey])
+    ? result[identity.legacyKey]
+    : [];
+  const merged = mergeDiagnosticCollections(canonicalValue, legacyValue);
+  const writes = {};
+
+  if (!valuesEquivalent(canonicalValue, merged)) {
+    writes[identity.canonicalKey] = cloneSerializable(merged);
+  }
+
+  if (!valuesEquivalent(legacyValue, merged)) {
+    writes[identity.legacyKey] = cloneSerializable(merged);
+  }
+
+  if (Object.keys(writes).length) {
+    await storageArea.set(writes);
   }
 }
 
