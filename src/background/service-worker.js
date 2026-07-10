@@ -1,5 +1,6 @@
 import { scheduleWorkspaceProjectionReconciliation } from "../core/automatic-workspace-projection-reconciler.js";
 import { CONSTELLATION_PRODUCT_NAME } from "../core/product-identity.js";
+import { EVENT_IDENTITIES } from "../core/constellation-identity-contract.js";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log(CONSTELLATION_PRODUCT_NAME + " installed.");
@@ -109,12 +110,22 @@ if (chrome.tabGroups?.onRemoved) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type !== "chrome-flow-reconcile-workspace-projection") return false;
+  const messageType = String(message?.type || "");
+  const identity = EVENT_IDENTITIES.reconcileWorkspaceProjection;
+
+  if (messageType !== identity.canonical && messageType !== identity.legacy) {
+    return false;
+  }
 
   scheduleWorkspaceProjectionReconciliation(message.trigger || "sidepanel_startup", {
     senderTabId: sender?.tab?.id ?? null,
-    senderWindowId: sender?.tab?.windowId ?? null
+    senderWindowId: sender?.tab?.windowId ?? null,
+    messageIdentity: messageType === identity.canonical ? "canonical" : "legacy_compatible"
   });
-  sendResponse({ accepted: true });
+  sendResponse({
+    accepted: true,
+    canonicalType: identity.canonical,
+    receivedType: messageType
+  });
   return false;
 });
