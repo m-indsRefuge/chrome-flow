@@ -7,6 +7,8 @@ import {
 } from "./legacy-archive-projection-cleanup.js";
 
 const MAX_DIAGNOSTICS_TO_SCAN = 250;
+const PACKET_SCHEMA = "layer2-legacy-archive-projection-validation-packet-v0.2";
+const DEFAULT_SEVERITY = "layer2_1g_legacy_cleanup";
 
 installLegacyArchiveProjectionValidationSurface();
 
@@ -79,7 +81,6 @@ async function runControlledPartialCleanupTest() {
             title: "Reopened live tab"
           };
         }
-
         throw new Error("Synthetic reopened tab is no longer live.");
       }
     });
@@ -132,29 +133,48 @@ async function runControlledPartialCleanupTest() {
 }
 
 async function prepareLegacyProjectionCleanupPacket() {
-  const packet = await buildLegacyProjectionCleanupPacket();
-  const output = document.getElementById("layer2LegacyProjectionCleanupOutput");
+  setButtonsDisabled(true);
   const copyButton = document.getElementById("copyLayer2LegacyProjectionCleanupPacketButton");
+  if (copyButton) copyButton.disabled = true;
 
-  if (output) output.textContent = JSON.stringify(packet, null, 2);
-  if (copyButton) copyButton.disabled = false;
-  setStatus("Legacy projection cleanup packet prepared: " + packet.validation.status + ".");
+  try {
+    const packet = await buildLegacyProjectionCleanupPacket();
+    const output = document.getElementById("layer2LegacyProjectionCleanupOutput");
 
-  await appendRuntimeDiagnostic("info", "layer2_legacy_archive_projection_validation_packet_prepared", "Layer 2.1G legacy archive projection cleanup validation packet prepared.", {
-    schema: packet.extension.schema,
-    status: packet.validation.status,
-    passedCheckCount: packet.validation.passedCheckCount,
-    warningCheckCount: packet.validation.warningCheckCount,
-    failedCheckCount: packet.validation.failedCheckCount
-  });
+    if (output) output.textContent = JSON.stringify(packet, null, 2);
+    if (copyButton) copyButton.disabled = false;
+    setStatus("Legacy projection cleanup packet prepared: " + packet.validation.status + ".");
+
+    await appendRuntimeDiagnostic("info", "layer2_legacy_archive_projection_validation_packet_prepared", "Layer 2.1G legacy archive projection cleanup validation packet prepared.", {
+      schema: packet.extension.schema,
+      status: packet.validation.status,
+      passedCheckCount: packet.validation.passedCheckCount,
+      warningCheckCount: packet.validation.warningCheckCount,
+      failedCheckCount: packet.validation.failedCheckCount
+    });
+  } catch (error) {
+    await appendRuntimeDiagnostic("error", "layer2_legacy_archive_projection_validation_packet_failed", "Layer 2.1G legacy cleanup packet preparation failed.", {
+      error: summarizeError(error)
+    });
+    setStatus("Could not prepare the legacy cleanup packet. Inspect Developer Diagnostics.");
+  } finally {
+    setButtonsDisabled(false);
+  }
 }
 
 async function copyLegacyProjectionCleanupPacket() {
   const output = document.getElementById("layer2LegacyProjectionCleanupOutput");
   if (!output?.textContent?.trim()) return setStatus("Prepare the legacy cleanup packet before copying.");
 
-  await navigator.clipboard.writeText(buildClipboardEnvelope(output.textContent));
-  setStatus("Legacy projection cleanup packet copied.");
+  try {
+    await navigator.clipboard.writeText(buildClipboardEnvelope(output.textContent));
+    setStatus("Legacy projection cleanup packet copied.");
+  } catch (error) {
+    await appendRuntimeDiagnostic("error", "layer2_legacy_archive_projection_packet_copy_failed", "Could not copy the Layer 2.1G packet.", {
+      error: summarizeError(error)
+    });
+    setStatus("Could not copy the legacy cleanup packet. Inspect Developer Diagnostics.");
+  }
 }
 
 async function buildLegacyProjectionCleanupPacket() {
@@ -176,7 +196,7 @@ async function buildLegacyProjectionCleanupPacket() {
     createdAt: new Date().toISOString(),
     extension: {
       name: "Chrome Flow",
-      schema: "layer2-legacy-archive-projection-validation-packet-v0.1"
+      schema: PACKET_SCHEMA
     },
     source: {
       type: "layer2_legacy_archive_projection_cleanup_validation",
@@ -239,18 +259,27 @@ function buildChecks({ controlledTest, liveCleanup, cleanupFailure, workspace })
     createCheck("controlled_failed_reopen_tab_cleared", assertions.failedReopenCleared === true, "Failed reopened tab had all live projection identifiers cleared."),
     createCheck("controlled_no_stale_identifiers", assertions.noStaleIdentifiersRemain === true, "No stale live projection identifiers remain on closed synthetic tabs."),
     createCheck("no_unresolved_cleanup_failure", !cleanupFailure || new Date(cleanupFailure.createdAt) < new Date(liveCleanup?.createdAt || 0), "No unresolved legacy projection cleanup failure exists."),
-    createCheck("normal_legacy_cleanup_applied", liveAvailable, "A normal Developer Mode legacy restore triggered projection cleanup.", liveAvailable ? "layer2_1g_legacy_cleanup" : "warning"),
-    createCheck("normal_cleanup_no_stale_closed_identifiers", liveAvailable && Number(liveSummary.staleIdentifierCountAfterCleanup || 0) === 0, "Normal legacy restore cleanup left no stale identifiers on closed tabs.", liveAvailable ? "layer2_1g_legacy_cleanup" : "warning"),
+    createCheck("normal_legacy_cleanup_applied", liveAvailable, "A normal Developer Mode legacy restore triggered projection cleanup.", liveAvailable ? DEFAULT_SEVERITY : "warning"),
+    createCheck("normal_cleanup_no_stale_closed_identifiers", liveAvailable && Number(liveSummary.staleIdentifierCountAfterCleanup || 0) === 0, "Normal legacy restore cleanup left no stale identifiers on closed tabs.", liveAvailable ? DEFAULT_SEVERITY : "warning"),
     createCheck("normal_cleanup_metadata_committed", liveAvailable
       && cleanupMetadata.version === CLEANUP_VERSION
       && cleanupMetadata.restoreEventId === liveCleanup?.details?.restoreEventId,
-    "Active runtime records the applied legacy projection cleanup version and restore event.", liveAvailable ? "layer2_1g_legacy_cleanup" : "warning"),
+    "Active runtime records the applied legacy projection cleanup version and restore event.", liveAvailable ? DEFAULT_SEVERITY : "warning"),
     createCheck("normal_cleanup_all_tabs_classified", liveAvailable
       && Number(liveSummary.tabCount || 0) === Number(liveSummary.reopenedVerifiedCount || 0)
         + Number(liveSummary.notReopenedClearedCount || 0)
         + Number(liveSummary.failedVerificationCount || 0),
-    "Every normal legacy restore tab was classified as reopened, not reopened, or failed verification.", liveAvailable ? "layer2_1g_legacy_cleanup" : "warning")
+    "Every normal legacy restore tab was classified as reopened, not reopened, or failed verification.", liveAvailable ? DEFAULT_SEVERITY : "warning")
   ];
+}
+
+function createCheck(check, condition, message, severity = DEFAULT_SEVERITY) {
+  return {
+    check,
+    status: condition ? "pass" : severity === "warning" ? "warn" : "fail",
+    severity,
+    message
+  };
 }
 
 function createSyntheticTab(workspaceTabId, tabId, windowId, groupId, url) {
@@ -328,7 +357,7 @@ function buildClipboardEnvelope(jsonText) {
   return [
     "CHROME_FLOW_PACKET_START",
     "packetType: Chrome Flow Layer 2.1G Legacy Archive Projection Cleanup Validation Packet",
-    "schema: layer2-legacy-archive-projection-validation-packet-v0.1",
+    "schema: " + PACKET_SCHEMA,
     "clipboardFormat: chrome_flow_packet_envelope_v0.1",
     "createdAt: " + new Date().toISOString(),
     "contentType: application/json",
