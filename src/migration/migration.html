@@ -19,6 +19,17 @@
       <pre id="destinationSummary">Loading extension identity…</pre>
     </section>
 
+    <section class="card" aria-labelledby="controlledValidationHeading">
+      <h2 id="controlledValidationHeading">Layer 2.2D controlled validation</h2>
+      <p>Runs disposable create, verification, cleanup, forced-failure, and rollback checks. It does not read or modify the saved production backup.</p>
+      <div class="actions">
+        <button id="runControlledImportValidationButton" class="primary">Run Controlled Import Validation</button>
+        <button id="copyControlledImportValidationButton" disabled>Copy Validation Packet</button>
+      </div>
+      <p id="controlledValidationStatus" class="status" role="status"></p>
+      <pre id="controlledValidationSummary">Controlled validation has not run.</pre>
+    </section>
+
     <section class="card" aria-labelledby="inspectHeading">
       <h2 id="inspectHeading">1. Select and inspect a package</h2>
       <p>Select a JSON file created by Constellation’s migration exporter. Inspection never writes extension data.</p>
