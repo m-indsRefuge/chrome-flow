@@ -16,7 +16,8 @@ function installUserJournalActionObservability() {
 
   // sidepanel.js is loaded first, so its product handler runs before this
   // target-phase observer. The product action begins normally, then this
-  // observer suppresses only the legacy document-level timeline tracer.
+  // observer prevents only the legacy document-level timeline tracer from
+  // receiving the same journal click.
   button.addEventListener("click", handleJournalButtonAtTarget);
 }
 
@@ -30,7 +31,10 @@ function handleJournalButtonAtTarget(event) {
   const traceId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
 
-  temporarilySuppressLegacyDocumentTracer(button);
+  // The production journal handler on this button has already run. Stop this
+  // click from bubbling to diagnostics.js, whose generic timeline tracer
+  // cannot verify an intentionally isolated User Journal write.
+  event.stopPropagation();
 
   void appendRuntimeDiagnostic(
     "info",
@@ -91,21 +95,6 @@ function handleJournalButtonAtTarget(event) {
   window.setTimeout(() => {
     void pollJournalTrace(traceId);
   }, TRACE_POLL_MS);
-}
-
-function temporarilySuppressLegacyDocumentTracer(button) {
-  const originalId = button.id;
-  const originalText = button.textContent;
-
-  // The legacy diagnostics listener is delegated from document and runs after
-  // this target listener. Blank identity suppresses only that legacy trace.
-  button.id = "";
-  button.textContent = "";
-
-  queueMicrotask(() => {
-    button.id = originalId;
-    button.textContent = originalText;
-  });
 }
 
 async function pollJournalTrace(traceId) {
