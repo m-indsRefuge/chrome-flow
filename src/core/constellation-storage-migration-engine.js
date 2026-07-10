@@ -76,6 +76,15 @@ async function runIdempotentStorageMigrationValidation(options = {}) {
     .filter((result) => result.changed)
     .map((result) => result.identityId);
   const dataFingerprintsStable = compareSnapshotFingerprints(afterFirstPass, afterSecondPass);
+  const canonicalPeersPresent = afterFirstPass.identities.every((identity) =>
+    identityHasNoData(identity) || identity.canonicalPresent
+  );
+  const legacyPeersPreserved = afterFirstPass.identities.every((identity) =>
+    identityHasNoData(identity) || !identity.legacyKey || identity.legacyPresent
+  );
+  const peerFingerprintsEquivalent = afterFirstPass.identities.every((identity) =>
+    identityHasNoData(identity) || !identity.legacyKey || identity.equivalent
+  );
 
   return {
     schema: "constellation-storage-migration-validation-v0.1",
@@ -89,9 +98,9 @@ async function runIdempotentStorageMigrationValidation(options = {}) {
     checks: {
       firstPassCompleted: firstPass.marker.status === "completed",
       noConflicts: firstPass.marker.conflictIdentityIds.length === 0,
-      canonicalPeersPresent: afterFirstPass.identities.every((identity) => identity.canonicalPresent || (!identity.canonicalKey && !identity.legacyKey)),
-      legacyPeersPreserved: afterFirstPass.identities.every((identity) => !identity.legacyKey || identity.legacyPresent),
-      peerFingerprintsEquivalent: afterFirstPass.identities.every((identity) => !identity.legacyKey || identity.equivalent),
+      canonicalPeersPresent,
+      legacyPeersPreserved,
+      peerFingerprintsEquivalent,
       secondPassChangedNoDataIdentities: secondPassChangedDataIdentities.length === 0,
       dataFingerprintsStable,
       destructiveDeletionPerformed: false,
@@ -100,6 +109,9 @@ async function runIdempotentStorageMigrationValidation(options = {}) {
     secondPassChangedDataIdentities,
     status: firstPass.marker.status === "completed"
       && secondPass.marker.status === "completed"
+      && canonicalPeersPresent
+      && legacyPeersPreserved
+      && peerFingerprintsEquivalent
       && secondPassChangedDataIdentities.length === 0
       && dataFingerprintsStable
       ? "validated"
@@ -233,6 +245,10 @@ function compareSnapshotFingerprints(left, right) {
       && previous.legacyFingerprint === identity.legacyFingerprint
       && previous.equivalent === identity.equivalent;
   });
+}
+
+function identityHasNoData(identity) {
+  return identity.canonicalPresent === false && identity.legacyPresent === false;
 }
 
 function chooseNewestCoordinator(canonicalValue, legacyValue) {
