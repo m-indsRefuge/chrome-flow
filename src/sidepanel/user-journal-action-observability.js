@@ -2,7 +2,7 @@ import { appendRuntimeDiagnostic } from "../core/workspace-runtime-store.js";
 
 const WORKSPACE_STORAGE_KEY = "chromeFlowWorkspace";
 const JOURNAL_BUTTON_ID = "addJournalButton";
-const TEMPORARY_BYPASS_BUTTON_ID = "addJournalButtonStateVerified";
+const JOURNAL_BUTTON_TEXT = "Add Journal Entry";
 const TRACE_POLL_MS = 100;
 const TRACE_TIMEOUT_MS = 5000;
 
@@ -11,15 +11,18 @@ const activeJournalTraces = new Map();
 installUserJournalActionObservability();
 
 function installUserJournalActionObservability() {
-  document.addEventListener("click", handleJournalButtonCapture, true);
+  const button = document.getElementById(JOURNAL_BUTTON_ID);
+  if (!button) return;
+
+  // sidepanel.js is loaded first, so its product handler runs before this
+  // target-phase observer. The product action begins normally, then this
+  // observer suppresses only the legacy document-level timeline tracer.
+  button.addEventListener("click", handleJournalButtonAtTarget);
 }
 
-function handleJournalButtonCapture(event) {
-  const target = event.target;
-  if (!(target instanceof Element)) return;
-
-  const button = target.closest("button");
-  if (!button || button.id !== JOURNAL_BUTTON_ID) return;
+function handleJournalButtonAtTarget(event) {
+  const button = event.currentTarget;
+  if (!(button instanceof HTMLButtonElement)) return;
 
   const noteInput = document.getElementById("journalEntry");
   const noteHasContent = Boolean(noteInput?.value?.trim());
@@ -27,7 +30,17 @@ function handleJournalButtonCapture(event) {
   const traceId = crypto.randomUUID();
   const startedAt = new Date().toISOString();
 
-  temporarilyBypassLegacyTimelineTrace(button);
+  temporarilySuppressLegacyDocumentTracer(button);
+
+  void appendRuntimeDiagnostic(
+    "info",
+    "ui_click",
+    "Button clicked: " + JOURNAL_BUTTON_ID + ".",
+    {
+      buttonId: JOURNAL_BUTTON_ID,
+      buttonText: JOURNAL_BUTTON_TEXT
+    }
+  );
 
   if (!noteHasContent) {
     void appendRuntimeDiagnostic(
@@ -38,7 +51,7 @@ function handleJournalButtonCapture(event) {
         traceId,
         actionName: "addUserJournalEntry",
         buttonId: JOURNAL_BUTTON_ID,
-        buttonText: "Add Journal Entry",
+        buttonText: JOURNAL_BUTTON_TEXT,
         observedEvent: {
           eventId: "",
           type: "user_journal_add_skipped_empty",
@@ -67,7 +80,7 @@ function handleJournalButtonCapture(event) {
       traceId,
       actionName: "addUserJournalEntry",
       buttonId: JOURNAL_BUTTON_ID,
-      buttonText: "Add Journal Entry",
+      buttonText: JOURNAL_BUTTON_TEXT,
       journalCountBefore,
       terminalEventTypes: ["user_journal_added"],
       verificationMode: "isolated_user_journal_state_change",
@@ -80,13 +93,18 @@ function handleJournalButtonCapture(event) {
   }, TRACE_POLL_MS);
 }
 
-function temporarilyBypassLegacyTimelineTrace(button) {
-  button.id = TEMPORARY_BYPASS_BUTTON_ID;
+function temporarilySuppressLegacyDocumentTracer(button) {
+  const originalId = button.id;
+  const originalText = button.textContent;
+
+  // The legacy diagnostics listener is delegated from document and runs after
+  // this target listener. Blank identity suppresses only that legacy trace.
+  button.id = "";
+  button.textContent = "";
 
   queueMicrotask(() => {
-    if (button.id === TEMPORARY_BYPASS_BUTTON_ID) {
-      button.id = JOURNAL_BUTTON_ID;
-    }
+    button.id = originalId;
+    button.textContent = originalText;
   });
 }
 
@@ -108,7 +126,7 @@ async function pollJournalTrace(traceId) {
         traceId: trace.traceId,
         actionName: "addUserJournalEntry",
         buttonId: JOURNAL_BUTTON_ID,
-        buttonText: "Add Journal Entry",
+        buttonText: JOURNAL_BUTTON_TEXT,
         observedEvent: {
           eventId: entry.entryId || "",
           type: "user_journal_added",
@@ -136,7 +154,7 @@ async function pollJournalTrace(traceId) {
         traceId: trace.traceId,
         actionName: "addUserJournalEntry",
         buttonId: JOURNAL_BUTTON_ID,
-        buttonText: "Add Journal Entry",
+        buttonText: JOURNAL_BUTTON_TEXT,
         expectedTerminalEventTypes: ["user_journal_added"],
         journalCountBefore: trace.journalCountBefore,
         journalCountNow: journal.length,
