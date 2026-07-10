@@ -15,6 +15,7 @@ const LEGACY_IMPORT_EVENT_TYPE = "legacy_workspace_imported_to_session_db";
 const MEANINGFUL_WORKSPACE_EVENT_TYPES = new Set([
   "selected_tabs_added",
   "active_tab_added",
+  "workspace_tabs_refreshed",
   "workspace_tab_metadata_refreshed",
   "tab_role_updated",
   "tab_alias_updated",
