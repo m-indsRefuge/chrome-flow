@@ -1,8 +1,10 @@
 import { registerDeveloperSurface } from "./developer-mode.js";
+import "./diagnostic-ring-reconciler.js";
 import "./workspace-archive-close-ownership-controller.js";
 import "./layer2-archive-close-ownership-validation.js";
 import "./legacy-archive-projection-cleanup.js";
 import "./layer2-legacy-archive-projection-validation.js";
+import "./layer2-hardening-regression-harness.js";
 
 installWorkspaceSessionProductSurface();
 
