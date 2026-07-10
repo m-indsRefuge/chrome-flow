@@ -8,6 +8,9 @@ const WORKSPACE_STORAGE_KEY = "chromeFlowWorkspace";
 const SAVE_SETTLE_DELAY_MS = 450;
 const AUTO_SAVE_DEBOUNCE_MS = 900;
 const AUTO_SAVE_MINIMUM_INTERVAL_MS = 1500;
+const CROSS_CONTEXT_DUPLICATE_WINDOW_MS = 5000;
+const CROSS_CONTEXT_SAVE_LOCK_NAME = "chrome-flow-workspace-library-save";
+const SHARED_SAVE_COORDINATOR_KEY = "chromeFlowWorkspaceLibrarySaveCoordinator";
 const LEGACY_IMPORT_EVENT_TYPE = "legacy_workspace_imported_to_session_db";
 const MEANINGFUL_WORKSPACE_EVENT_TYPES = new Set([
   "selected_tabs_added",
@@ -27,6 +30,7 @@ const MEANINGFUL_WORKSPACE_EVENT_TYPES = new Set([
   "workspace_archived"
 ]);
 
+const saveContextId = crypto.randomUUID();
 let workspaceLibrarySaveInProgress = false;
 let pendingWorkspaceLibrarySave = false;
 let autoSaveTimer = null;
@@ -121,7 +125,47 @@ async function runWorkspaceLibrarySave(source, options = {}) {
     }
 
     lastSaveStartedAtMs = nowMs;
-    const result = await saveActiveRuntimeToWorkspaceLibrary(source, options);
+
+    const result = await runWithCrossContextSaveLock(async () => {
+      const coordinator = await getSharedSaveCoordinator();
+
+      if (isRecentMatchingCoordinator(coordinator, signature)) {
+        lastSavedSignature = signature;
+        setProductionSaveStatus("Workspace Library is already current.");
+
+        await appendRuntimeDiagnostic(
+          "info",
+          "workspace_library_save_deduplicated_cross_context",
+          "Skipped a duplicate Workspace Library save from another side-panel context.",
+          {
+            source,
+            workspaceId: runtimeWorkspace.workspaceId || "",
+            contextId: saveContextId,
+            matchedContextId: coordinator.contextId || "",
+            matchedSource: coordinator.source || "",
+            matchedSavedAt: coordinator.savedAt || "",
+            duplicateWindowMs: CROSS_CONTEXT_DUPLICATE_WINDOW_MS
+          }
+        );
+
+        return null;
+      }
+
+      const saveResult = await saveActiveRuntimeToWorkspaceLibrary(source, options);
+
+      if (saveResult) {
+        await setSharedSaveCoordinator({
+          signature,
+          workspaceId: saveResult.workspaceId || runtimeWorkspace.workspaceId || "",
+          source,
+          savedAt: saveResult.savedAt || "",
+          completedAtMs: Date.now(),
+          contextId: saveContextId
+        });
+      }
+
+      return saveResult;
+    });
 
     if (result) {
       lastSavedSignature = signature;
@@ -306,6 +350,43 @@ function tabProjectionSignature(tabs) {
 
 function sortUniqueStrings(values) {
   return Array.from(new Set(values.filter((value) => typeof value === "string" && value))).sort();
+}
+
+async function runWithCrossContextSaveLock(callback) {
+  if (globalThis.navigator?.locks?.request) {
+    return navigator.locks.request(CROSS_CONTEXT_SAVE_LOCK_NAME, { mode: "exclusive" }, callback);
+  }
+
+  return callback();
+}
+
+async function getSharedSaveCoordinator() {
+  const storageArea = getCoordinatorStorageArea();
+  const result = await storageArea.get(SHARED_SAVE_COORDINATOR_KEY);
+  const coordinator = result?.[SHARED_SAVE_COORDINATOR_KEY];
+
+  return coordinator && typeof coordinator === "object" ? coordinator : null;
+}
+
+async function setSharedSaveCoordinator(coordinator) {
+  const storageArea = getCoordinatorStorageArea();
+  await storageArea.set({
+    [SHARED_SAVE_COORDINATOR_KEY]: coordinator
+  });
+}
+
+function getCoordinatorStorageArea() {
+  return chrome.storage.session || chrome.storage.local;
+}
+
+function isRecentMatchingCoordinator(coordinator, signature) {
+  if (!coordinator || coordinator.signature !== signature) return false;
+
+  const completedAtMs = Number(coordinator.completedAtMs);
+  if (!Number.isFinite(completedAtMs)) return false;
+
+  const elapsedMs = Date.now() - completedAtMs;
+  return elapsedMs >= 0 && elapsedMs < CROSS_CONTEXT_DUPLICATE_WINDOW_MS;
 }
 
 function refreshWorkspaceLibraryProductSurface() {
