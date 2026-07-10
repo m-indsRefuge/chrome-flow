@@ -92,6 +92,7 @@ async function executeResumeTransaction(record, options) {
   const operationId = crypto.randomUUID();
   const workspaceId = record.workspace.workspaceId;
   const previousRuntime = cloneValue(await getActiveWorkspaceRuntime());
+  const previousBrowserFocus = await captureBrowserFocusSnapshot();
   const runtimeWorkspace = buildRuntimeWorkspaceFromMemoryRecord(record);
   const restoreTargetMode = determineHydrationTargetMode(record, runtimeWorkspace);
   const restorableTabs = runtimeWorkspace.tabs.filter((tab) => isRestorableWebUrl(tab.url));
@@ -102,7 +103,8 @@ async function executeResumeTransaction(record, options) {
     workspaceId,
     workspaceName: runtimeWorkspace.name,
     restoreTargetMode,
-    previousRuntime
+    previousRuntime,
+    previousBrowserFocus
   });
 
   if (!restorableTabs.length) {
@@ -139,7 +141,9 @@ async function executeResumeTransaction(record, options) {
     restorableTabCount: restorableTabs.length,
     skippedTabCount,
     previousRuntimeWorkspaceId: previousRuntime?.workspaceId || "",
-    validationMode: validation.enabled
+    previousBrowserFocus,
+    validationMode: validation.enabled,
+    provisionalTabsBackgrounded: validation.keepCreatedTabsInBackground
   });
 
   try {
@@ -291,7 +295,7 @@ async function restoreTabsInDedicatedWindow(restorableTabs, context, validation)
   assertChromeCreationApis(true);
 
   const createdWindow = await chrome.windows.create({
-    focused: true,
+    focused: !validation.keepCreatedTabsInBackground,
     state: "normal"
   });
   const windowId = createdWindow.id;
@@ -306,7 +310,9 @@ async function restoreTabsInDedicatedWindow(restorableTabs, context, validation)
     ? createdWindow.tabs.map((tab) => tab.id).filter(Number.isInteger)
     : [];
 
-  await chrome.windows.update(windowId, { focused: true, state: "normal" });
+  if (!validation.keepCreatedTabsInBackground) {
+    await chrome.windows.update(windowId, { focused: true, state: "normal" });
+  }
   await delay(WINDOW_SETTLE_DELAY_MS);
 
   const openedTabs = await createResumeTabs(
@@ -338,14 +344,19 @@ async function restoreTabsInDedicatedWindow(restorableTabs, context, validation)
   }
 
   context.removedTemporaryTabIds = removedTemporaryTabIds;
-  await chrome.windows.update(windowId, { focused: true, state: "normal" });
+
+  if (!validation.keepCreatedTabsInBackground) {
+    await chrome.windows.update(windowId, { focused: true, state: "normal" });
+  }
 
   return {
     windowId,
     openedTabs,
     temporaryTabIds: [...context.temporaryTabIds],
     removedTemporaryTabIds,
-    creationMode: "transactional_empty_window_then_create_resumed_tabs"
+    creationMode: validation.keepCreatedTabsInBackground
+      ? "transactional_background_window_validation"
+      : "transactional_empty_window_then_create_resumed_tabs"
   };
 }
 
@@ -365,7 +376,9 @@ async function restoreTabsInCurrentWindow(restorableTabs, context, validation) {
     openedTabs,
     temporaryTabIds: [],
     removedTemporaryTabIds: [],
-    creationMode: "transactional_current_window_create_resumed_tabs"
+    creationMode: validation.keepCreatedTabsInBackground
+      ? "transactional_current_window_background_validation"
+      : "transactional_current_window_create_resumed_tabs"
   };
 }
 
@@ -375,7 +388,7 @@ async function createResumeTabs(restorableTabs, windowId, context, validation) {
   for (const [index, tab] of restorableTabs.entries()) {
     const createArgs = {
       url: tab.url,
-      active: index === 0
+      active: validation.keepCreatedTabsInBackground ? false : index === 0
     };
 
     if (Number.isInteger(windowId)) {
@@ -584,6 +597,10 @@ async function rollbackResumeOperation(context) {
     previousRuntimeWorkspaceId: context.previousRuntime?.workspaceId || "",
     runtimeAfterRollbackWorkspaceId: "",
     runtimePreserved: false,
+    previousBrowserFocus: cloneValue(context.previousBrowserFocus),
+    focusRestoreAttempted: false,
+    focusRestored: false,
+    focusAfterRollback: null,
     complete: false
   };
 
@@ -619,6 +636,11 @@ async function rollbackResumeOperation(context) {
     rollback.remainingWindowId = context.createdWindowId;
   }
 
+  const focusResult = await restoreBrowserFocusSnapshot(context.previousBrowserFocus);
+  rollback.focusRestoreAttempted = focusResult.attempted;
+  rollback.focusRestored = focusResult.restored;
+  rollback.focusAfterRollback = focusResult.after;
+
   try {
     const runtimeAfterRollback = await getActiveWorkspaceRuntime();
     rollback.runtimeAfterRollbackWorkspaceId = runtimeAfterRollback?.workspaceId || "";
@@ -630,11 +652,72 @@ async function rollbackResumeOperation(context) {
     });
   }
 
+  const focusRequirementSatisfied = !context.previousBrowserFocus?.activeTabId
+    || rollback.focusRestored;
+
   rollback.complete = rollback.remainingTabIds.length === 0
     && rollback.remainingWindowId === null
-    && rollback.runtimePreserved;
+    && rollback.runtimePreserved
+    && focusRequirementSatisfied;
 
   return rollback;
+}
+
+async function captureBrowserFocusSnapshot() {
+  const snapshot = {
+    windowId: null,
+    activeTabId: null,
+    capturedAt: new Date().toISOString()
+  };
+
+  try {
+    const activeTabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+    const activeTab = activeTabs[0] || null;
+    snapshot.activeTabId = Number.isInteger(activeTab?.id) ? activeTab.id : null;
+    snapshot.windowId = Number.isInteger(activeTab?.windowId) ? activeTab.windowId : null;
+  } catch (_error) {
+    try {
+      const currentWindow = await getCurrentWindowSafe();
+      snapshot.windowId = Number.isInteger(currentWindow?.id) ? currentWindow.id : null;
+    } catch (_innerError) {
+      // Focus capture is best-effort; rollback still preserves runtime and created resources.
+    }
+  }
+
+  return snapshot;
+}
+
+async function restoreBrowserFocusSnapshot(snapshot) {
+  const result = {
+    attempted: Boolean(Number.isInteger(snapshot?.activeTabId) || Number.isInteger(snapshot?.windowId)),
+    restored: false,
+    after: null
+  };
+
+  if (!result.attempted) {
+    result.restored = true;
+    return result;
+  }
+
+  try {
+    if (Number.isInteger(snapshot.windowId) && globalThis.chrome?.windows?.update) {
+      await chrome.windows.update(snapshot.windowId, { focused: true });
+    }
+
+    if (Number.isInteger(snapshot.activeTabId) && globalThis.chrome?.tabs?.update) {
+      await chrome.tabs.update(snapshot.activeTabId, { active: true });
+    }
+
+    await delay(100);
+    result.after = await captureBrowserFocusSnapshot();
+    result.restored = (!Number.isInteger(snapshot.windowId) || result.after.windowId === snapshot.windowId)
+      && (!Number.isInteger(snapshot.activeTabId) || result.after.activeTabId === snapshot.activeTabId);
+  } catch (_error) {
+    result.after = await captureBrowserFocusSnapshot();
+    result.restored = false;
+  }
+
+  return result;
 }
 
 async function removeCreatedTabWithRetry(tabId, errors) {
@@ -700,13 +783,14 @@ async function recordResumeBlocked(workspaceId, options, reason, details = {}) {
   });
 }
 
-function createResumeOperationContext({ operationId, workspaceId, workspaceName, restoreTargetMode, previousRuntime }) {
+function createResumeOperationContext({ operationId, workspaceId, workspaceName, restoreTargetMode, previousRuntime, previousBrowserFocus }) {
   return {
     operationId,
     workspaceId,
     workspaceName,
     restoreTargetMode,
     previousRuntime,
+    previousBrowserFocus,
     createdWindowId: null,
     createdDedicatedWindow: false,
     createdTabIds: [],
@@ -724,6 +808,7 @@ function summarizeOperationContext(context) {
     workspaceId: context.workspaceId,
     restoreTargetMode: context.restoreTargetMode,
     previousRuntimeWorkspaceId: context.previousRuntime?.workspaceId || "",
+    previousBrowserFocus: cloneValue(context.previousBrowserFocus),
     createdWindowId: context.createdWindowId,
     createdDedicatedWindow: context.createdDedicatedWindow,
     createdTabIds: [...context.createdTabIds],
@@ -737,6 +822,9 @@ function summarizeOperationContext(context) {
 
 function getValidationControls(options = {}) {
   const enabled = options.validationMode === VALIDATION_MODE;
+  const failAfterOpenedTabCount = enabled
+    ? clampInteger(options.testFailureAfterOpenedTabCount, 0, 20)
+    : 0;
 
   return {
     enabled,
@@ -745,9 +833,9 @@ function getValidationControls(options = {}) {
       ? clampInteger(options.testHoldBeforeBrowserMutationMs, 0, 5000)
       : 0,
     failBeforeBrowserMutation: enabled && options.testFailureBeforeBrowserMutation === true,
-    failAfterOpenedTabCount: enabled
-      ? clampInteger(options.testFailureAfterOpenedTabCount, 0, 20)
-      : 0
+    failAfterOpenedTabCount,
+    keepCreatedTabsInBackground: enabled
+      && (options.keepCreatedTabsInBackground === true || failAfterOpenedTabCount > 0)
   };
 }
 
@@ -899,15 +987,7 @@ function normalizeUrlForOwnership(url) {
     parsed.hash = "";
     return parsed.toString();
   } catch (_error) {
-    return String(url || "");
-  }
-}
-
-async function safeAppendRuntimeDiagnostic(level, action, message, details = {}) {
-  try {
-    await appendRuntimeDiagnostic(level, action, message, details);
-  } catch (error) {
-    console.error("Chrome Flow resume diagnostic write failed.", action, error);
+    return String(url || "").trim();
   }
 }
 
@@ -920,9 +1000,17 @@ function cloneValue(value) {
 }
 
 function clampInteger(value, minimum, maximum) {
-  const number = Number(value);
-  if (!Number.isInteger(number)) return minimum;
+  const number = Number.parseInt(value, 10);
+  if (!Number.isFinite(number)) return minimum;
   return Math.max(minimum, Math.min(maximum, number));
+}
+
+async function safeAppendRuntimeDiagnostic(level, action, message, details = {}) {
+  try {
+    await appendRuntimeDiagnostic(level, action, message, details);
+  } catch (_error) {
+    // Diagnostics must never change resume commit or rollback behavior.
+  }
 }
 
 function summarizeError(error) {
@@ -930,9 +1018,9 @@ function summarizeError(error) {
 
   return {
     name: error.name || "Error",
-    code: error.code || "",
     message: error.message || String(error),
-    details: error.details || null,
+    code: error.code || "",
+    details: error.details || {},
     stack: typeof error.stack === "string" ? error.stack.slice(0, 2000) : ""
   };
 }
