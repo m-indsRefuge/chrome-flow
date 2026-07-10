@@ -121,25 +121,20 @@ async function refreshWorkspaceLibraryFromSharedRevision(coordinator, areaName) 
       savedAt: coordinator.savedAt || "",
       saveContextId: coordinator.contextId || "",
       manualRefreshRequired: false,
-      operatorClickRecorded: false
+      operatorClickRecorded: false,
+      invocationMode: "non_bubbling_internal_refresh_event"
     }
   );
 }
 
 function invokeInternalLibraryRefresh(refreshButton) {
-  // The saved-workspace registry registered its target listener before this
-  // module loaded. That listener performs the refresh first. This one-shot
-  // target listener then stops only the synthetic compatibility click from
-  // bubbling into document-level Operator click diagnostics.
-  refreshButton.addEventListener(
-    "click",
-    (event) => {
-      event.stopPropagation();
-    },
-    { once: true }
-  );
-
-  refreshButton.click();
+  // Run the already-registered target handler without producing a bubbling
+  // Operator click. The event reaches the refresh control itself, but cannot
+  // reach document-level click diagnostics.
+  refreshButton.dispatchEvent(new Event("click", {
+    bubbles: false,
+    cancelable: false
+  }));
 }
 
 function createRevisionSignature(coordinator) {
