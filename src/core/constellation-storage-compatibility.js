@@ -39,6 +39,8 @@ async function readCompatibleStorageValue(identityId) {
     legacyKey: identity.legacyKey || "",
     canonicalPresent,
     legacyPresent,
+    canonicalValue,
+    legacyValue,
     equivalent,
     conflict,
     sourceKey: selected.sourceKey,
@@ -53,10 +55,7 @@ async function writeCompatibleStorageValue(identityId, value, options = {}) {
   const storageArea = getStorageArea(identity);
   const writes = {};
 
-  if (identity.canonicalKey) {
-    writes[identity.canonicalKey] = cloneSerializable(value);
-  }
-
+  if (identity.canonicalKey) writes[identity.canonicalKey] = cloneSerializable(value);
   if (identity.legacyKey && options.writeLegacy !== false) {
     writes[identity.legacyKey] = cloneSerializable(value);
   }
@@ -76,11 +75,7 @@ async function clearCompatibleStorageValue(identityId) {
   const identity = getStorageIdentity(identityId);
   const storageArea = getStorageArea(identity);
   const keys = [identity.canonicalKey, identity.legacyKey].filter(Boolean);
-
-  if (keys.length) {
-    await storageArea.remove(keys);
-  }
-
+  if (keys.length) await storageArea.remove(keys);
   return { identityId, removedKeys: keys };
 }
 
@@ -97,27 +92,18 @@ async function migrateStorageIdentity(identityId) {
   }
 
   if (identityId === "diagnostics") {
-    const merged = mergeDiagnosticCollections(
-      before.canonicalPresent ? before.valueFromCanonical ?? undefined : undefined,
-      before.legacyPresent ? before.valueFromLegacy ?? undefined : undefined,
-      before
-    );
-    const currentValue = before.value;
-    const changed = stableStringify(currentValue) !== stableStringify(merged)
-      || !before.canonicalPresent
+    const merged = mergeDiagnosticCollections(before.canonicalValue, before.legacyValue);
+    const changed = !before.canonicalPresent
       || !before.legacyPresent
-      || before.conflict;
-
-    if (changed) {
-      await writeCompatibleStorageValue(identityId, merged);
-    }
-
+      || !before.equivalent
+      || stableStringify(before.value) !== stableStringify(merged);
+    if (changed) await writeCompatibleStorageValue(identityId, merged);
     const after = await readCompatibleStorageValue(identityId);
     return createMigrationResult(identityId, before, after, changed ? "diagnostics_merged_and_written_through" : "already_equivalent", changed);
   }
 
   if (identityId === "workspaceLibrarySaveCoordinator" && before.conflict) {
-    const selected = selectNewestCoordinator(before);
+    const selected = selectNewestCoordinator(before.canonicalValue, before.legacyValue);
     await writeCompatibleStorageValue(identityId, selected);
     const after = await readCompatibleStorageValue(identityId);
     return createMigrationResult(identityId, before, after, "newest_coordinator_written_through", true);
@@ -141,85 +127,65 @@ async function runConstellationStorageIdentityMigration(options = {}) {
   const identityIds = Array.isArray(options.identityIds) && options.identityIds.length
     ? options.identityIds
     : [...DEFAULT_MIGRATION_IDENTITIES];
-  const startedAt = new Date().toISOString();
-  const runId = crypto.randomUUID();
   const results = [];
+  const startedAt = new Date().toISOString();
 
   for (const identityId of identityIds) {
     results.push(await migrateStorageIdentity(identityId));
   }
 
-  const conflicts = results.filter((result) => result.conflictRequiresReview);
-  const changed = results.filter((result) => result.changed);
+  const conflictIdentityIds = results
+    .filter((result) => result.conflictRequiresReview)
+    .map((result) => result.identityId);
   const marker = {
     schema: MIGRATION_STATE_SCHEMA,
-    runId,
+    runId: crypto.randomUUID(),
     startedAt,
     completedAt: new Date().toISOString(),
-    status: conflicts.length ? "completed_with_conflicts" : "completed",
+    status: conflictIdentityIds.length ? "completed_with_conflicts" : "completed",
     identityIds,
-    changedIdentityIds: changed.map((result) => result.identityId),
-    conflictIdentityIds: conflicts.map((result) => result.identityId),
+    changedIdentityIds: results.filter((result) => result.changed).map((result) => result.identityId),
+    conflictIdentityIds,
     destructiveDeletionPerformed: false,
     physicalIndexedDbRenamed: false,
     results: results.map(summarizeMigrationResult)
   };
 
-  await writeMigrationMarker(marker);
+  await chrome.storage.local.set({
+    [STORAGE_IDENTITIES.migrationState.canonicalKey]: marker
+  });
+
   return { marker, results };
 }
 
 async function getConstellationStorageMigrationState() {
-  const identity = STORAGE_IDENTITIES.migrationState;
-  const storageArea = getStorageArea(identity);
-  const result = await storageArea.get(identity.canonicalKey);
-  return result?.[identity.canonicalKey] || null;
-}
-
-async function writeMigrationMarker(marker) {
-  const identity = STORAGE_IDENTITIES.migrationState;
-  const storageArea = getStorageArea(identity);
-  await storageArea.set({ [identity.canonicalKey]: cloneSerializable(marker) });
+  const key = STORAGE_IDENTITIES.migrationState.canonicalKey;
+  const result = await chrome.storage.local.get(key);
+  return result?.[key] || null;
 }
 
 function selectCompatibleValue(identityId, state) {
   if (identityId === "diagnostics") {
-    const merged = mergeDiagnosticCollections(state.canonicalValue, state.legacyValue);
     return {
-      sourceKey: state.canonicalPresent && state.legacyPresent ? "merged_canonical_and_legacy" : state.canonicalPresent ? "canonical" : state.legacyPresent ? "legacy" : "none",
-      value: merged
+      sourceKey: state.canonicalPresent && state.legacyPresent
+        ? "merged_canonical_and_legacy"
+        : state.canonicalPresent ? "canonical" : state.legacyPresent ? "legacy" : "none",
+      value: mergeDiagnosticCollections(state.canonicalValue, state.legacyValue)
     };
   }
 
   if (identityId === "workspaceLibrarySaveCoordinator" && state.conflict) {
-    return {
-      sourceKey: "newest_completed_coordinator",
-      value: selectNewestCoordinator(state)
-    };
+    return { sourceKey: "newest_completed_coordinator", value: selectNewestCoordinator(state.canonicalValue, state.legacyValue) };
   }
 
-  if (state.canonicalPresent) {
-    return { sourceKey: "canonical", value: state.canonicalValue };
-  }
-
-  if (state.legacyPresent) {
-    return { sourceKey: "legacy", value: state.legacyValue };
-  }
-
+  if (state.canonicalPresent) return { sourceKey: "canonical", value: state.canonicalValue };
+  if (state.legacyPresent) return { sourceKey: "legacy", value: state.legacyValue };
   return { sourceKey: "none", value: undefined };
 }
 
-function mergeDiagnosticCollections(canonicalValue, legacyValue, state = null) {
-  const canonical = Array.isArray(canonicalValue)
-    ? canonicalValue
-    : Array.isArray(state?.canonicalValue)
-      ? state.canonicalValue
-      : [];
-  const legacy = Array.isArray(legacyValue)
-    ? legacyValue
-    : Array.isArray(state?.legacyValue)
-      ? state.legacyValue
-      : [];
+function mergeDiagnosticCollections(canonicalValue, legacyValue) {
+  const canonical = Array.isArray(canonicalValue) ? canonicalValue : [];
+  const legacy = Array.isArray(legacyValue) ? legacyValue : [];
   const byId = new Map();
 
   for (const diagnostic of [...canonical, ...legacy]) {
@@ -228,20 +194,17 @@ function mergeDiagnosticCollections(canonicalValue, legacyValue, state = null) {
     byId.set(identity, diagnostic);
   }
 
-  return Array.from(byId.values())
-    .sort(compareDiagnostics)
-    .slice(-200);
+  return Array.from(byId.values()).sort(compareDiagnostics).slice(-200);
 }
 
-function selectNewestCoordinator(state) {
-  const candidates = [state.canonicalValue, state.legacyValue]
-    .filter((value) => value && typeof value === "object");
+function selectNewestCoordinator(canonicalValue, legacyValue) {
+  return [canonicalValue, legacyValue]
+    .filter((value) => value && typeof value === "object")
+    .sort((left, right) => getCoordinatorTime(right) - getCoordinatorTime(left))[0] || null;
+}
 
-  return candidates.sort((left, right) => {
-    const leftCompleted = Number(left.completedAtMs) || Date.parse(left.savedAt || "") || 0;
-    const rightCompleted = Number(right.completedAtMs) || Date.parse(right.savedAt || "") || 0;
-    return rightCompleted - leftCompleted;
-  })[0] || null;
+function getCoordinatorTime(value) {
+  return Number(value?.completedAtMs) || Date.parse(value?.savedAt || "") || 0;
 }
 
 function createMigrationResult(identityId, before, after, action, changed, conflictRequiresReview = false) {
@@ -285,17 +248,12 @@ function summarizeMigrationResult(result) {
 }
 
 function getStorageArea(identity) {
-  if (identity.area === "session_preferred") {
-    return chrome.storage.session || chrome.storage.local;
-  }
-
+  if (identity.area === "session_preferred") return chrome.storage.session || chrome.storage.local;
   return chrome.storage[identity.area] || chrome.storage.local;
 }
 
 function getStorageAreaName(identity) {
-  if (identity.area === "session_preferred") {
-    return chrome.storage.session ? "session" : "local";
-  }
+  if (identity.area === "session_preferred") return chrome.storage.session ? "session" : "local";
   return identity.area;
 }
 
@@ -312,11 +270,11 @@ function fingerprintValue(value) {
 
 function createDiagnosticFallbackIdentity(diagnostic) {
   return [
-    diagnostic.createdAt || "",
-    diagnostic.level || "",
-    diagnostic.action || "",
-    diagnostic.message || "",
-    stableStringify(diagnostic.details || {})
+    diagnostic?.createdAt || "",
+    diagnostic?.level || "",
+    diagnostic?.action || "",
+    diagnostic?.message || "",
+    stableStringify(diagnostic?.details || {})
   ].join("::");
 }
 
