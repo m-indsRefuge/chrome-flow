@@ -1,4 +1,4 @@
-import { scheduleWorkspaceProjectionReconciliation } from "../core/workspace-projection-reconciler.js";
+import { scheduleWorkspaceProjectionReconciliation } from "../core/workspace-projection-reconciler-v2.js";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log("Chrome Flow installed.");
