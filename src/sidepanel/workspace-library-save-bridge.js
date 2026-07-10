@@ -119,9 +119,14 @@ async function runWorkspaceLibrarySave(source, options = {}) {
       return null;
     }
 
-    lastSavedSignature = signature;
     lastSaveStartedAtMs = nowMs;
-    return await saveActiveRuntimeToWorkspaceLibrary(source, options);
+    const result = await saveActiveRuntimeToWorkspaceLibrary(source, options);
+
+    if (result) {
+      lastSavedSignature = signature;
+    }
+
+    return result;
   } finally {
     workspaceLibrarySaveInProgress = false;
 
@@ -145,6 +150,7 @@ async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
     await appendRuntimeDiagnostic("info", "workspace_saved_to_workspace_library", "Active workspace saved to Workspace Library from production runtime path.", {
       source,
       saveMode: result.saveMode,
+      persistenceMode: result.persistenceMode,
       productionSave: true,
       savedAt,
       workspaceId: result.workspaceId,
@@ -153,6 +159,7 @@ async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
       tabCount: result.counts.tabs,
       journalEntryCount: result.counts.journalEntries,
       timelineEventCount: result.counts.timelineEvents,
+      replacementStats: result.replacementStats,
       sessionDbRuntimeSourceOfTruth: result.bridgeStatus.sessionDbRuntimeSourceOfTruth,
       activeWorkspaceRuntimeSource: result.bridgeStatus.activeWorkspaceRuntimeSource,
       migrationMode: result.bridgeStatus.migrationMode
@@ -165,7 +172,9 @@ async function saveActiveRuntimeToWorkspaceLibrary(source, options = {}) {
         workspaceId: result.workspaceId,
         workspaceName: result.workspaceName,
         savedAt,
-        source
+        source,
+        persistenceMode: result.persistenceMode,
+        replacementStats: result.replacementStats
       }
     }));
 
@@ -195,7 +204,8 @@ function inferAutoSaveSource(newWorkspace, oldWorkspace) {
 
   if (newTabs.length !== oldTabs.length) return "runtime_tabs_changed";
   if (newJournal.length !== oldJournal.length) return "runtime_journal_changed";
-  if (tabRoleSignature(newTabs) !== tabRoleSignature(oldTabs)) return "runtime_tab_roles_changed";
+  if (tabContentSignature(newTabs) !== tabContentSignature(oldTabs)) return "runtime_tab_content_changed";
+  if (journalContentSignature(newJournal) !== journalContentSignature(oldJournal)) return "runtime_journal_content_changed";
   if (tabProjectionSignature(newTabs) !== tabProjectionSignature(oldTabs)) return "runtime_tab_projection_changed";
 
   return "";
@@ -226,22 +236,34 @@ function createWorkspaceLibrarySaveSignature(workspace) {
     name: workspace?.name || "",
     aim: workspace?.aim || "",
     workspaceType: workspace?.workspaceType || "",
-    tabCount: tabs.length,
-    journalCount: journal.length,
+    tabContent: tabContentSignature(tabs),
+    tabProjection: tabProjectionSignature(tabs),
+    journalContent: journalContentSignature(journal),
     timelineCount: timeline.length,
     latestTimelineEventType: getLatestTimelineEventType(workspace),
-    latestTimelineEventId: timeline.length ? timeline[timeline.length - 1]?.eventId || "" : "",
-    tabRoles: tabRoleSignature(tabs),
-    tabProjection: tabProjectionSignature(tabs)
+    latestTimelineEventId: timeline.length ? timeline[timeline.length - 1]?.eventId || "" : ""
   });
 }
 
-function tabRoleSignature(tabs) {
+function tabContentSignature(tabs) {
   return tabs.map((tab) => [
     tab?.workspaceTabId || "",
-    tab?.tabId || "",
+    tab?.url || "",
+    tab?.originalTitle || tab?.title || "",
     tab?.role || "",
     tab?.alias || ""
+  ].join(":"))
+    .sort()
+    .join("|");
+}
+
+function journalContentSignature(entries) {
+  return entries.map((entry) => [
+    entry?.entryId || entry?.journalEntryId || "",
+    entry?.text || "",
+    entry?.tag || "",
+    entry?.relatedRoleId || entry?.relatedRoleLabel || entry?.relatedRole || "",
+    entry?.createdAt || ""
   ].join(":"))
     .sort()
     .join("|");
