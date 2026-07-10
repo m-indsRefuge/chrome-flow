@@ -2,13 +2,16 @@ import {
   DEFAULT_WORKSPACE_TYPE
 } from "./workspace-role-sets.js";
 
-const WORKSPACE_KEY = "chromeFlowWorkspace";
+import {
+  readCompatibleStorageValue,
+  writeCompatibleStorageValue
+} from "./constellation-storage-compatibility.js";
 
 export async function getWorkspace() {
-  const result = await chrome.storage.local.get(WORKSPACE_KEY);
+  const compatibleRead = await readCompatibleStorageValue("activeWorkspace");
 
-  if (result[WORKSPACE_KEY]) {
-    const workspace = normalizeWorkspace(result[WORKSPACE_KEY]);
+  if (compatibleRead.value) {
+    const workspace = normalizeWorkspace(compatibleRead.value);
     await saveWorkspace(workspace);
     return workspace;
   }
@@ -33,9 +36,10 @@ export async function getWorkspace() {
 }
 
 export async function saveWorkspace(workspace) {
-  await chrome.storage.local.set({
-    [WORKSPACE_KEY]: normalizeWorkspace(workspace)
-  });
+  await writeCompatibleStorageValue(
+    "activeWorkspace",
+    normalizeWorkspace(workspace)
+  );
 }
 
 export async function addJournalEntry(text, details = {}) {
