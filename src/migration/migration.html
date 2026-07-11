@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Constellation Data Recovery</title>
+  <link rel="stylesheet" href="./migration.css">
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Constellation Data Recovery</h1>
+      <p>Inspect, validate, and transactionally restore a local Constellation migration package.</p>
+      <p class="notice">This page works locally inside the extension. It does not upload the selected package or contact a network service.</p>
+    </header>
+
+    <section class="card" aria-labelledby="destinationHeading">
+      <h2 id="destinationHeading">Destination identity</h2>
+      <pre id="destinationSummary">Loading extension identity…</pre>
+    </section>
+
+    <section class="card" aria-labelledby="controlledValidationHeading">
+      <h2 id="controlledValidationHeading">Layer 2.2D controlled validation</h2>
+      <p>Runs disposable create, verification, cleanup, forced-failure, and rollback checks. It does not read or modify the saved production backup.</p>
+      <div class="actions">
+        <button id="runControlledImportValidationButton" class="primary">Run Controlled Import Validation</button>
+        <button id="copyControlledImportValidationButton" disabled>Copy Validation Packet</button>
+      </div>
+      <p id="controlledValidationStatus" class="status" role="status"></p>
+      <pre id="controlledValidationSummary">Controlled validation has not run.</pre>
+    </section>
+
+    <section class="card" aria-labelledby="inspectHeading">
+      <h2 id="inspectHeading">1. Select and inspect a package</h2>
+      <p>Select a JSON file created by Constellation’s migration exporter. Inspection never writes extension data.</p>
+
+      <label for="migrationPackageFile">Migration package</label>
+      <input id="migrationPackageFile" type="file" accept="application/json,.json">
+
+      <div class="actions">
+        <button id="inspectMigrationPackageButton" class="primary" disabled>Inspect Selected Package</button>
+        <button id="prepareCurrentStateNoopButton">Prepare Current-State No-Op Test</button>
+        <button id="copyImportInspectionButton" disabled>Copy Inspection Packet</button>
+      </div>
+
+      <p id="inspectionStatus" class="status" role="status"></p>
+      <pre id="inspectionSummary">No package inspected.</pre>
+    </section>
+
+    <section class="card" aria-labelledby="executeHeading">
+      <h2 id="executeHeading">2. Authorize import execution</h2>
+      <p class="notice warning">Execution is allowed only when package validation passes and the fresh dry-run plan contains zero conflicts. Existing records are never overwritten or deleted.</p>
+
+      <div class="checkbox-row">
+        <input id="importAcknowledgement" type="checkbox" disabled>
+        <label for="importAcknowledgement">I understand that this operation may create missing extension records and keys, but must not overwrite or delete existing data.</label>
+      </div>
+
+      <label for="importAuthorizationPhrase">Type the exact authorization phrase</label>
+      <input id="importAuthorizationPhrase" type="text" autocomplete="off" spellcheck="false" placeholder="IMPORT CONSTELLATION DATA" disabled>
+
+      <div class="actions">
+        <button id="executeMigrationImportButton" class="primary" disabled>Execute Transactional Import</button>
+        <button id="copyImportExecutionButton" disabled>Copy Execution Packet</button>
+      </div>
+
+      <p id="executionStatus" class="status" role="status"></p>
+      <pre id="executionSummary">No import execution attempted.</pre>
+    </section>
+
+    <section class="card">
+      <h2>Safety boundary</h2>
+      <p class="small">This recovery surface does not open, close, focus, move, or group browser tabs. The physical IndexedDB name remains <code>chrome-flow-session-db</code> during Layer 2.2D.</p>
+    </section>
+  </main>
+
+  <script type="module" src="./migration.js"></script>
+  <script type="module" src="./controlled-validation-ui.js"></script>
+</body>
+</html>

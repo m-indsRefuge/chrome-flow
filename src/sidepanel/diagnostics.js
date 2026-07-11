@@ -1,3 +1,5 @@
+import { CONSTELLATION_PRODUCT_NAME } from "../core/constellation-product-identity.js";
+
 const WORKSPACE_KEY = "chromeFlowWorkspace";
 const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const MAX_DIAGNOSTICS = 200;
@@ -85,7 +87,9 @@ copyDiagnosticPacketButton?.addEventListener("click", async () => {
 });
 
 clearDiagnosticsButton?.addEventListener("click", async () => {
-  const confirmed = window.confirm("Clear Chrome Flow developer diagnostics? This does not clear the User Journal, System Journal, Recovery Journal, workspace tabs, or browser tabs.");
+  const confirmed = window.confirm(
+    "Clear " + CONSTELLATION_PRODUCT_NAME + " developer diagnostics? This does not clear the User Journal, System Journal, Recovery Journal, workspace tabs, or browser tabs."
+  );
 
   if (!confirmed) {
     return;
@@ -118,7 +122,7 @@ async function recordDiagnostic(level, action, message, details = {}) {
     const trimmedDiagnostics = diagnostics.slice(-MAX_DIAGNOSTICS);
     await chrome.storage.local.set({ [DIAGNOSTICS_KEY]: trimmedDiagnostics });
   } catch (error) {
-    console.warn("Chrome Flow diagnostics logging failed:", error);
+    console.warn(CONSTELLATION_PRODUCT_NAME + " diagnostics logging failed:", error);
   }
 }
 
@@ -454,10 +458,10 @@ async function buildDiagnosticPacket() {
   const timeline = Array.isArray(workspace?.timeline) ? workspace.timeline : [];
 
   const packet = {
-    packetType: "Chrome Flow Diagnostic Packet",
+    packetType: CONSTELLATION_PRODUCT_NAME + " Diagnostic Packet",
     createdAt: new Date().toISOString(),
     extension: {
-      name: "Chrome Flow",
+      name: CONSTELLATION_PRODUCT_NAME,
       schema: "diagnostic-packet-v0.3"
     },
     workspace: {
@@ -487,7 +491,7 @@ async function buildDiagnosticPacket() {
       .filter((event) => event.recoveryActions)
       .slice(-MAX_PACKET_EVENTS),
     notes: [
-      "This packet is generated locally by Chrome Flow.",
+      "This packet is generated locally by " + CONSTELLATION_PRODUCT_NAME + ".",
       "It does not intentionally include page content.",
       "Review before sharing if workspace names, tab titles, and URLs are sensitive.",
       "Action result diagnostics link known button clicks to observed System Journal outcomes.",

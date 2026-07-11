@@ -1,29 +1,52 @@
-﻿# Chrome Flow
+# Constellation
 
-Chrome Flow is a local-first browser cognitive workspace.
+Constellation is a local-first browser cognitive workspace for organising live research, durable workspace memory, recovery, and future deterministic, algorithmic, and AI-assisted workflows.
 
-V0.1 goal:
+Former project name: **Chrome Flow**.
 
-- Load current Chrome tabs
-- Create a workspace
-- Add custom tab aliases
-- Add a workspace aim/directive
-- Add journal entries
-- Track a simple timeline
-- Store everything locally in Chrome extension storage
+## Current product direction
 
-Development install:
+Constellation is being built as a Chrome extension that helps the Operator:
+
+- create and maintain browser workspaces;
+- assign aliases and research roles to workspace tabs;
+- organise tabs into native Chrome groups;
+- preserve User Journal, System Journal, and Recovery Journal records separately;
+- save exact workspace snapshots into the Workspace Library;
+- resume paused or archived workspaces through checked transactional actions;
+- maintain browser projection metadata automatically;
+- support several simultaneous live workspaces through the forthcoming multi-workspace runtime and window-binding foundation.
+
+The deterministic system owns workspace identity, browser projection, persistence, recovery, permissions, and recall. Future algorithms may infer relationships, and future AI integrations may explain patterns, but neither layer may silently replace deterministic authority or Operator control.
+
+## Current development install
+
+The GitHub repository has been renamed to:
+
+```text
+https://github.com/m-indsRefuge/constellation.git
+```
+
+During the controlled extension-identity migration, the unpacked extension still loads from the legacy local path:
+
+```text
+C:\Users\nolan\AIProjects\chrome-flow
+```
+
+Development steps:
 
 1. Open Chrome.
-2. Go to chrome://extensions.
-3. Enable Developer Mode.
-4. Click Load unpacked.
-5. Select C:\Users\nolan\AIProjects\chrome-flow.
-6. Click the Chrome Flow extension icon.
+2. Go to `chrome://extensions`.
+3. Enable Chrome Extensions Developer mode.
+4. Click **Load unpacked**.
+5. Select `C:\Users\nolan\AIProjects\chrome-flow` until the local-path migration is explicitly completed.
+6. Click the **Constellation** extension action.
 7. The side panel should open.
 
-Build principle:
+Do not rename the local folder yet. Runtime and Workspace Library continuity will first be protected by a deterministic export/import safety package and extension-identity validation.
 
-Chrome Flow Core owns workspace state.
+## Build principle
 
-AI providers may generate suggestions later, but the core product must work without AI.
+Constellation Core owns workspace state.
+
+The product must remain useful with no AI provider configured. AI providers may later assist with summaries, relationship explanations, pattern recognition, and workflow recommendations only above the deterministic and algorithmic foundations.

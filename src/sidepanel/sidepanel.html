@@ -2,15 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>Chrome Flow</title>
+  <title>Constellation</title>
   <link rel="stylesheet" href="./sidepanel.css" />
   <link rel="stylesheet" href="./advanced-tab-controls.css" />
 </head>
 <body>
   <main class="app">
     <header class="app-header">
-      <h1>Chrome Flow</h1>
-      <p>Local cognitive workspace for browser flow.</p>
+      <h1>Constellation</h1>
+      <p>Local-first browser cognitive workspace.</p>
     </header>
 
     <section class="workspace-section">
@@ -46,7 +46,7 @@
 
     <section class="tabs-section">
       <h2>Workspace Tabs</h2>
-      <p class="section-help">These are the tabs currently included in this Chrome Flow workspace.</p>
+      <p class="section-help">These are the tabs currently included in this Constellation workspace.</p>
 
       <div class="tab-status-panel">
         <h3>Workspace Tab Status</h3>
@@ -107,13 +107,13 @@
 
         <div id="systemJournalPanel" class="journal-view-panel">
           <h3>System Journal</h3>
-          <p class="section-help">Operational history recorded by Chrome Flow. This is the browser journey evidence trail.</p>
+          <p class="section-help">Operational history recorded by Constellation. This is the browser journey evidence trail.</p>
           <div id="systemTimelineList"></div>
         </div>
       </div>
     </section>
 
-    <section class="diagnostics-section">
+    <section id="developerDiagnosticsSection" class="diagnostics-section" data-developer-surface="true" hidden aria-hidden="true">
       <h2>Developer Diagnostics</h2>
       <p class="section-help">Local testing surface for runtime errors, button clicks, workspace state, and shareable diagnostic packets.</p>
       <div class="diagnostics-actions">
@@ -127,20 +127,50 @@
     </section>
   </main>
 
+  <script type="module" src="./constellation-compatibility-bootstrap.js"></script>
   <script type="module" src="./diagnostics.js"></script>
+  <script type="module" src="./developer-mode.js"></script>
   <script type="module" src="./sidepanel.js"></script>
+  <script type="module" src="./user-journal-action-observability.js"></script>
+  <script type="module" src="./workspace-metadata-autosave.js"></script>
+  <script type="module" src="./workspace-tab-remove-only-control.js"></script>
+  <script type="module" src="./workspace-tab-action-contract-cleanup.js"></script>
+  <script type="module" src="./workspace-library-save-bridge.js"></script>
   <script type="module" src="./workspace-session-control.js"></script>
+  <script type="module" src="./workspace-session-product-surface.js"></script>
+  <script type="module" src="./workspace-archive-restore-control.js"></script>
   <script type="module" src="./session-db-diagnostics.js"></script>
+  <script type="module" src="./session-db-diagnostics-developer-surface.js"></script>
   <script type="module" src="./saved-workspace-registry.js"></script>
   <script type="module" src="./saved-workspace-cleanup-controls.js"></script>
+  <script type="module" src="./workspace-library-product-surface.js"></script>
+  <script type="module" src="./workspace-library-auto-refresh.js"></script>
+  <script type="module" src="./workspace-library-resume-transaction-controller.js"></script>
+  <script type="module" src="./layer2-lifecycle-validation-packet.js"></script>
+  <script type="module" src="./layer2-memory-contract-validation-packet.js"></script>
+  <script type="module" src="./layer2-post-resume-verification-packet.js"></script>
+  <script type="module" src="./layer2-production-save-validation-packet.js"></script>
+  <script type="module" src="./layer2-resume-transaction-validation.js"></script>
+  <script type="module" src="./layer2-completion-checkpoint-packet.js"></script>
   <script type="module" src="./layer2-persistence-validation.js"></script>
+  <script type="module" src="./layer2-persistence-validation-surface.js"></script>
   <script type="module" src="./runtime-projection-readiness.js"></script>
+  <script type="module" src="./runtime-projection-readiness-surface.js"></script>
   <script type="module" src="./projection-plan-preview.js"></script>
+  <script type="module" src="./projection-plan-preview-surface.js"></script>
   <script type="module" src="./projection-confirmation-packet.js"></script>
+  <script type="module" src="./projection-confirmation-packet-surface.js"></script>
   <script type="module" src="./projection-resume-preflight.js"></script>
+  <script type="module" src="./projection-resume-preflight-validation-surface.js"></script>
   <script type="module" src="./projection-resume-review.js"></script>
+  <script type="module" src="./projection-resume-review-surface.js"></script>
   <script type="module" src="./projection-resume-run.js"></script>
+  <script type="module" src="./projection-resume-run-surface.js"></script>
   <script type="module" src="./projection-resume-validation-suite.js"></script>
+  <script type="module" src="./projection-resume-validation-suite-validation-surface.js"></script>
   <script type="module" src="./workspace-dedicated-window-threshold-policy.js"></script>
+  <script type="module" src="./workspace-dedicated-window-threshold-policy-surface.js"></script>
+  <script type="module" src="./workspace-dedicated-window-threshold-review-surfaces.js"></script>
+  <script type="module" src="./workspace-dedicated-window-threshold-run-surfaces.js"></script>
 </body>
 </html>

@@ -1,5 +1,9 @@
 import { buildDedicatedWindowThresholdPolicyPacketForValidation } from "./workspace-dedicated-window-threshold-policy.js";
 import {
+  installValidationSurfaceDebugToggle,
+  registerValidationSurface
+} from "./sidepanel-debug-mode.js";
+import {
   assertCondition,
   assertReadOnlyBoundary,
   createClipboardBlock,
@@ -17,6 +21,8 @@ function installWorkspaceControlPolicyMigrationValidationSuite() {
   const anchor = document.getElementById("workspaceControlGateConsolidationValidationSuiteSection") || document.getElementById("dedicatedWindowThresholdValidationSuiteSection") || document.getElementById("dedicatedWindowThresholdPolicySection") || document.querySelector(".workspace-section");
   if (!anchor) return;
 
+  installValidationSurfaceDebugToggle(anchor);
+
   const section = document.createElement("section");
   section.id = "workspaceControlPolicyMigrationValidationSuiteSection";
   section.className = "workspace-control-policy-migration-validation-suite-section";
@@ -32,6 +38,7 @@ function installWorkspaceControlPolicyMigrationValidationSuite() {
     <pre id="workspaceControlPolicyMigrationValidationSuiteOutput" class="diagnostics-output">Workspace control policy migration validation suite output will appear here.</pre>
   `;
 
+  registerValidationSurface(section);
   anchor.insertAdjacentElement("afterend", section);
 
   document.getElementById("runWorkspaceControlPolicyMigrationValidationSuiteButton")?.addEventListener("click", runSuite);

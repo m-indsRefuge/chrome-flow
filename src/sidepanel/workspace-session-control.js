@@ -208,7 +208,7 @@ function createArchiveSummaryLine(label, value) {
 
 async function archiveCurrentWorkspaceOnly() {
   const workspace = await getWorkspace();
-  const confirmed = window.confirm("Archive the current workspace trace? This keeps the active workspace as-is and stores a copy in local Chrome storage.");
+  const confirmed = window.confirm("Archive the current workspace and close its browser tabs? Chrome Flow will close only tabs that belong to this workspace. If those are the only tabs in a window, Chrome may close that window. Unrelated tabs stay open.");
 
   if (!confirmed) {
     setStatus("Archive cancelled. No action was taken.");
@@ -216,13 +216,16 @@ async function archiveCurrentWorkspaceOnly() {
   }
 
   const archiveRecord = await archiveWorkspace(workspace, "manual_archive");
-  setStatus("Archived current workspace: " + archiveRecord.archiveName + ". Active workspace was not changed.");
+  const closePlan = await buildWorkspaceBrowserClosePlan(workspace);
+  await recordWorkspaceBrowserClosePlan(archiveRecord, closePlan, "archive_current_workspace");
+  setStatus("Archived current workspace: " + archiveRecord.archiveName + ". Closing " + closePlan.liveTabCount + " workspace tab(s). Unrelated tabs stay open.");
   await refreshWorkspaceSessionSurface();
+  await closeWorkspaceBrowserProjectionFromPlan(closePlan);
 }
 
 async function archiveCurrentAndStartFreshWorkspace() {
   const workspace = await getWorkspace();
-  const confirmed = window.confirm("Archive the current workspace trace and start a clean workspace? Browser tabs and Developer Diagnostics will not be cleared.");
+  const confirmed = window.confirm("Archive the current workspace, close its workspace tabs, and start a clean workspace? Chrome Flow will close only tabs that belong to this workspace. Unrelated tabs stay open.");
 
   if (!confirmed) {
     setStatus("Start fresh cancelled. No action was taken.");
@@ -230,15 +233,20 @@ async function archiveCurrentAndStartFreshWorkspace() {
   }
 
   const archiveRecord = await archiveWorkspace(workspace, "archive_before_start_fresh");
+  const closePlan = await buildWorkspaceBrowserClosePlan(workspace);
   const freshWorkspace = createFreshWorkspace();
   await chrome.storage.local.set({ [WORKSPACE_KEY]: freshWorkspace });
-  await recordDiagnostic("info", "workspace_started_fresh", "Archived current workspace and started a fresh active workspace.", {
+  await recordDiagnostic("info", "workspace_started_fresh", "Archived current workspace, prepared browser projection close, and started a fresh active workspace.", {
     archivedWorkspaceId: workspace.workspaceId || "",
     archiveId: archiveRecord.archiveId,
     newWorkspaceId: freshWorkspace.workspaceId,
-    archiveName: archiveRecord.archiveName
+    archiveName: archiveRecord.archiveName,
+    closePlan: summarizeWorkspaceBrowserClosePlan(closePlan)
   });
-  setStatus("Archived " + archiveRecord.archiveName + " and started a fresh workspace. Reloading...");
+  await recordWorkspaceBrowserClosePlan(archiveRecord, closePlan, "archive_and_start_fresh_workspace");
+  setStatus("Archived " + archiveRecord.archiveName + ", started a fresh workspace, and closing " + closePlan.liveTabCount + " workspace tab(s). Unrelated tabs stay open.");
+  await refreshWorkspaceSessionSurface();
+  await closeWorkspaceBrowserProjectionFromPlan(closePlan);
   window.setTimeout(() => window.location.reload(), 500);
 }
 
@@ -390,6 +398,139 @@ async function archiveWorkspace(workspace, reason) {
   });
 
   return archiveRecord;
+}
+
+async function buildWorkspaceBrowserClosePlan(workspace) {
+  const requestedTabIds = getWorkspaceTabIds(workspace);
+
+  if (!globalThis.chrome?.tabs?.get || !globalThis.chrome?.tabs?.query || !globalThis.chrome?.tabs?.remove) {
+    return {
+      available: false,
+      reason: "chrome_tabs_api_unavailable",
+      requestedTabIds,
+      liveTabs: [],
+      missingTabIds: requestedTabIds,
+      liveTabCount: 0,
+      closeTabIds: [],
+      fullyOwnedWindowIds: [],
+      partialWindowIds: []
+    };
+  }
+
+  const liveTabs = [];
+  const missingTabIds = [];
+
+  for (const tabId of requestedTabIds) {
+    try {
+      const tab = await chrome.tabs.get(tabId);
+      if (tab?.id) {
+        liveTabs.push({
+          tabId: tab.id,
+          windowId: tab.windowId,
+          title: tab.title || "",
+          url: tab.url || ""
+        });
+      } else {
+        missingTabIds.push(tabId);
+      }
+    } catch (_error) {
+      missingTabIds.push(tabId);
+    }
+  }
+
+  const closeTabIds = liveTabs.map((tab) => tab.tabId);
+  const windowIds = Array.from(new Set(liveTabs.map((tab) => tab.windowId).filter((windowId) => Number.isInteger(windowId))));
+  const fullyOwnedWindowIds = [];
+  const partialWindowIds = [];
+
+  for (const windowId of windowIds) {
+    try {
+      const windowTabs = await chrome.tabs.query({ windowId });
+      const windowTabIds = windowTabs.map((tab) => tab.id).filter((tabId) => Number.isInteger(tabId));
+      const workspaceTabIdsInWindow = liveTabs.filter((tab) => tab.windowId === windowId).map((tab) => tab.tabId);
+      const unrelatedTabIds = windowTabIds.filter((tabId) => !workspaceTabIdsInWindow.includes(tabId));
+
+      if (unrelatedTabIds.length === 0) {
+        fullyOwnedWindowIds.push(windowId);
+      } else {
+        partialWindowIds.push(windowId);
+      }
+    } catch (_error) {
+      partialWindowIds.push(windowId);
+    }
+  }
+
+  return {
+    available: true,
+    reason: "workspace_tab_close_plan_ready",
+    requestedTabIds,
+    liveTabs,
+    missingTabIds,
+    liveTabCount: liveTabs.length,
+    closeTabIds,
+    fullyOwnedWindowIds,
+    partialWindowIds
+  };
+}
+
+async function recordWorkspaceBrowserClosePlan(archiveRecord, closePlan, action) {
+  await recordDiagnostic("info", "workspace_archive_browser_close_plan_prepared", "Workspace archive browser close plan prepared.", {
+    action,
+    archiveId: archiveRecord.archiveId,
+    archiveName: archiveRecord.archiveName,
+    closePlan: summarizeWorkspaceBrowserClosePlan(closePlan),
+    safety: {
+      closesOnlyWorkspaceTabs: true,
+      unrelatedTabsClosed: false,
+      closesWholeWindowOnlyWhenAllWindowTabsBelongToWorkspace: true
+    }
+  });
+}
+
+async function closeWorkspaceBrowserProjectionFromPlan(closePlan) {
+  if (!closePlan.available) {
+    setStatus("Workspace archived, but Chrome tab closing is unavailable in this browser context.");
+    return;
+  }
+
+  if (!closePlan.closeTabIds.length) {
+    setStatus("Workspace archived. No live workspace tabs were found to close.");
+    return;
+  }
+
+  try {
+    await recordDiagnostic("info", "workspace_archive_browser_close_started", "Closing archived workspace browser tabs.", summarizeWorkspaceBrowserClosePlan(closePlan));
+    await chrome.tabs.remove(closePlan.closeTabIds);
+    await recordDiagnostic("info", "workspace_archive_browser_close_completed", "Archived workspace browser tabs closed.", summarizeWorkspaceBrowserClosePlan(closePlan));
+  } catch (error) {
+    await recordDiagnostic("error", "workspace_archive_browser_close_failed", "Could not close archived workspace browser tabs.", {
+      error: summarizeError(error),
+      closePlan: summarizeWorkspaceBrowserClosePlan(closePlan)
+    });
+    setStatus("Workspace archived, but Chrome Flow could not close one or more workspace tabs. Check Developer Diagnostics.");
+  }
+}
+
+function summarizeWorkspaceBrowserClosePlan(closePlan) {
+  return {
+    available: closePlan.available,
+    reason: closePlan.reason,
+    requestedTabCount: closePlan.requestedTabIds.length,
+    liveTabCount: closePlan.liveTabCount,
+    missingTabCount: closePlan.missingTabIds.length,
+    closeTabCount: closePlan.closeTabIds.length,
+    fullyOwnedWindowIds: closePlan.fullyOwnedWindowIds,
+    partialWindowIds: closePlan.partialWindowIds
+  };
+}
+
+function getWorkspaceTabIds(workspace) {
+  const tabs = Array.isArray(workspace.tabs) ? workspace.tabs : [];
+  const tabIds = tabs
+    .map((tab) => Number(tab?.tabId))
+    .filter((tabId) => Number.isInteger(tabId) && tabId > 0);
+
+  return Array.from(new Set(tabIds));
 }
 
 function buildArchiveName(workspace, archivedAt) {

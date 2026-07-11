@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "minimum_chrome_version": "114",
-  "name": "Chrome Flow",
+  "name": "Constellation",
   "version": "0.1.0",
-  "description": "A local-first browser cognitive workspace for tab aliases, journaling, and search journey organization.",
+  "description": "A local-first browser cognitive workspace for research, organisation, recovery, and durable workspace memory.",
   "permissions": [
     "tabs",
     "storage",
@@ -18,7 +18,11 @@
   "side_panel": {
     "default_path": "src/sidepanel/sidepanel.html"
   },
+  "options_ui": {
+    "page": "src/migration/migration.html",
+    "open_in_tab": true
+  },
   "action": {
-    "default_title": "Open Chrome Flow"
+    "default_title": "Open Constellation"
   }
 }
