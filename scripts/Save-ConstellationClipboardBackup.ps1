@@ -16,6 +16,20 @@ function Normalize-Path {
     return [System.IO.Path]::GetFullPath($Path)
 }
 
+function Get-OptionalPropertyValue {
+    param(
+        [Parameter(Mandatory = $true)][object]$InputObject,
+        [Parameter(Mandatory = $true)][string]$PropertyName
+    )
+
+    $property = $InputObject.PSObject.Properties[$PropertyName]
+    if ($null -eq $property) {
+        return $null
+    }
+
+    return $property.Value
+}
+
 $output = Normalize-Path $OutputPath
 $sidecar = "$output.sha256"
 $outputParent = Split-Path -Parent $output
@@ -64,15 +78,33 @@ if ($package.validation.valid -ne $true) {
 }
 
 $payloadDigest = [string]$package.integrity.payloadDigest
-$expectedDigest = [string]$package.validation.expectedDigest
-$actualDigest = [string]$package.validation.actualDigest
-
 if ([string]::IsNullOrWhiteSpace($payloadDigest)) {
     throw "The migration package payload digest is missing."
 }
 
-if ($payloadDigest -ne $expectedDigest -or $payloadDigest -ne $actualDigest) {
-    throw "The package digest fields are not equivalent."
+$expectedDigestValue = Get-OptionalPropertyValue -InputObject $package.validation -PropertyName "expectedDigest"
+$actualDigestValue = Get-OptionalPropertyValue -InputObject $package.validation -PropertyName "actualDigest"
+$hasExpectedDigest = $null -ne $expectedDigestValue
+$hasActualDigest = $null -ne $actualDigestValue
+$digestEvidenceMode = "validated_package_payload_digest"
+
+if ($hasExpectedDigest -xor $hasActualDigest) {
+    throw "The package exposes only one of validation.expectedDigest or validation.actualDigest."
+}
+
+if ($hasExpectedDigest -and $hasActualDigest) {
+    $expectedDigest = [string]$expectedDigestValue
+    $actualDigest = [string]$actualDigestValue
+
+    if ([string]::IsNullOrWhiteSpace($expectedDigest) -or [string]::IsNullOrWhiteSpace($actualDigest)) {
+        throw "The package exposes empty validation digest fields."
+    }
+
+    if ($payloadDigest -ne $expectedDigest -or $payloadDigest -ne $actualDigest) {
+        throw "The package digest fields are not equivalent."
+    }
+
+    $digestEvidenceMode = "explicit_expected_actual_match"
 }
 
 $workspaceCount = [int]$package.inventory.indexedDb.workspaceRecordCount
@@ -102,12 +134,32 @@ try {
     $savedRaw = [System.IO.File]::ReadAllText($tempOutput)
     $savedPackage = $savedRaw | ConvertFrom-Json -ErrorAction Stop
 
+    if ($savedPackage.schema -ne "constellation-data-migration-package-v0.1") {
+        throw "Saved-file readback schema does not match."
+    }
+
     if ($savedPackage.sourceExtensionId -ne $ExpectedSourceExtensionId) {
         throw "Saved-file readback source extension identity does not match."
     }
 
+    if ($savedPackage.validation.valid -ne $true) {
+        throw "Saved-file readback package is not valid."
+    }
+
     if ([string]$savedPackage.integrity.payloadDigest -ne $payloadDigest) {
         throw "Saved-file readback payload digest does not match."
+    }
+
+    if ([int]$savedPackage.inventory.indexedDb.workspaceRecordCount -ne $ExpectedWorkspaceCount) {
+        throw "Saved-file readback workspace count does not match."
+    }
+
+    if ([int]$savedPackage.inventory.indexedDb.journalEntryCount -ne $ExpectedJournalCount) {
+        throw "Saved-file readback journal-entry count does not match."
+    }
+
+    if ([int]$savedPackage.inventory.indexedDb.timelineEventCount -ne $ExpectedTimelineCount) {
+        throw "Saved-file readback timeline-event count does not match."
     }
 
     $fileHash = (Get-FileHash -LiteralPath $tempOutput -Algorithm SHA256).Hash.ToUpperInvariant()
@@ -133,6 +185,7 @@ try {
         Schema = $savedPackage.schema
         SourceExtension = $savedPackage.sourceExtensionId
         PayloadDigest = $savedPackage.integrity.payloadDigest
+        DigestEvidenceMode = $digestEvidenceMode
         Valid = $savedPackage.validation.valid
         WorkspaceCount = $savedPackage.inventory.indexedDb.workspaceRecordCount
         JournalCount = $savedPackage.inventory.indexedDb.journalEntryCount
