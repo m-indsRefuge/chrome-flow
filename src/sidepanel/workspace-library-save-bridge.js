@@ -392,7 +392,6 @@ function isRecentMatchingCoordinator(coordinator, signature) {
   return elapsedMs >= 0 && elapsedMs < CROSS_CONTEXT_DUPLICATE_WINDOW_MS;
 }
 
-
 function setProductionSaveStatus(message) {
   ensureWorkspaceLibrarySaveStatusSurface();
 
