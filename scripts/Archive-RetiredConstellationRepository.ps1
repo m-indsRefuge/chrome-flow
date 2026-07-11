@@ -11,7 +11,7 @@ param(
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
-$reviewedUntrackedRelativePaths = @(
+$reviewedUntrackedPaths = @(
     ".editorconfig",
     ".prettierignore",
     ".prettierrc",
@@ -24,95 +24,107 @@ $reviewedUntrackedRelativePaths = @(
 
 function Normalize-Path {
     param([Parameter(Mandatory = $true)][string]$Path)
-    return [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
+    [System.IO.Path]::GetFullPath($Path).TrimEnd('\')
 }
 
-function Invoke-Git {
+function Invoke-GitText {
     param(
-        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$Repository,
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
-    $output = & git -C $WorkingDirectory @Arguments 2>&1
+    $output = @(& git -C $Repository @Arguments 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        throw "Git command failed: git $($Arguments -join ' ')`n$($output -join [Environment]::NewLine)"
+        throw "Git failed: git $($Arguments -join ' ')`n$($output -join [Environment]::NewLine)"
     }
 
-    return ($output -join [Environment]::NewLine).Trim()
+    ($output -join [Environment]::NewLine).Trim()
 }
 
 function Invoke-GitLines {
     param(
-        [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+        [Parameter(Mandatory = $true)][string]$Repository,
         [Parameter(Mandatory = $true)][string[]]$Arguments
     )
 
-    $output = @(& git -C $WorkingDirectory @Arguments 2>&1)
+    $output = @(& git -C $Repository @Arguments 2>&1)
     if ($LASTEXITCODE -ne 0) {
-        throw "Git command failed: git $($Arguments -join ' ')`n$($output -join [Environment]::NewLine)"
+        throw "Git failed: git $($Arguments -join ' ')`n$($output -join [Environment]::NewLine)"
     }
 
-    return @($output | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+    @($output | ForEach-Object { [string]$_ } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+}
+
+function Test-SameStringSet {
+    param(
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Left,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$Right
+    )
+
+    $leftSorted = @($Left | Sort-Object)
+    $rightSorted = @($Right | Sort-Object)
+
+    if ($leftSorted.Count -ne $rightSorted.Count) {
+        return $false
+    }
+
+    for ($index = 0; $index -lt $leftSorted.Count; $index++) {
+        if ($leftSorted[$index] -cne $rightSorted[$index]) {
+            return $false
+        }
+    }
+
+    return $true
 }
 
 function Get-UntrackedArtifactRecords {
     param(
-        [Parameter(Mandatory = $true)][string]$RepositoryPath,
-        [Parameter(Mandatory = $true)][string[]]$RelativePaths
+        [Parameter(Mandatory = $true)][string]$Repository,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][string[]]$RelativePaths
     )
 
     $records = @()
     foreach ($relativePath in ($RelativePaths | Sort-Object)) {
-        $fullPath = Join-Path $RepositoryPath $relativePath
+        $fullPath = Join-Path $Repository $relativePath
         if (-not (Test-Path -LiteralPath $fullPath -PathType Leaf)) {
-            throw "Reviewed untracked artifact is missing or is not a file: $relativePath"
+            throw "Untracked artifact is missing or is not a file: $relativePath"
         }
 
         $item = Get-Item -LiteralPath $fullPath
-        $records += [ordered]@{
+        $records += [PSCustomObject]@{
             relativePath = $relativePath
             sizeBytes = [int64]$item.Length
             sha256 = (Get-FileHash -LiteralPath $fullPath -Algorithm SHA256).Hash.ToUpperInvariant()
         }
     }
 
-    return @($records)
+    @($records)
 }
 
-function Test-ExactStringSet {
+function Test-SameArtifactRecords {
     param(
-        [Parameter(Mandatory = $true)][string[]]$Actual,
-        [Parameter(Mandatory = $true)][string[]]$Expected
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$Before,
+        [Parameter(Mandatory = $true)][AllowEmptyCollection()][object[]]$After
     )
 
-    $actualSorted = @($Actual | Sort-Object)
-    $expectedSorted = @($Expected | Sort-Object)
-    $difference = @(Compare-Object -ReferenceObject $expectedSorted -DifferenceObject $actualSorted)
-    return $difference.Count -eq 0
-}
+    $beforeSorted = @($Before | Sort-Object relativePath)
+    $afterSorted = @($After | Sort-Object relativePath)
 
-function Test-ArtifactRecordsEquivalent {
-    param(
-        [Parameter(Mandatory = $true)][object[]]$Before,
-        [Parameter(Mandatory = $true)][object[]]$After
-    )
-
-    $beforeMap = @{}
-    foreach ($record in $Before) {
-        $beforeMap[[string]$record.relativePath] = "$($record.sizeBytes):$($record.sha256)"
-    }
-
-    $afterMap = @{}
-    foreach ($record in $After) {
-        $afterMap[[string]$record.relativePath] = "$($record.sizeBytes):$($record.sha256)"
-    }
-
-    if (-not (Test-ExactStringSet -Actual @($afterMap.Keys) -Expected @($beforeMap.Keys))) {
+    if ($beforeSorted.Count -ne $afterSorted.Count) {
         return $false
     }
 
-    foreach ($key in $beforeMap.Keys) {
-        if ($beforeMap[$key] -ne $afterMap[$key]) {
+    for ($index = 0; $index -lt $beforeSorted.Count; $index++) {
+        $beforeRecord = $beforeSorted[$index]
+        $afterRecord = $afterSorted[$index]
+
+        if ([string]$beforeRecord.relativePath -cne [string]$afterRecord.relativePath) {
+            return $false
+        }
+        if ([int64]$beforeRecord.sizeBytes -ne [int64]$afterRecord.sizeBytes) {
+            return $false
+        }
+        if ([string]$beforeRecord.sha256 -cne [string]$afterRecord.sha256) {
             return $false
         }
     }
@@ -121,13 +133,13 @@ function Test-ArtifactRecordsEquivalent {
 }
 
 function Get-RepositorySnapshot {
-    param([Parameter(Mandatory = $true)][string]$Path)
+    param([Parameter(Mandatory = $true)][string]$Repository)
 
-    $manifestPath = Join-Path $Path "manifest.json"
-    $gitPath = Join-Path $Path ".git"
+    $gitPath = Join-Path $Repository ".git"
+    $manifestPath = Join-Path $Repository "manifest.json"
 
-    if (-not (Test-Path -LiteralPath $Path -PathType Container)) {
-        throw "Repository path does not exist: $Path"
+    if (-not (Test-Path -LiteralPath $Repository -PathType Container)) {
+        throw "Repository path does not exist: $Repository"
     }
     if (-not (Test-Path -LiteralPath $gitPath -PathType Container)) {
         throw ".git directory was not found: $gitPath"
@@ -137,24 +149,24 @@ function Get-RepositorySnapshot {
     }
 
     $manifest = Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json -ErrorAction Stop
-    $trackedStatus = Invoke-Git $Path @("status", "--porcelain=v1", "--untracked-files=no")
-    $allStatus = Invoke-Git $Path @("status", "--porcelain=v1", "--untracked-files=all")
-    $untrackedPaths = @(Invoke-GitLines $Path @("ls-files", "--others", "--exclude-standard") | Sort-Object)
-    $untrackedArtifacts = Get-UntrackedArtifactRecords -RepositoryPath $Path -RelativePaths $untrackedPaths
+    $trackedStatus = Invoke-GitText $Repository @("status", "--porcelain=v1", "--untracked-files=no")
+    $allStatus = Invoke-GitText $Repository @("status", "--porcelain=v1", "--untracked-files=all")
+    $untrackedPaths = @(Invoke-GitLines $Repository @("ls-files", "--others", "--exclude-standard") | Sort-Object)
+    $artifactRecords = @(Get-UntrackedArtifactRecords -Repository $Repository -RelativePaths $untrackedPaths)
 
-    return [ordered]@{
-        path = $Path
-        branch = Invoke-Git $Path @("branch", "--show-current")
-        head = Invoke-Git $Path @("rev-parse", "HEAD")
-        remote = Invoke-Git $Path @("remote", "get-url", "origin")
-        statusPorcelain = $allStatus
-        trackedStatusPorcelain = $trackedStatus
-        trackedWorkingTreeClean = [string]::IsNullOrWhiteSpace($trackedStatus)
-        untrackedPaths = $untrackedPaths
-        untrackedArtifacts = $untrackedArtifacts
-        fullyClean = [string]::IsNullOrWhiteSpace($allStatus)
+    [PSCustomObject]@{
+        path = $Repository
+        branch = Invoke-GitText $Repository @("branch", "--show-current")
+        head = Invoke-GitText $Repository @("rev-parse", "HEAD")
+        remote = Invoke-GitText $Repository @("remote", "get-url", "origin")
         manifestName = [string]$manifest.name
         manifestVersion = [string]$manifest.version
+        trackedStatusPorcelain = $trackedStatus
+        statusPorcelain = $allStatus
+        trackedWorkingTreeClean = [string]::IsNullOrWhiteSpace($trackedStatus)
+        fullyClean = [string]::IsNullOrWhiteSpace($allStatus)
+        untrackedPaths = $untrackedPaths
+        untrackedArtifacts = $artifactRecords
         gitPresent = $true
         manifestPresent = $true
     }
@@ -174,15 +186,12 @@ $evidence = Normalize-Path $EvidencePath
 if ($source -eq $archive -or $source -eq $canonical -or $archive -eq $canonical) {
     throw "Source, archive, and canonical paths must be distinct."
 }
-
 if (Test-Path -LiteralPath $archive) {
     throw "Refusing to overwrite an existing archive path: $archive"
 }
-
 if (Test-Path -LiteralPath $evidence) {
     throw "Refusing to overwrite an existing evidence record: $evidence"
 }
-
 if (-not (Test-Path -LiteralPath $backup -PathType Leaf)) {
     throw "Pre-retirement backup was not found: $backup"
 }
@@ -214,12 +223,12 @@ if (-not $sourceBefore.trackedWorkingTreeClean) {
     throw "Former repository has tracked or staged changes. Archive stopped.`n$($sourceBefore.trackedStatusPorcelain)"
 }
 
-$sourceHasReviewedUntrackedSet = Test-ExactStringSet -Actual @($sourceBefore.untrackedPaths) -Expected $reviewedUntrackedRelativePaths
+$reviewedSetMatches = Test-SameStringSet -Left @($sourceBefore.untrackedPaths) -Right $reviewedUntrackedPaths
 if ($sourceBefore.untrackedPaths.Count -gt 0) {
     if (-not $AllowReviewedUntrackedArtifacts) {
         throw "Former repository contains reviewed untracked artifacts. Re-run only with -AllowReviewedUntrackedArtifacts after Operator approval.`n$($sourceBefore.statusPorcelain)"
     }
-    if (-not $sourceHasReviewedUntrackedSet) {
+    if (-not $reviewedSetMatches) {
         throw "Former repository untracked artifacts do not exactly match the reviewed Gate G7 set. Archive stopped.`n$($sourceBefore.statusPorcelain)"
     }
 }
@@ -227,11 +236,8 @@ if ($sourceBefore.untrackedPaths.Count -gt 0) {
 if (-not $canonicalBefore.fullyClean) {
     throw "Canonical repository working tree is not clean. Archive stopped.`n$($canonicalBefore.statusPorcelain)"
 }
-if ($sourceBefore.manifestName -ne "Constellation") {
-    throw "Former repository manifest product name is not Constellation."
-}
-if ($canonicalBefore.manifestName -ne "Constellation") {
-    throw "Canonical repository manifest product name is not Constellation."
+if ($sourceBefore.manifestName -ne "Constellation" -or $canonicalBefore.manifestName -ne "Constellation") {
+    throw "Repository manifest identity check failed."
 }
 if ($sourceBefore.remote -ne $canonicalBefore.remote) {
     throw "Former and canonical repositories do not point to the same origin remote."
@@ -256,21 +262,21 @@ try {
     $canonicalAfter = Get-RepositorySnapshot $canonical
 
     if ($archiveAfter.head -ne $sourceBefore.head) {
-        throw "Archived repository HEAD does not match the pre-move HEAD."
+        throw "Archived repository HEAD changed during the move."
     }
     if ($archiveAfter.branch -ne $sourceBefore.branch) {
-        throw "Archived repository branch does not match the pre-move branch."
+        throw "Archived repository branch changed during the move."
     }
     if ($archiveAfter.remote -ne $sourceBefore.remote) {
-        throw "Archived repository remote does not match the pre-move remote."
+        throw "Archived repository remote changed during the move."
     }
     if (-not $archiveAfter.trackedWorkingTreeClean) {
         throw "Archived repository has tracked or staged changes after the move."
     }
-    if (-not (Test-ExactStringSet -Actual @($archiveAfter.untrackedPaths) -Expected @($sourceBefore.untrackedPaths))) {
-        throw "Archived untracked artifact path set does not match the pre-move set."
+    if (-not (Test-SameStringSet -Left @($archiveAfter.untrackedPaths) -Right @($sourceBefore.untrackedPaths))) {
+        throw "Archived untracked artifact path set changed during the move."
     }
-    if (-not (Test-ArtifactRecordsEquivalent -Before @($sourceBefore.untrackedArtifacts) -After @($archiveAfter.untrackedArtifacts))) {
+    if (-not (Test-SameArtifactRecords -Before @($sourceBefore.untrackedArtifacts) -After @($archiveAfter.untrackedArtifacts))) {
         throw "One or more reviewed untracked artifacts changed during the move."
     }
     if ($archiveAfter.manifestName -ne $sourceBefore.manifestName) {
@@ -290,6 +296,9 @@ try {
         throw "Canonical repository is not clean after the archive operation."
     }
 
+    $artifactPathsPreserved = Test-SameStringSet -Left @($archiveAfter.untrackedPaths) -Right @($sourceBefore.untrackedPaths)
+    $artifactHashesPreserved = Test-SameArtifactRecords -Before @($sourceBefore.untrackedArtifacts) -After @($archiveAfter.untrackedArtifacts)
+
     $record = [ordered]@{
         schema = "constellation-layer2-2g-gate-g7-archive-evidence-v0.2"
         createdAt = (Get-Date).ToUniversalTime().ToString("o")
@@ -303,7 +312,7 @@ try {
         reviewedUntrackedArtifactPolicy = [ordered]@{
             operatorAuthorized = [bool]$AllowReviewedUntrackedArtifacts
             exactReviewedSetRequired = $true
-            reviewedRelativePaths = $reviewedUntrackedRelativePaths
+            reviewedRelativePaths = $reviewedUntrackedPaths
             preservedRecords = $archiveAfter.untrackedArtifacts
         }
         recoveryAnchor = [ordered]@{
@@ -323,8 +332,8 @@ try {
             archivedBranchPreserved = $archiveAfter.branch -eq $sourceBefore.branch
             archivedRemotePreserved = $archiveAfter.remote -eq $sourceBefore.remote
             archivedTrackedWorkingTreeClean = $archiveAfter.trackedWorkingTreeClean
-            reviewedUntrackedPathSetPreserved = Test-ExactStringSet -Actual @($archiveAfter.untrackedPaths) -Expected @($sourceBefore.untrackedPaths)
-            reviewedUntrackedHashesPreserved = Test-ArtifactRecordsEquivalent -Before @($sourceBefore.untrackedArtifacts) -After @($archiveAfter.untrackedArtifacts)
+            reviewedUntrackedPathSetPreserved = $artifactPathsPreserved
+            reviewedUntrackedHashesPreserved = $artifactHashesPreserved
             canonicalHeadPreserved = $canonicalAfter.head -eq $canonicalBefore.head
             canonicalBranchPreserved = $canonicalAfter.branch -eq $canonicalBefore.branch
             canonicalRemotePreserved = $canonicalAfter.remote -eq $canonicalBefore.remote
@@ -347,7 +356,7 @@ try {
         FormerRemote = $archiveAfter.remote
         ArchivedTrackedWorkingTreeClean = $archiveAfter.trackedWorkingTreeClean
         ReviewedUntrackedArtifactCount = $archiveAfter.untrackedPaths.Count
-        ReviewedUntrackedArtifactsPreserved = Test-ArtifactRecordsEquivalent -Before @($sourceBefore.untrackedArtifacts) -After @($archiveAfter.untrackedArtifacts)
+        ReviewedUntrackedArtifactsPreserved = $artifactHashesPreserved
         ArchivedGitPresent = Test-Path -LiteralPath (Join-Path $archive ".git") -PathType Container
         ArchivedManifestPresent = Test-Path -LiteralPath (Join-Path $archive "manifest.json") -PathType Leaf
         CanonicalPath = $canonical
