@@ -1,0 +1,23 @@
+name: Pure repository checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pure-checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Validate runtime inventory
+        run: npm run check:inventory
+      - name: Run characterization tests
+        run: npm run test:characterization
+      - name: Run aggregate pure check
+        run: npm run check

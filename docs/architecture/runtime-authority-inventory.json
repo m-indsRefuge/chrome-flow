@@ -1,0 +1,763 @@
+{
+  "schema": "constellation-runtime-authority-inventory-v0.1",
+  "generated": false,
+  "scope": "Static Layer 2.3B evidence. Dynamic references and live Chrome behavior are not claimed complete.",
+  "protectedIdentityRequirements": [
+    "chrome-flow-session-db",
+    "constellation-session-db",
+    "workspaces",
+    "workspaceTabs",
+    "sessions",
+    "projections",
+    "workspaceLinks",
+    "constellations",
+    "journalEntries",
+    "timelineEvents",
+    "summaryCards",
+    "settings",
+    "activeWorkspaceId",
+    "dedicatedWindowThreshold",
+    "chromeFlowWorkspace",
+    "constellationActiveWorkspace",
+    "chromeFlowDiagnostics",
+    "constellationDiagnostics",
+    "chromeFlowWorkspaceArchive",
+    "constellationWorkspaceArchive",
+    "chromeFlowWorkspaceLibrarySaveCoordinator",
+    "constellationWorkspaceLibrarySaveCoordinator",
+    "chromeFlowDiagnosticEvent:",
+    "constellationDiagnosticEvent:",
+    "constellation-workspace-library-save-completed",
+    "chrome-flow-workspace-library-save-completed",
+    "constellation-reconcile-workspace-projection",
+    "chrome-flow-reconcile-workspace-projection"
+  ],
+  "items": [
+    {
+      "id": "entry-service-worker",
+      "path": "src/background/service-worker.js",
+      "symbol": "chrome.runtime.onInstalled.addListener",
+      "context": "service_worker",
+      "responsibility": "reconciliation event entry point",
+      "reads": [
+        "Chrome tab/window/group events",
+        "runtime messages"
+      ],
+      "writes": [
+        "process-local reconciliation scheduler"
+      ],
+      "storage": [],
+      "mutationType": "schedule",
+      "writeScope": "process_local",
+      "lockName": null,
+      "events": [
+        "constellation-reconcile-workspace-projection",
+        "chrome-flow-reconcile-workspace-projection"
+      ],
+      "trigger": "Chrome listeners and runtime.onMessage",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "canonical and legacy reconcile events"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Listeners register at module evaluation; worker-local scheduling state is not durable."
+    },
+    {
+      "id": "entry-side-panel",
+      "path": "src/sidepanel/sidepanel.html",
+      "symbol": "constellation-compatibility-bootstrap.js",
+      "context": "side_panel",
+      "responsibility": "active_workspace UI and top-level side-effect module entry points",
+      "reads": [
+        "active workspace",
+        "Workspace Library",
+        "diagnostics"
+      ],
+      "writes": [
+        "operator-triggered runtime and browser operations"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session",
+        "IndexedDB via repositories"
+      ],
+      "mutationType": "multiple",
+      "writeScope": "mixed",
+      "lockName": null,
+      "events": [
+        "DOM events",
+        "storage changes",
+        "runtime messages"
+      ],
+      "trigger": "side-panel document load",
+      "browserMutation": true,
+      "operatorConfirmation": "operation_specific",
+      "compatibilityIdentities": [
+        "legacy and canonical storage/event peers"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Every panel document has independent module state and listener registrations."
+    },
+    {
+      "id": "entry-migration-page",
+      "path": "src/migration/migration.html",
+      "symbol": "migration.js",
+      "context": "migration_page",
+      "responsibility": "migration and import Operator surface",
+      "reads": [
+        "local migration package",
+        "destination state"
+      ],
+      "writes": [
+        "validated import artifacts"
+      ],
+      "storage": [
+        "IndexedDB",
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "create_only_import",
+      "writeScope": "multi_store_and_keys",
+      "lockName": null,
+      "events": [
+        "DOM events"
+      ],
+      "trigger": "options page load and Operator action",
+      "browserMutation": false,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "migration package and storage identity contracts"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Live execution is outside pure validation. The imported executor owns the import lock; this HTML entry point does not declare it."
+    },
+    {
+      "id": "runtime-active-workspace",
+      "path": "src/core/workspace-store.js",
+      "symbol": "saveWorkspace",
+      "context": "side_panel",
+      "responsibility": "active_workspace journal timeline metadata read and write",
+      "reads": [
+        "chromeFlowWorkspace through compatibility reader"
+      ],
+      "writes": [
+        "whole active workspace object"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "read_modify_write",
+      "writeScope": "whole_object",
+      "lockName": null,
+      "events": [],
+      "trigger": "core calls from UI modules",
+      "browserMutation": false,
+      "operatorConfirmation": "caller_specific",
+      "compatibilityIdentities": [
+        "chromeFlowWorkspace",
+        "constellationActiveWorkspace"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Journal and timeline append helpers persist the containing workspace object."
+    },
+    {
+      "id": "runtime-active-workspace-read-normalize-write",
+      "path": "src/core/workspace-store.js",
+      "symbol": "getWorkspace",
+      "conceptLabel": "apparent read with normalization write side effect",
+      "context": "side_panel",
+      "responsibility": "active_workspace compatible read normalization and full write",
+      "reads": [
+        "compatible active workspace object"
+      ],
+      "writes": [
+        "normalized whole active workspace object through saveWorkspace"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "read_normalize_write",
+      "writeScope": "whole_object",
+      "lockName": null,
+      "events": [],
+      "trigger": "callers expecting the current active workspace",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "chromeFlowWorkspace",
+        "constellationActiveWorkspace"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "getWorkspace reads through the compatibility layer, normalizes, then calls saveWorkspace; apparent reads can therefore produce a full compatible storage write and participate in cross-context races."
+    },
+    {
+      "id": "runtime-compatibility",
+      "path": "src/core/constellation-storage-compatibility.js",
+      "symbol": "writeCompatibleStorageValue",
+      "context": "side_panel",
+      "responsibility": "active_workspace diagnostics archive save coordinator compatibility reads and writes",
+      "reads": [
+        "canonical and legacy peers"
+      ],
+      "writes": [
+        "canonical and legacy peers"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "compatibility_mirror",
+      "writeScope": "identity_pair",
+      "lockName": null,
+      "events": [],
+      "trigger": "storage service calls",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "chromeFlowWorkspace",
+        "constellationActiveWorkspace",
+        "chromeFlowDiagnostics",
+        "constellationDiagnostics",
+        "chromeFlowWorkspaceArchive",
+        "constellationWorkspaceArchive",
+        "chromeFlowWorkspaceLibrarySaveCoordinator",
+        "constellationWorkspaceLibrarySaveCoordinator",
+        "chromeFlowDiagnosticEvent:",
+        "constellationDiagnosticEvent:"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Protected compatibility mechanism; not a retirement candidate."
+    },
+    {
+      "id": "runtime-diagnostics",
+      "path": "src/core/diagnostic-event-store.js",
+      "symbol": "appendDiagnosticEvent",
+      "context": "developer_validation",
+      "responsibility": "diagnostics append and shard persistence",
+      "reads": [
+        "diagnostic rings and shards"
+      ],
+      "writes": [
+        "diagnostic ring and event shard"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "append_read_modify_write",
+      "writeScope": "ring_and_shard",
+      "lockName": null,
+      "events": [],
+      "trigger": "runtime diagnostic writers",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "chromeFlowDiagnostics",
+        "constellationDiagnostics",
+        "chromeFlowDiagnosticEvent:",
+        "constellationDiagnosticEvent:"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Concurrent ring writers require live or adapter characterization beyond static evidence."
+    },
+    {
+      "id": "runtime-archive",
+      "path": "src/core/workspace-runtime-store.js",
+      "symbol": "saveLegacyRuntimeArchiveRecords",
+      "context": "side_panel",
+      "responsibility": "archive runtime records",
+      "reads": [
+        "workspace archive"
+      ],
+      "writes": [
+        "workspace archive array"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "replace",
+      "writeScope": "whole_archive",
+      "lockName": null,
+      "events": [],
+      "trigger": "archive/restore controls",
+      "browserMutation": false,
+      "operatorConfirmation": "caller_specific",
+      "compatibilityIdentities": [
+        "chromeFlowWorkspaceArchive",
+        "constellationWorkspaceArchive"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Archive browser closing is handled by separate controllers/engine."
+    },
+    {
+      "id": "durable-schema",
+      "path": "src/core/session-db.js",
+      "symbol": "chrome-flow-session-db",
+      "context": "indexeddb",
+      "responsibility": "durable Session DB schema and transaction primitive",
+      "reads": [
+        "IndexedDB stores"
+      ],
+      "writes": [
+        "IndexedDB stores"
+      ],
+      "storage": [
+        "workspaces",
+        "workspaceTabs",
+        "sessions",
+        "projections",
+        "workspaceLinks",
+        "constellations",
+        "journalEntries",
+        "timelineEvents",
+        "summaryCards",
+        "settings"
+      ],
+      "mutationType": "transactional",
+      "writeScope": "specified_stores",
+      "lockName": null,
+      "events": [
+        "IndexedDB lifecycle"
+      ],
+      "trigger": "repository calls",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "chrome-flow-session-db",
+        "constellation-session-db"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Physical DB name and all store names are protected."
+    },
+    {
+      "id": "durable-active-selection",
+      "path": "src/core/session-repository.js",
+      "symbol": "activeWorkspaceId",
+      "context": "indexeddb",
+      "responsibility": "active_selection setting read and write",
+      "reads": [
+        "settings.activeWorkspaceId"
+      ],
+      "writes": [
+        "settings.activeWorkspaceId"
+      ],
+      "storage": [
+        "settings"
+      ],
+      "mutationType": "put",
+      "writeScope": "single_global_setting",
+      "lockName": null,
+      "events": [],
+      "trigger": "save/import/selection repository calls",
+      "browserMutation": false,
+      "operatorConfirmation": "caller_specific",
+      "compatibilityIdentities": [
+        "activeWorkspaceId"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "One key cannot represent independent per-window assignments; future representation is undesigned."
+    },
+    {
+      "id": "durable-snapshot",
+      "path": "src/core/workspace-snapshot-repository.js",
+      "symbol": "saveRuntimeWorkspaceSnapshotToSessionDb",
+      "context": "indexeddb",
+      "responsibility": "save Workspace Library snapshot",
+      "reads": [
+        "active runtime workspace"
+      ],
+      "writes": [
+        "workspace and related durable records"
+      ],
+      "storage": [
+        "workspaces",
+        "workspaceTabs",
+        "sessions",
+        "projections",
+        "journalEntries",
+        "timelineEvents",
+        "summaryCards"
+      ],
+      "mutationType": "multi_store_put",
+      "writeScope": "snapshot_record_set",
+      "lockName": null,
+      "events": [],
+      "trigger": "production save bridge",
+      "browserMutation": false,
+      "operatorConfirmation": "manual_or_automatic",
+      "compatibilityIdentities": [],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Atomic seven-store Session DB transaction does not by itself serialize the source runtime read. The repository function may be reached through manual or automatic production-save triggers and does not write the activeWorkspaceId settings row."
+    },
+    {
+      "id": "durable-dedicated-window-threshold",
+      "path": "src/core/session-repository.js",
+      "symbol": "DEDICATED_WINDOW_THRESHOLD_SETTING_KEY",
+      "context": "indexeddb",
+      "responsibility": "browser_projection dedicated-window threshold setting read and write",
+      "reads": [
+        "settings.dedicatedWindowThreshold"
+      ],
+      "writes": [
+        "settings.dedicatedWindowThreshold"
+      ],
+      "storage": [
+        "settings"
+      ],
+      "mutationType": "get_and_put",
+      "writeScope": "single_global_setting",
+      "lockName": null,
+      "events": [],
+      "trigger": "getDedicatedWindowThreshold and setDedicatedWindowThreshold repository calls",
+      "browserMutation": false,
+      "operatorConfirmation": "caller_specific",
+      "compatibilityIdentities": [
+        "dedicatedWindowThreshold"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "The protected setting is declared and read/written in the Session DB repository. The current UI threshold policy uses its separately defined product threshold constant; this item does not claim that the policy surface reads the settings row.",
+      "conceptLabel": "protected dedicated-window threshold Session DB setting"
+    },
+    {
+      "id": "operation-save",
+      "path": "src/sidepanel/workspace-library-save-bridge.js",
+      "symbol": "CROSS_CONTEXT_SAVE_LOCK_NAME",
+      "context": "side_panel",
+      "responsibility": "save production snapshot and coordinator",
+      "reads": [
+        "active workspace",
+        "save coordinator"
+      ],
+      "writes": [
+        "Workspace Library snapshot",
+        "save coordinator",
+        "diagnostics"
+      ],
+      "storage": [
+        "IndexedDB",
+        "chrome.storage.session",
+        "chrome.storage.local"
+      ],
+      "mutationType": "snapshot",
+      "writeScope": "multiple_resources",
+      "lockName": "chrome-flow-workspace-library-save",
+      "events": [
+        "constellation-workspace-library-save-completed",
+        "chrome-flow-workspace-library-save-completed"
+      ],
+      "trigger": "manual save-button click or automatic storage-change-triggered save",
+      "browserMutation": false,
+      "operatorConfirmation": "manual_or_automatic",
+      "compatibilityIdentities": [
+        "chromeFlowWorkspaceLibrarySaveCoordinator",
+        "constellationWorkspaceLibrarySaveCoordinator"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Lock excludes same-name saves only."
+    },
+    {
+      "id": "operation-resume",
+      "path": "src/core/workspace-resume-transaction-engine.js",
+      "symbol": "RESUME_LOCK_NAME",
+      "context": "side_panel",
+      "responsibility": "resume browser_mutation transaction and rollback",
+      "reads": [
+        "durable workspace",
+        "current browser projection",
+        "active workspace"
+      ],
+      "writes": [
+        "tabs/windows/groups",
+        "active workspace",
+        "operation evidence"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "IndexedDB read"
+      ],
+      "mutationType": "checked_transaction",
+      "writeScope": "browser_and_runtime",
+      "lockName": "chrome-flow-workspace-resume-transaction",
+      "events": [],
+      "trigger": "Operator-authorized resume",
+      "browserMutation": true,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "resume and rollback packet contracts"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Operation-specific lock does not exclude save/import/reconciliation by name."
+    },
+    {
+      "id": "operation-import",
+      "path": "src/core/constellation-data-import-executor.js",
+      "symbol": "IMPORT_LOCK_NAME",
+      "context": "migration_page",
+      "responsibility": "import create-only transaction verification and rollback",
+      "reads": [
+        "validated package",
+        "fresh destination state"
+      ],
+      "writes": [
+        "absent IndexedDB records",
+        "absent storage identities"
+      ],
+      "storage": [
+        "IndexedDB",
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "create_or_identical",
+      "writeScope": "multi_store_and_keys",
+      "lockName": "constellation-data-import-execution-v0.1",
+      "events": [],
+      "trigger": "exact Operator authorization",
+      "browserMutation": false,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "migration schemas",
+        "package digests",
+        "canonical and legacy storage peers"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Uses add for DB creation and tracks artifacts for rollback."
+    },
+    {
+      "id": "operation-reconciliation",
+      "path": "src/core/automatic-workspace-projection-reconciler.js",
+      "symbol": "reconcileActiveWorkspaceProjection",
+      "context": "service_worker",
+      "responsibility": "reconciliation of browser projection into active workspace",
+      "reads": [
+        "whole active workspace",
+        "all browser tabs"
+      ],
+      "writes": [
+        "whole active workspace",
+        "timeline events",
+        "diagnostics"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "read_modify_write",
+      "writeScope": "whole_object",
+      "lockName": null,
+      "events": [
+        "chrome-flow-workspace-projection-reconciled"
+      ],
+      "trigger": "process-local debounce from service worker",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "chromeFlowWorkspace"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Exact ID then unique URL fallback; ambiguity remains unresolved."
+    },
+    {
+      "id": "operation-archive-browser",
+      "path": "src/core/workspace-archive-close-engine.js",
+      "symbol": "closeVerifiedWorkspaceBrowserProjection",
+      "context": "side_panel",
+      "responsibility": "archive browser_mutation close ownership",
+      "reads": [
+        "saved workspace tabs",
+        "live browser tabs"
+      ],
+      "writes": [
+        "browser tabs",
+        "close evidence"
+      ],
+      "storage": [],
+      "mutationType": "validated_browser_close",
+      "writeScope": "owned_projection",
+      "lockName": null,
+      "events": [],
+      "trigger": "Operator archive action",
+      "browserMutation": true,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "archive and recovery evidence"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Browser identifiers are revalidated; no common cross-operation lock observed."
+    },
+    {
+      "id": "operation-browser-controls",
+      "path": "src/sidepanel/sidepanel.js",
+      "symbol": "moveWorkspaceTabsIntoNewWindow",
+      "context": "browser_projection",
+      "responsibility": "browser_mutation tab group window controls and workspace metadata",
+      "reads": [
+        "active workspace",
+        "Chrome tabs/windows/groups"
+      ],
+      "writes": [
+        "Chrome tabs/windows/groups",
+        "active workspace",
+        "timeline"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "operator_browser_control",
+      "writeScope": "browser_and_whole_runtime",
+      "lockName": null,
+      "events": [
+        "DOM events"
+      ],
+      "trigger": "Operator controls",
+      "browserMutation": true,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "chromeFlowWorkspace"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Large UI entry module; live semantics not executed by this phase."
+    },
+    {
+      "id": "listener-storage-bootstrap",
+      "path": "src/sidepanel/constellation-compatibility-bootstrap.js",
+      "symbol": "chrome.storage.onChanged.addListener",
+      "context": "side_panel",
+      "responsibility": "migration compatibility storage listener and event bridge",
+      "reads": [
+        "storage changes"
+      ],
+      "writes": [
+        "compatibility peers and UI events"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "compatibility_reconcile",
+      "writeScope": "identity_pair",
+      "lockName": null,
+      "events": [
+        "legacy and canonical DOM events"
+      ],
+      "trigger": "storage.onChanged and window events",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "legacy and canonical storage/event identities"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Each side-panel document registers its own listener."
+    },
+    {
+      "id": "listener-library-refresh",
+      "path": "src/sidepanel/workspace-library-auto-refresh.js",
+      "symbol": "chrome.storage.onChanged.addListener",
+      "context": "side_panel",
+      "responsibility": "save Workspace Library refresh listener",
+      "reads": [
+        "storage changes and saved workspaces"
+      ],
+      "writes": [
+        "derived UI"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session",
+        "IndexedDB read"
+      ],
+      "mutationType": "derived_refresh",
+      "writeScope": "dom",
+      "lockName": null,
+      "events": [
+        "workspace library save completion"
+      ],
+      "trigger": "storage and custom events",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "save coordinator event identities"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Duplicate work across documents is possible; durable mutation is not asserted."
+    },
+    {
+      "id": "storage-migration",
+      "path": "src/core/constellation-storage-migration-engine.js",
+      "symbol": "runStorageMigrationPass",
+      "context": "migration_page",
+      "responsibility": "migration canonical and legacy identity evidence",
+      "reads": [
+        "legacy and canonical storage identities"
+      ],
+      "writes": [
+        "missing peers and migration marker"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "compatibility_migration",
+      "writeScope": "protected_identity_pairs",
+      "lockName": null,
+      "events": [],
+      "trigger": "compatibility bootstrap or controlled validation",
+      "browserMutation": false,
+      "operatorConfirmation": "phase_specific",
+      "compatibilityIdentities": [
+        "constellationStorageIdentityMigration",
+        "legacy and canonical peers"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Protected migration mechanism; not exercised in pure tests."
+    },
+    {
+      "id": "developer-validation-entry",
+      "path": "src/sidepanel/developer-mode.js",
+      "symbol": "registerDeveloperSurface",
+      "context": "developer_validation",
+      "responsibility": "developer_validation surface gating",
+      "reads": [
+        "developer-mode UI state"
+      ],
+      "writes": [
+        "derived DOM visibility"
+      ],
+      "storage": [],
+      "mutationType": "ui_gate",
+      "writeScope": "dom",
+      "lockName": null,
+      "events": [
+        "DOM events"
+      ],
+      "trigger": "side-panel load and Operator toggle",
+      "browserMutation": false,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "historical validation surfaces"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Some registered validation actions mutate state when run; this phase does not run them."
+    }
+  ]
+}

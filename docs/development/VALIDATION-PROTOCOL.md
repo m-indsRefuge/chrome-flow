@@ -45,7 +45,18 @@ Pure tests and static checks must:
 - avoid snapshots or generated artifacts unless the task explicitly authorizes and reviews them;
 - leave `git status --short` unchanged except for the intended implementation diff.
 
-The canonical pure test command will be added during Layer 2.3B. Until it exists, do not invent one.
+Layer 2.3B establishes these canonical zero-dependency commands:
+
+```text
+npm test
+npm run test:characterization
+npm run check:inventory
+npm run check
+```
+
+`npm test` and `npm run test:characterization` run pure Node characterization tests. `npm run check:inventory` validates the machine-readable runtime authority inventory. `npm run check` runs the inventory check and characterization suite together. These commands do not authorize live Chrome, migration, import, resume, archive, recovery, rollback, production-save, or browser-projection actions.
+
+The repository requires Node 24 or newer and uses Node's built-in test runner with `--test-isolation=none`. Tests must remain free of shared mutable process state and must not import listener-heavy extension entry points. No package installation step is required because the harness has zero dependencies.
 
 ### Class C — Controlled local repository tooling
 

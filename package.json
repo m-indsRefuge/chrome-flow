@@ -1,0 +1,15 @@
+{
+  "name": "constellation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "test": "node --test --test-isolation=none tests/characterization/*.test.js",
+    "test:characterization": "node --test --test-isolation=none tests/characterization/*.test.js",
+    "check:inventory": "node scripts/check-runtime-inventory.mjs",
+    "check": "npm run check:inventory && npm run test:characterization"
+  }
+}
