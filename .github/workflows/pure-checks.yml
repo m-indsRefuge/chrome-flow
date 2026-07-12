@@ -17,7 +17,11 @@ jobs:
           node-version: 24
       - name: Validate runtime inventory
         run: npm run check:inventory
+      - name: Validate runtime contract purity
+        run: npm run check:runtime-contract-purity
       - name: Run characterization tests
         run: npm run test:characterization
+      - name: Run runtime contract tests
+        run: npm run test:runtime-contract
       - name: Run aggregate pure check
         run: npm run check

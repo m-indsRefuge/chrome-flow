@@ -51,10 +51,12 @@ Layer 2.3B establishes these canonical zero-dependency commands:
 npm test
 npm run test:characterization
 npm run check:inventory
+npm run test:runtime-contract
+npm run check:runtime-contract-purity
 npm run check
 ```
 
-`npm test` and `npm run test:characterization` run pure Node characterization tests. `npm run check:inventory` validates the machine-readable runtime authority inventory. `npm run check` runs the inventory check and characterization suite together. These commands do not authorize live Chrome, migration, import, resume, archive, recovery, rollback, production-save, or browser-projection actions.
+`npm test` runs the characterization and runtime-contract suites. `npm run test:characterization` runs the Layer 2.3B characterization tests. `npm run test:runtime-contract` runs the dormant Layer 2.3C-A pure foundation tests. `npm run check:inventory` validates the machine-readable runtime authority inventory. `npm run check:runtime-contract-purity` applies a lightweight token-pattern guard to the contained runtime-contract modules; it is not a JavaScript parser. `npm run check` runs both static checks and all pure tests. These commands do not authorize live Chrome, migration, import, resume, archive, recovery, rollback, production-save, or browser-projection actions.
 
 The repository requires Node 24 or newer and uses Node's built-in test runner with `--test-isolation=none`. Tests must remain free of shared mutable process state and must not import listener-heavy extension entry points. No package installation step is required because the harness has zero dependencies.
 
