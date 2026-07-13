@@ -20,6 +20,13 @@ export function applyDomainMutation(workspace, mutationType, payload) {
   if (mutationType === "journal.append" || mutationType === "timeline.append") {
     const field = mutationType.startsWith("journal") ? "journal" : "timeline";
     if (!isPlainObject(payload.record) || serializableErrors(payload.record, "record").length) return reject("record_must_be_serializable_plain_object");
+    if (field === "journal") {
+      if (!nonEmptyString(payload.record.entryId)) return reject("journal_entry_id_required");
+      const existing = (Array.isArray(next.journal) ? next.journal : []).find((entry) => entry.entryId === payload.record.entryId);
+      if (existing) return stableStringify(existing) === stableStringify(payload.record)
+        ? { outcome: "no_change", workspace: next, reason: "journal_entry_already_applied" }
+        : reject("journal_entry_id_conflict");
+    }
     next[field] = [...(Array.isArray(next[field]) ? next[field] : []), clone(payload.record)]; return { outcome: "changed", workspace: next };
   }
   if (mutationType === "workspace.metadata.patch") {

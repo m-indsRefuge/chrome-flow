@@ -52,6 +52,7 @@ npm test
 npm run test:characterization
 npm run check:inventory
 npm run test:runtime-contract
+npm run test:journal-coordination
 npm run check:runtime-contract-purity
 npm run check
 ```

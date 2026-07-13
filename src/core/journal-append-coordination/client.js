@@ -1,0 +1,5 @@
+import { JOURNAL_APPEND_REQUEST_SCHEMA, response, validateJournalAppendResponse } from "./contract.js";
+export function createJournalAppendClient({createId,now,send,refresh,clear,status}){let contextId,pending,inFlight;
+  async function execute(request){let result;try{result=await send(request);if(!validateJournalAppendResponse(result,request).valid)throw Error()}catch{result=response(request,"failed",{reason:"malformed_or_mismatched_response",retrySafe:true})}const success=["committed","replayed","no_change"].includes(result.status)&&result.workspaceVerified===true;status(result);if(success&&pending===request){pending=undefined;clear();await refresh()}return result}
+  return{get pending(){return pending},submit(input){contextId||=createId();if(inFlight)return inFlight;if(!pending)pending={schema:JOURNAL_APPEND_REQUEST_SCHEMA,operationId:createId(),contextId,workspaceId:input.workspaceId,requestedAt:now(),entry:{...input.entry,entryId:createId()}};const request=pending;inFlight=execute(request).finally(()=>{inFlight=undefined});return inFlight}}
+}

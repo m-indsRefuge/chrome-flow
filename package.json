@@ -7,9 +7,10 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "npm run test:characterization && npm run test:runtime-contract",
+    "test": "npm run test:characterization && npm run test:runtime-contract && npm run test:journal-coordination",
     "test:characterization": "node --test --test-isolation=none tests/characterization/*.test.js",
     "test:runtime-contract": "node --test --test-isolation=none tests/runtime-contract/*.test.js",
+    "test:journal-coordination": "node --test --test-isolation=none tests/journal-append-coordination/*.test.js",
     "check:inventory": "node scripts/check-runtime-inventory.mjs",
     "check:runtime-contract-purity": "node scripts/check-runtime-contract-purity.mjs",
     "check": "npm run check:inventory && npm run check:runtime-contract-purity && npm test"

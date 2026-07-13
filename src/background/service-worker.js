@@ -1,6 +1,9 @@
 import { scheduleWorkspaceProjectionReconciliation } from "../core/automatic-workspace-projection-reconciler.js";
 import { CONSTELLATION_PRODUCT_NAME } from "../core/product-identity.js";
 import { EVENT_IDENTITIES } from "../core/constellation-identity-contract.js";
+import { coordinateJournalAppend } from "../core/journal-append-coordination/coordinator.js";
+import { createChromeJournalAdapters } from "../core/journal-append-coordination/chrome-adapter.js";
+import { JOURNAL_APPEND_REQUEST_SCHEMA, response as journalResponse } from "../core/journal-append-coordination/contract.js";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log(CONSTELLATION_PRODUCT_NAME + " installed.");
@@ -110,6 +113,12 @@ if (chrome.tabGroups?.onRemoved) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.schema === JOURNAL_APPEND_REQUEST_SCHEMA) {
+    const expectedUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
+    if (sender?.id !== chrome.runtime.id || sender?.url !== expectedUrl) { sendResponse(journalResponse(message, "rejected", { reason: "sender_not_authorized" })); return false; }
+    coordinateJournalAppend(message, createChromeJournalAdapters(chrome)).then(sendResponse, () => sendResponse(journalResponse(message, "failed", { reason: "unhandled_coordination_failure", retrySafe: true })));
+    return true;
+  }
   const messageType = String(message?.type || "");
   const identity = EVENT_IDENTITIES.reconcileWorkspaceProjection;
 

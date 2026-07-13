@@ -1,0 +1,4 @@
+import { readCompatibleStorageValue, stableStringify } from "../constellation-storage-compatibility.js";
+export async function readActiveWorkspaceReadonly() { const read=await readCompatibleStorageValue("activeWorkspace"); if(read.conflict) return {ok:false,reason:"compatibility_conflict"}; if(!read.value) return {ok:false,reason:"active_workspace_missing"}; return {ok:true,workspace:read.value}; }
+export function equivalentWorkspace(left,right){return stableStringify(left)===stableStringify(right)}
+export function verifyCompatibleWorkspaceRead(read,expected,entry){if(!read||read.canonicalPresent!==true||read.legacyPresent!==true||read.equivalent!==true||read.conflict!==false||!equivalentWorkspace(read.value,expected))return false;const matches=(read.value?.journal||[]).filter(item=>item.entryId===entry.entryId);return matches.length===1&&stableStringify(matches[0])===stableStringify(entry)}

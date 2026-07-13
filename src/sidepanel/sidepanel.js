@@ -1,9 +1,10 @@
 import {
   getWorkspace,
   saveWorkspace,
-  addJournalEntry,
   addTimelineEvent
 } from "../core/workspace-store.js";
+import { createJournalAppendClient } from "../core/journal-append-coordination/client.js";
+import { readActiveWorkspaceReadonly } from "../core/journal-append-coordination/readonly-workspace.js";
 
 import {
   createBrowserTabSnapshot,
@@ -60,6 +61,7 @@ const WINDOW_SETTLE_DELAY_MS = 600;
 const MISSING_REOPEN_STATUSES = new Set(["not_found", "exact_tab_id_consumed", "no_reopened_url_tab_found"]);
 let availableTabs = [];
 let moveWorkspaceIntoNewWindowInProgress = false;
+const journalAppendClient = createJournalAppendClient({ createId: () => crypto.randomUUID(), now: () => new Date().toISOString(), send: (request) => chrome.runtime.sendMessage(request), refresh: refreshJournalReadonly, clear: () => { if (journalEntryInput) journalEntryInput.value = ""; if (journalTagInput) journalTagInput.value = ""; }, status: (result) => { const success=["committed","replayed","no_change"].includes(result.status)&&result.workspaceVerified===true; setIntakeStatus(success ? "Journal entry saved and verified." : "Journal entry not saved or verified: " + (result.reason || result.status || "unknown_result")); } });
 
 await initializeSidePanel();
 
@@ -783,14 +785,13 @@ function findPreviouslyReopenedTabForRecovery(workspace, recoverySourceEventId, 
 async function saveJournalEntry() {
   const text = journalEntryInput?.value?.trim() || "";
   if (!text) return;
-  const workspace = await getWorkspace();
+  const read = await readActiveWorkspaceReadonly(); if(!read.ok){setIntakeStatus("Journal entry not saved: "+read.reason);return} const workspace=read.workspace;
   const relatedRoleId = journalRelatedRoleSelect?.value || "";
   const relatedRoleLabel = relatedRoleId ? getWorkspaceRoleLabel(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE, relatedRoleId) : "";
-  await addJournalEntry(text, { tag: journalTagInput?.value?.trim() || "", relatedRoleId, relatedRoleLabel });
-  if (journalEntryInput) journalEntryInput.value = "";
-  if (journalTagInput) journalTagInput.value = "";
-  await renderWorkspace();
+  await journalAppendClient.submit({ workspaceId: workspace.workspaceId, entry: { text, tag: journalTagInput?.value?.trim() || "", relatedRoleId, relatedRoleLabel, createdAt: new Date().toISOString() } });
 }
+
+async function refreshJournalReadonly(){const read=await readActiveWorkspaceReadonly();if(!read.ok){setIntakeStatus("Journal refresh failed: "+read.reason);return}populateJournalRoleSelect(read.workspace.workspaceType||DEFAULT_WORKSPACE_TYPE);renderJournal(read.workspace)}
 
 function renderWorkspaceTabs(workspace, resolutionResults) {
   if (!tabsList) return;
