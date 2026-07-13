@@ -4,6 +4,9 @@ import { EVENT_IDENTITIES } from "../core/constellation-identity-contract.js";
 import { coordinateJournalAppend } from "../core/journal-append-coordination/coordinator.js";
 import { createChromeJournalAdapters } from "../core/journal-append-coordination/chrome-adapter.js";
 import { JOURNAL_APPEND_REQUEST_SCHEMA, response as journalResponse } from "../core/journal-append-coordination/contract.js";
+import { coordinateContextRegistration, coordinateWindowCloseCleanup } from "../core/runtime-session-authority/coordinator.js";
+import { createChromeRuntimeSessionAuthorityAdapters } from "../core/runtime-session-authority/chrome-adapter.js";
+import { createContextResult, isContextRegisterMessage, validateContextRegisterRequest, validateSidePanelSender } from "../core/runtime-session-authority/contract.js";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log(CONSTELLATION_PRODUCT_NAME + " installed.");
@@ -83,6 +86,7 @@ chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
 
 chrome.windows.onRemoved.addListener((windowId) => {
   scheduleWorkspaceProjectionReconciliation("window_removed", { windowId });
+  coordinateWindowCloseCleanup(windowId, createChromeRuntimeSessionAuthorityAdapters(chrome)).catch(() => undefined);
 });
 
 if (chrome.tabGroups?.onCreated) {
@@ -113,6 +117,17 @@ if (chrome.tabGroups?.onRemoved) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (isContextRegisterMessage(message)) {
+    const expectedUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
+    const senderValidation = validateSidePanelSender(sender, chrome.runtime.id, expectedUrl);
+    const requestValidation = validateContextRegisterRequest(message);
+    if (!senderValidation.valid || !requestValidation.valid) {
+      sendResponse(createContextResult({ ...message, status: "rejected", reason: senderValidation.valid ? "invalid_request" : senderValidation.reason, errors: requestValidation.errors || [] }));
+      return false;
+    }
+    coordinateContextRegistration(message, { sourceUrl: sender.url }, createChromeRuntimeSessionAuthorityAdapters(chrome)).then(sendResponse, () => sendResponse(createContextResult({ ...message, status: "failed", reason: "unhandled_coordination_failure", retrySafe: true })));
+    return true;
+  }
   if (message?.schema === JOURNAL_APPEND_REQUEST_SCHEMA) {
     const expectedUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
     if (sender?.id !== chrome.runtime.id || sender?.url !== expectedUrl) { sendResponse(journalResponse(message, "rejected", { reason: "sender_not_authorized" })); return false; }

@@ -6,7 +6,8 @@ export const SCHEMAS = Object.freeze({
   mutation: "constellation-runtime-mutation-v0.1",
   result: "constellation-runtime-mutation-result-v0.1",
   projectionReconciliation: "constellation-workspace-projection-reconcile-v0.1",
-  projectionReconciliationResult: "constellation-workspace-projection-reconciliation-result-v0.1"
+  projectionReconciliationResult: "constellation-workspace-projection-reconciliation-result-v0.1",
+  runtimeSessionAuthority: "constellation-runtime-session-authority-v0.1"
 });
 export const LOCK_NAMES = Object.freeze({
   runtimeState: "constellation-runtime-state-v0.1",

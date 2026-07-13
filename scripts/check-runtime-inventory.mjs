@@ -39,7 +39,11 @@ for (const item of inventory.items) {
   await access(absolute);
   const source = await readFile(absolute, "utf8");
   assert.ok(source.includes(item.symbol), `${item.id}: exact source symbol/text not found in ${item.path}: ${item.symbol}`);
-  if (item.lockName !== null) assert.ok(source.includes(item.lockName), `${item.id}: lockName not found in referenced source ${item.path}: ${item.lockName}`);
+  if (item.lockName !== null) {
+    const importedConstantReference = item.lockName === "constellation-runtime-state-v0.1" && source.includes("LOCK_NAMES.runtimeState")
+      || item.lockName === "constellation-runtime-exclusive-operation-v0.1" && source.includes("LOCK_NAMES.exclusiveOperation");
+    assert.ok(source.includes(item.lockName) || importedConstantReference, `${item.id}: lockName not found in referenced source ${item.path}: ${item.lockName}`);
+  }
 }
 
 const protectedRequirements = inventory.protectedIdentityRequirements;
@@ -62,6 +66,12 @@ assert.equal(reconciliation?.mutationType, "workspace.projection.reconcile", "re
 assert.equal(reconciliation?.lockName, "constellation-runtime-state-v0.1", "reconciliation must share journal runtime-state authority");
 assert.ok(reconciliation?.compatibilityIdentities.includes("constellationActiveWorkspace"), "reconciliation must name the canonical active-workspace peer");
 assert.ok(reconciliation?.compatibilityIdentities.includes("chromeFlowWorkspace"), "reconciliation must name the legacy active-workspace peer");
+
+const sessionAuthority = inventory.items.find((item) => item.id === "runtime-session-authority");
+assert.equal(sessionAuthority?.mutationType, "serialized_single_key_transition", "runtime session authority must describe its bounded transition");
+assert.equal(sessionAuthority?.lockName, "constellation-runtime-state-v0.1", "runtime session authority must use the shared runtime-state lock");
+assert.deepEqual(sessionAuthority?.storage, ["chrome.storage.session"], "runtime session authority must remain session-scoped");
+assert.ok(sessionAuthority?.compatibilityIdentities.includes("constellationRuntimeSessionAuthority"), "runtime session authority key must be inventoried");
 
 const structuredEvidence = new Set();
 for (const item of inventory.items) collectStrings(item, structuredEvidence);

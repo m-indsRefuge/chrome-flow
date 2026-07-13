@@ -30,7 +30,9 @@
     "constellation-workspace-library-save-completed",
     "chrome-flow-workspace-library-save-completed",
     "constellation-reconcile-workspace-projection",
-    "chrome-flow-reconcile-workspace-projection"
+    "chrome-flow-reconcile-workspace-projection",
+    "constellationRuntimeSessionAuthority",
+    "constellation-runtime-session-authority-v0.1"
   ],
   "items": [
     {"id":"journal-request-producer","path":"src/sidepanel/sidepanel.js","symbol":"journalAppendClient","context":"side_panel","responsibility":"journal request production","reads":["journal form","read-only compatible active workspace identity and type"],"writes":["runtime message","derived UI"],"storage":["chrome.storage.local"],"mutationType":"journal_append_request","writeScope":"message_only","lockName":null,"events":["button click"],"trigger":"Operator journal submission","browserMutation":false,"operatorConfirmation":true,"compatibilityIdentities":["chromeFlowWorkspace","constellationActiveWorkspace"],"confidence":"high","evidenceType":"direct_observation","notes":"Read-only compatibility access with no workspace write authority; message-only mutation request production and stable retry identity."},
@@ -735,6 +737,27 @@
       "confidence": "high",
       "evidenceType": "direct_observation",
       "notes": "Protected migration mechanism; not exercised in pure tests."
+    },
+    {
+      "id": "runtime-session-authority",
+      "path": "src/core/runtime-session-authority/coordinator.js",
+      "symbol": "coordinateContextRegistration",
+      "context": "service_worker",
+      "responsibility": "runtime session assignment and window-context authority",
+      "reads": ["constellationRuntimeSessionAuthority", "verified Chrome window identity"],
+      "writes": ["constellationRuntimeSessionAuthority", "existing diagnostic evidence"],
+      "storage": ["chrome.storage.session"],
+      "mutationType": "serialized_single_key_transition",
+      "writeScope": "session_authority_root",
+      "lockName": "constellation-runtime-state-v0.1",
+      "events": ["constellation-runtime-context-register", "chrome.windows.onRemoved"],
+      "trigger": "authorized side-panel context registration or exact window removal",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": ["constellationRuntimeSessionAuthority", "constellation-runtime-session-authority-v0.1"],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "D1 stores assignments and active side-panel contexts only. It contains no workspace state and exposes no public assignment activation route."
     },
     {
       "id": "developer-validation-entry",

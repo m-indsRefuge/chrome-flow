@@ -54,8 +54,25 @@ export async function checkReconciliationPurity(root = new URL("../src/core/work
   return names.length;
 }
 
+export async function checkRuntimeSessionAuthorityPurity(root = new URL("../src/core/runtime-session-authority/", import.meta.url)) {
+  const names = (await readdir(root)).filter((name) => name !== "chrome-adapter.js");
+  const allowed = new Set(["client.js", "contract.js", "coordinator.js"]);
+  for (const name of names) {
+    if (!allowed.has(name)) throw new Error("unexpected pure runtime session authority artifact: " + name);
+    const source = await readFile(new URL(name, root), "utf8");
+    const browserErrors = inspectRuntimeContractSource(name, source).filter((error) => !error.includes("imports outside the module family"));
+    if (browserErrors.length) throw new Error(browserErrors.join("\n"));
+    for (const match of source.matchAll(/(?:import|export)\s+(?:[\s\S]*?\s+from\s+)?["']([^"']+)["']/g)) {
+      const specifier = match[1].replaceAll("\\", "/");
+      if (!(specifier.startsWith("./") || specifier.startsWith("../runtime-contract/"))) throw new Error(name + " imports outside approved pure families: " + match[1]);
+    }
+  }
+  return names.length;
+}
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const count = await checkRuntimeContractPurity();
   const reconciliationCount = await checkReconciliationPurity();
-  console.log("Runtime contract purity valid: " + count + " runtime modules and " + reconciliationCount + " reconciliation modules.");
+  const sessionAuthorityCount = await checkRuntimeSessionAuthorityPurity();
+  console.log("Runtime contract purity valid: " + count + " runtime modules, " + reconciliationCount + " reconciliation modules, and " + sessionAuthorityCount + " runtime session authority modules.");
 }

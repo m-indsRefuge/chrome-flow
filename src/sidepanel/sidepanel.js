@@ -5,6 +5,7 @@ import {
 } from "../core/workspace-store.js";
 import { createJournalAppendClient } from "../core/journal-append-coordination/client.js";
 import { readActiveWorkspaceReadonly } from "../core/journal-append-coordination/readonly-workspace.js";
+import { createRuntimeSessionContextClient, startRuntimeSessionContextRegistration } from "../core/runtime-session-authority/client.js";
 
 import {
   createBrowserTabSnapshot,
@@ -62,10 +63,13 @@ const MISSING_REOPEN_STATUSES = new Set(["not_found", "exact_tab_id_consumed", "
 let availableTabs = [];
 let moveWorkspaceIntoNewWindowInProgress = false;
 const journalAppendClient = createJournalAppendClient({ createId: () => crypto.randomUUID(), now: () => new Date().toISOString(), send: (request) => chrome.runtime.sendMessage(request), refresh: refreshJournalReadonly, clear: () => { if (journalEntryInput) journalEntryInput.value = ""; if (journalTagInput) journalTagInput.value = ""; }, status: (result) => { const success=["committed","replayed","no_change"].includes(result.status)&&result.workspaceVerified===true; setIntakeStatus(success ? "Journal entry saved and verified." : "Journal entry not saved or verified: " + (result.reason || result.status || "unknown_result")); } });
+const runtimeSessionContextClient = createRuntimeSessionContextClient({ createId: () => crypto.randomUUID(), now: () => new Date().toISOString(), getCurrentWindow: () => chrome.windows.getCurrent(), send: (request) => chrome.runtime.sendMessage(request) });
+let runtimeSessionContextRegistrationEvidence = null;
 
 await initializeSidePanel();
 
 async function initializeSidePanel() {
+  void startRuntimeSessionContextRegistration(runtimeSessionContextClient, (evidence) => { runtimeSessionContextRegistrationEvidence = evidence; });
   await migrateWorkspaceTabIds();
   populateWorkspaceTypeSelect();
   renderAdvancedTabControls();

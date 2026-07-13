@@ -23,6 +23,8 @@ jobs:
         run: npm run test:characterization
       - name: Run runtime contract tests
         run: npm run test:runtime-contract
+      - name: Run runtime session authority tests
+        run: npm run test:runtime-session-authority
       - name: Run journal coordination tests
         run: npm run test:journal-coordination
       - name: Run reconciliation coordination tests

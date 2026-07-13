@@ -1,6 +1,37 @@
 import { SCHEMAS } from "./constants.js";
-import { clone, nonEmptyString, validDateTime } from "./value-utils.js";
+import { clone, isPlainObject, nonEmptyString, serializableErrors, validDateTime } from "./value-utils.js";
 export function createAssignmentRegistry() { return { schema: SCHEMAS.assignments, nextEpoch: 1, assignments: [] }; }
+export function validateAssignmentRegistry(registry) {
+  const errors = [];
+  if (!isPlainObject(registry)) return { valid: false, errors: ["assignmentRegistry must be a plain object"] };
+  errors.push(...serializableErrors(registry, "assignmentRegistry"));
+  if (registry.schema !== SCHEMAS.assignments) errors.push("assignmentRegistry schema is invalid");
+  if (!Number.isInteger(registry.nextEpoch) || registry.nextEpoch <= 0) errors.push("assignmentRegistry nextEpoch must be positive");
+  if (!Array.isArray(registry.assignments)) errors.push("assignmentRegistry assignments must be an array");
+  const ids = new Set(), epochs = new Set(), activeWindows = new Set(), activeWorkspaces = new Set();
+  let maxEpoch = 0;
+  if (Array.isArray(registry.assignments)) registry.assignments.forEach((assignment, index) => {
+    const path = `assignmentRegistry.assignments[${index}]`;
+    if (!isPlainObject(assignment)) { errors.push(path + " must be a plain object"); return; }
+    if (!nonEmptyString(assignment.runtimeAssignmentId)) errors.push(path + ".runtimeAssignmentId is invalid");
+    else if (ids.has(assignment.runtimeAssignmentId)) errors.push(path + ".runtimeAssignmentId is duplicate");
+    else ids.add(assignment.runtimeAssignmentId);
+    if (!nonEmptyString(assignment.workspaceId)) errors.push(path + ".workspaceId is invalid");
+    if (!Number.isInteger(assignment.windowId) || assignment.windowId < 0) errors.push(path + ".windowId is invalid");
+    if (!Number.isInteger(assignment.assignmentEpoch) || assignment.assignmentEpoch <= 0) errors.push(path + ".assignmentEpoch is invalid");
+    else if (epochs.has(assignment.assignmentEpoch)) errors.push(path + ".assignmentEpoch is duplicate");
+    else { epochs.add(assignment.assignmentEpoch); maxEpoch = Math.max(maxEpoch, assignment.assignmentEpoch); }
+    if (!["active", "released"].includes(assignment.state)) errors.push(path + ".state is invalid");
+    for (const field of ["createdAt", "updatedAt", "lastVerifiedAt"]) if (!validDateTime(assignment[field])) errors.push(path + "." + field + " is invalid");
+    if (!nonEmptyString(assignment.sourceContextId)) errors.push(path + ".sourceContextId is invalid");
+    if (assignment.state === "active") {
+      if (activeWindows.has(assignment.windowId)) errors.push(path + ".windowId has another active assignment"); else activeWindows.add(assignment.windowId);
+      if (activeWorkspaces.has(assignment.workspaceId)) errors.push(path + ".workspaceId has another active assignment"); else activeWorkspaces.add(assignment.workspaceId);
+    }
+  });
+  if (Number.isInteger(registry.nextEpoch) && registry.nextEpoch <= maxEpoch) errors.push("assignmentRegistry nextEpoch must exceed every issued epoch");
+  return { valid: errors.length === 0, errors };
+}
 export function resolveAssignmentByWindow(registry, windowId) { return clone(registry.assignments.find((a) => a.state === "active" && a.windowId === windowId) || null); }
 export function resolveAssignmentByWorkspace(registry, workspaceId) { return clone(registry.assignments.find((a) => a.state === "active" && a.workspaceId === workspaceId) || null); }
 function bind(registry, details) {

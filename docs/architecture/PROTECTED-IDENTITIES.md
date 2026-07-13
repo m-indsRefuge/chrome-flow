@@ -119,6 +119,16 @@ Area:      chrome.storage.local
 
 Authority: storage-identity migration evidence.
 
+### Runtime session authority
+
+```text
+Canonical: constellationRuntimeSessionAuthority
+Schema:    constellation-runtime-session-authority-v0.1
+Area:      chrome.storage.session
+```
+
+Authority: browser-session-lifetime runtime assignment registry and active side-panel window contexts. The key intentionally contains no workspace state and is cleared with the Chrome extension session. It has no legacy alias and must not be reconstructed from durable workspace, compatibility, or projection data.
+
 ## Event identities
 
 ### Workspace Library save completion
