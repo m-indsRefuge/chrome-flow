@@ -1,30 +1,30 @@
 import { LOCK_NAMES } from "../runtime-contract/constants.js";
 import { assignRuntime, releaseRuntime, resolveAssignmentByWindow, resolveAssignmentByWorkspace, transferRuntime } from "../runtime-contract/assignments.js";
 import { clone } from "../runtime-contract/value-utils.js";
-import { createContextResult, createSessionAuthority, registerContext, rootsEqual, validateActiveContext, validateContextRegisterRequest, validateSessionAuthority } from "./contract.js";
+import { createContextResultFromRequest, createSessionAuthority, registerContext, rootsEqual, validateActiveContext, validateContextRegisterRequest, validateSessionAuthority } from "./contract.js";
 
 export async function coordinateContextRegistration(request, senderEvidence, adapters) {
   const validation = validateContextRegisterRequest(request);
-  if (!validation.valid) return createContextResult({ ...request, status: "rejected", reason: "invalid_request", errors: validation.errors });
+  if (!validation.valid) return createContextResultFromRequest(request, { status: "rejected", reason: "invalid_request", errors: validation.errors });
   return coordinateWithDiagnostic(adapters, async () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
     const verifiedWindow = await verifyWindow(adapters, request.windowId);
-    if (!verifiedWindow.valid) return createContextResult({ ...request, status: "rejected", reason: "window_not_verified", retrySafe: true, errors: verifiedWindow.errors });
+    if (!verifiedWindow.valid) return createContextResultFromRequest(request, { status: "rejected", reason: "window_not_verified", retrySafe: true, errors: verifiedWindow.errors });
     const current = await adapters.readAuthority();
     const genesis = current === undefined;
     const root = genesis ? createSessionAuthority(adapters.createId()) : current;
     const rootValidation = validateSessionAuthority(root);
-    if (!rootValidation.valid) return createContextResult({ ...request, status: "rejected", reason: "malformed_authority", errors: rootValidation.errors });
+    if (!rootValidation.valid) return createContextResultFromRequest(request, { status: "rejected", reason: "malformed_authority", errors: rootValidation.errors });
     const transitioned = registerContext(root, { contextId: request.contextId, windowId: request.windowId, createdAt: adapters.now(), sourceUrl: senderEvidence.sourceUrl }, { genesis });
-    if (["context_conflict", "rejected"].includes(transitioned.status)) return createContextResult({ ...request, status: transitioned.status, reason: transitioned.reason, runtimeSessionId: root.runtimeSessionId, authorityRevision: root.authorityRevision, errors: transitioned.errors });
+    if (["context_conflict", "rejected"].includes(transitioned.status)) return createContextResultFromRequest(request, { status: transitioned.status, reason: transitioned.reason, runtimeSessionId: root.runtimeSessionId, authorityRevision: root.authorityRevision, errors: transitioned.errors });
     if (transitioned.status === "no_change") {
       const verification = await verifyExisting(adapters, root);
-      const result = createContextResult({ ...request, status: verification.verified ? "no_change" : "failed", runtimeSessionId: root.runtimeSessionId, authorityRevision: root.authorityRevision, authorityVerified: verification.verified, context: transitioned.context, assignment: verification.verified ? transitioned.assignment : null, retrySafe: verification.retrySafe, reason: verification.reason });
+      const result = createContextResultFromRequest(request, { status: verification.verified ? "no_change" : "failed", runtimeSessionId: root.runtimeSessionId, authorityRevision: root.authorityRevision, authorityVerified: verification.verified, context: transitioned.context, assignment: verification.verified ? transitioned.assignment : null, retrySafe: verification.retrySafe, reason: verification.reason });
       if (!verification.verified) result.diagnosticAction = "runtime_session_authority_verification_failed";
       return result;
     }
     return writeAndVerify(adapters, request, transitioned.root, transitioned, genesis ? "runtime_session_authority_genesis_registered" : "runtime_session_context_replaced_or_registered");
   }), (error) => {
-    const result = createContextResult({ ...request, status: "failed", reason: "coordination_failure", retrySafe: true, errors: [String(error?.message || error)] });
+    const result = createContextResultFromRequest(request, { status: "failed", reason: "coordination_failure", retrySafe: true, errors: [String(error?.message || error)] });
     result.diagnosticAction = "runtime_session_authority_coordination_failed";
     return result;
   });
@@ -93,7 +93,10 @@ export async function coordinateWindowCloseCleanup(windowId, adapters) {
     next.authorityRevision += 1;
     const verification = await persistExpected(adapters, next);
     const committedStatus = matchingAssignment ? "released" : "context_removed";
-    return { status: verification.verified ? committedStatus : "failed", reason: verification.reason, windowId, assignment: matchingAssignment, authorityRevision: next.authorityRevision, runtimeSessionId: next.runtimeSessionId, authorityCommitted: verification.committed, authorityVerified: verification.verified, retrySafe: verification.retrySafe, diagnosticAction: verification.verified ? "runtime_session_window_authority_cleaned" : "runtime_session_authority_verification_failed" };
+    const verifiedAssignment = verification.verified && matchingAssignment
+      ? verification.fresh.assignmentRegistry.assignments.find((assignment) => assignment.runtimeAssignmentId === matchingAssignment.runtimeAssignmentId) || null
+      : null;
+    return { status: verification.verified ? committedStatus : "failed", reason: verification.reason, windowId, assignment: verifiedAssignment, authorityRevision: next.authorityRevision, runtimeSessionId: next.runtimeSessionId, authorityCommitted: verification.committed, authorityVerified: verification.verified, retrySafe: verification.retrySafe, diagnosticAction: verification.verified ? "runtime_session_window_authority_cleaned" : "runtime_session_authority_verification_failed" };
   }));
 }
 
@@ -106,7 +109,7 @@ async function commitAssignmentTransition(adapters, details, root, transitioned,
 
 async function writeAndVerify(adapters, request, expected, transitioned, action) {
   const verification = await persistExpected(adapters, expected);
-  const result = createContextResult({ ...request, status: verification.verified ? transitioned.status : "failed", reason: verification.reason, runtimeSessionId: expected.runtimeSessionId, authorityRevision: expected.authorityRevision, authorityCommitted: verification.committed, authorityVerified: verification.verified, context: transitioned.context, assignment: verification.verified ? transitioned.assignment : null, retrySafe: verification.retrySafe, warnings: [], errors: [] });
+  const result = createContextResultFromRequest(request, { status: verification.verified ? transitioned.status : "failed", reason: verification.reason, runtimeSessionId: expected.runtimeSessionId, authorityRevision: expected.authorityRevision, authorityCommitted: verification.committed, authorityVerified: verification.verified, context: transitioned.context, assignment: verification.verified ? transitioned.assignment : null, retrySafe: verification.retrySafe, warnings: [], errors: [] });
   result.diagnosticAction = verification.verified ? action : "runtime_session_authority_verification_failed";
   return result;
 }

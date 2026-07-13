@@ -6,7 +6,7 @@ import { createChromeJournalAdapters } from "../core/journal-append-coordination
 import { JOURNAL_APPEND_REQUEST_SCHEMA, response as journalResponse } from "../core/journal-append-coordination/contract.js";
 import { coordinateContextRegistration, coordinateWindowCloseCleanup } from "../core/runtime-session-authority/coordinator.js";
 import { createChromeRuntimeSessionAuthorityAdapters } from "../core/runtime-session-authority/chrome-adapter.js";
-import { createContextResult, isContextRegisterMessage, validateContextRegisterRequest, validateSidePanelSender } from "../core/runtime-session-authority/contract.js";
+import { createContextResultFromRequest, isContextRegisterMessage, validateContextRegisterRequest, validateSidePanelSender } from "../core/runtime-session-authority/contract.js";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log(CONSTELLATION_PRODUCT_NAME + " installed.");
@@ -122,10 +122,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const senderValidation = validateSidePanelSender(sender, chrome.runtime.id, expectedUrl);
     const requestValidation = validateContextRegisterRequest(message);
     if (!senderValidation.valid || !requestValidation.valid) {
-      sendResponse(createContextResult({ ...message, status: "rejected", reason: senderValidation.valid ? "invalid_request" : senderValidation.reason, errors: requestValidation.errors || [] }));
+      sendResponse(createContextResultFromRequest(message, { status: "rejected", reason: senderValidation.valid ? "invalid_request" : senderValidation.reason, errors: requestValidation.errors || [] }));
       return false;
     }
-    coordinateContextRegistration(message, { sourceUrl: sender.url }, createChromeRuntimeSessionAuthorityAdapters(chrome)).then(sendResponse, () => sendResponse(createContextResult({ ...message, status: "failed", reason: "unhandled_coordination_failure", retrySafe: true })));
+    coordinateContextRegistration(message, { sourceUrl: sender.url }, createChromeRuntimeSessionAuthorityAdapters(chrome)).then(sendResponse, () => sendResponse(createContextResultFromRequest(message, { status: "failed", reason: "unhandled_coordination_failure", retrySafe: true })));
     return true;
   }
   if (message?.schema === JOURNAL_APPEND_REQUEST_SCHEMA) {

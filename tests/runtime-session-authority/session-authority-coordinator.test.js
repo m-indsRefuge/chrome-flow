@@ -13,7 +13,7 @@ function deferred() { let resolve; const promise = new Promise((yes) => { resolv
 
 function fake(options = {}) {
   let authority = copy(options.authority), id = 0, writes = 0, reads = 0, tamper = false, malformed = false;
-  const events = [], windows = new Set(options.windows || [1, 2, 3]);
+  const events = [], diagnostics = [], windows = new Set(options.windows || [1, 2, 3]);
   const lockTails = new Map(), lockRequests = new Map(), lockEntries = new Map();
   function withLock(name, callback) {
     const requestCount = (lockRequests.get(name) || 0) + 1; lockRequests.set(name, requestCount); options.onLockRequested?.(name, requestCount);
@@ -35,9 +35,9 @@ function fake(options = {}) {
     createId: () => (options.idPrefix || "generated") + "-" + (++id), now: () => options.now || NOW,
     withRuntimeStateLock: withLock,
     withExclusiveOperationLock: withLock,
-    async recordDiagnostic(action) { events.push("diagnostic:" + action); if (options.diagnosticFailure) throw new Error("diagnostic failed"); }
+    async recordDiagnostic(action, result) { events.push("diagnostic:" + action); diagnostics.push({ action, result: copy(result) }); if (options.diagnosticFailure) throw new Error("diagnostic failed"); }
   };
-  return { adapters, events, get authority() { return copy(authority); }, get writes() { return writes; }, get reads() { return reads; } };
+  return { adapters, events, diagnostics, get authority() { return copy(authority); }, get writes() { return writes; }, get reads() { return reads; } };
 }
 
 async function register(fixture, overrides = {}) { return coordinateContextRegistration(request(overrides), sender, fixture.adapters); }
@@ -70,6 +70,17 @@ test("reserved present authority fails closed with zero writes", async () => {
 test("context registration verifies the window and rejects missing or negative windows", async () => {
   const missing = fake({ windows: [] }); assert.equal((await register(missing)).reason, "window_not_verified"); assert.equal(missing.writes, 0);
   const negative = fake(); assert.equal((await register(negative, { windowId: -1 })).reason, "invalid_request"); assert.equal(negative.events.some((item) => item.startsWith("window:")), false);
+});
+
+test("direct malformed context coordination rejects poisoned results without authority or window I/O", async () => {
+  const f = fake();
+  const poisoned = request({ status: "registered", reason: "", runtimeSessionId: "injected-session", authorityRevision: 999, authorityCommitted: true, authorityVerified: true, context: { contextId: "context-1" }, assignment: { state: "active" }, retrySafe: true, warnings: ["injected-warning"], errors: ["injected-error"] });
+  const result = await coordinateContextRegistration(poisoned, sender, f.adapters);
+  assert.deepEqual({ status: result.status, reason: result.reason, operationId: result.operationId, contextId: result.contextId, windowId: result.windowId, runtimeSessionId: result.runtimeSessionId, authorityRevision: result.authorityRevision, committed: result.authorityCommitted, verified: result.authorityVerified, context: result.context, assignment: result.assignment, retrySafe: result.retrySafe, warnings: result.warnings }, { status: "rejected", reason: "invalid_request", operationId: "op-1", contextId: "context-1", windowId: 1, runtimeSessionId: "", authorityRevision: -1, committed: false, verified: false, context: null, assignment: null, retrySafe: false, warnings: [] });
+  assert.equal(result.errors.includes("request fields must match the exact contract"), true);
+  assert.equal(result.errors.includes("injected-error"), false);
+  assert.equal(f.reads, 0); assert.equal(f.writes, 0); assert.equal(f.events.some((event) => event.startsWith("window:")), false);
+  assert.equal(validateContextRegisterResult(result, poisoned).valid, true);
 });
 
 test("same context is no_change and context conflicts and replacement are deterministic", async () => {
@@ -154,15 +165,31 @@ test("window close releases and removes only exact window authority", async () =
   await coordinateAssignmentCreate({ operationId: "b", workspaceId: "workspace-b", windowId: 2, sourceContextId: "context-2" }, f.adapters);
   const beforeB = copy({ context: f.authority.contexts.find((item) => item.windowId === 2), assignment: f.authority.assignmentRegistry.assignments.find((item) => item.workspaceId === "workspace-b") });
   const result = await coordinateWindowCloseCleanup(1, f.adapters);
-  assert.equal(result.status, "released"); assert.equal(f.authority.contexts.some((item) => item.windowId === 1), false);
-  assert.equal(f.authority.assignmentRegistry.assignments.find((item) => item.workspaceId === "workspace-a").state, "released");
+  const storedReleased = f.authority.assignmentRegistry.assignments.find((item) => item.workspaceId === "workspace-a");
+  assert.equal(result.status, "released"); assert.equal(result.authorityCommitted, true); assert.equal(result.authorityVerified, true); assert.equal(f.authority.contexts.some((item) => item.windowId === 1), false);
+  assert.equal(result.assignment.state, "released"); assert.deepEqual(result.assignment, storedReleased);
+  assert.equal(f.authority.assignmentRegistry.assignments.some((item) => item.windowId === 1 && item.state === "active"), false);
+  assert.deepEqual(f.diagnostics.at(-1).result.assignment, result.assignment);
   assert.deepEqual({ context: f.authority.contexts.find((item) => item.windowId === 2), assignment: f.authority.assignmentRegistry.assignments.find((item) => item.workspaceId === "workspace-b") }, beforeB);
+});
+
+test("window close release returns the verified release timestamp and failures expose no stale assignment", async () => {
+  const root = registerContext(createSessionAuthority("session-1"), { contextId: "context-1", windowId: 1, createdAt: NOW, sourceUrl: sender.sourceUrl }, { genesis: true }).root;
+  root.assignmentRegistry = assignRuntime(root.assignmentRegistry, { workspaceId: "workspace-a", windowId: 1, sourceContextId: "context-1", now: NOW, id: () => "assignment-a" }).registry;
+  const released = fake({ authority: root, now: LATER }); const success = await coordinateWindowCloseCleanup(1, released.adapters);
+  assert.equal(success.assignment.updatedAt, LATER); assert.deepEqual(success.assignment, released.authority.assignmentRegistry.assignments[0]);
+  const mismatch = fake({ authority: root, now: LATER, tamperAfterWrite: true }); const failed = await coordinateWindowCloseCleanup(1, mismatch.adapters);
+  assert.deepEqual({ status: failed.status, reason: failed.reason, committed: failed.authorityCommitted, verified: failed.authorityVerified, retrySafe: failed.retrySafe, assignment: failed.assignment }, { status: "failed", reason: "authority_verification_failed", committed: true, verified: false, retrySafe: false, assignment: null });
+  assert.equal(mismatch.diagnostics.at(-1).result.assignment, null);
+  const readFailure = fake({ authority: root, now: LATER, failReads: [2] }); const unread = await coordinateWindowCloseCleanup(1, readFailure.adapters);
+  assert.deepEqual({ status: unread.status, reason: unread.reason, committed: unread.authorityCommitted, retrySafe: unread.retrySafe, assignment: unread.assignment }, { status: "failed", reason: "authority_verification_read_failed", committed: true, retrySafe: false, assignment: null });
 });
 
 test("context-only window cleanup reports context_removed and commits once", async () => {
   const f = fake(); await register(f); const writes = f.writes, revision = f.authority.authorityRevision;
   const result = await coordinateWindowCloseCleanup(1, f.adapters);
   assert.equal(result.status, "context_removed"); assert.equal(result.authorityCommitted, true); assert.equal(result.authorityVerified, true);
+  assert.equal(result.assignment, null);
   assert.equal(f.authority.authorityRevision, revision + 1); assert.equal(f.writes, writes + 1); assert.deepEqual(f.authority.contexts, []);
 });
 

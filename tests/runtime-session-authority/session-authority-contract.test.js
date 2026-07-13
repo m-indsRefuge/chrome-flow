@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { assignRuntime, createAssignmentRegistry, validateAssignmentRegistry } from "../../src/core/runtime-contract/assignments.js";
-import { CONTEXT_REGISTER_REQUEST_SCHEMA, CONTEXT_REGISTER_TYPE, RESERVED_SESSION_AUTHORITY_ROOT_FIELDS, createContextResult, createSessionAuthority, registerContext, validateActiveContext, validateContextRegisterRequest, validateContextRegisterResult, validateSessionAuthority, validateSidePanelSender } from "../../src/core/runtime-session-authority/contract.js";
+import { CONTEXT_REGISTER_REQUEST_SCHEMA, CONTEXT_REGISTER_TYPE, RESERVED_SESSION_AUTHORITY_ROOT_FIELDS, createContextResult, createContextResultFromRequest, createSessionAuthority, registerContext, validateActiveContext, validateContextRegisterRequest, validateContextRegisterResult, validateSessionAuthority, validateSidePanelSender } from "../../src/core/runtime-session-authority/contract.js";
 
 const NOW = "2026-07-13T10:00:00.000Z";
 const LATER = "2026-07-13T10:01:00.000Z";
@@ -28,6 +28,17 @@ test("strict request and response contracts reject unknown or mismatched fields"
   assert.equal(validateContextRegisterResult(valid, request()).valid, true);
   assert.equal(validateContextRegisterResult({ ...valid, extra: true }, request()).valid, false);
   assert.equal(validateContextRegisterResult(valid, request({ operationId: "other" })).valid, false);
+});
+
+test("malformed requests cannot poison normalized context results", () => {
+  const poisoned = request({ status: "registered", reason: "", runtimeSessionId: "injected-session", authorityRevision: 999, authorityCommitted: true, authorityVerified: true, context: context(), assignment: assignment(), retrySafe: true, warnings: ["injected-warning"], errors: ["injected-error"] });
+  const validation = validateContextRegisterRequest(poisoned);
+  assert.equal(validation.valid, false);
+  const result = createContextResultFromRequest(poisoned, { status: "rejected", reason: "invalid_request", errors: validation.errors });
+  assert.deepEqual({ status: result.status, operationId: result.operationId, contextId: result.contextId, windowId: result.windowId, runtimeSessionId: result.runtimeSessionId, authorityRevision: result.authorityRevision, committed: result.authorityCommitted, verified: result.authorityVerified, context: result.context, assignment: result.assignment, retrySafe: result.retrySafe, warnings: result.warnings }, { status: "rejected", operationId: "op-1", contextId: "context-1", windowId: 1, runtimeSessionId: "", authorityRevision: -1, committed: false, verified: false, context: null, assignment: null, retrySafe: false, warnings: [] });
+  assert.deepEqual(result.errors, validation.errors);
+  assert.equal(result.errors.includes("injected-error"), false);
+  assert.equal(validateContextRegisterResult(result, poisoned).valid, true);
 });
 
 test("response validation binds nested identities and enforces the status matrix", () => {
@@ -58,6 +69,13 @@ test("sender validation requires exact extension identity and side-panel URL", (
   assert.equal(validateSidePanelSender(sender, "id", sender.url).valid, true);
   assert.equal(validateSidePanelSender({ ...sender, id: "other" }, "id", sender.url).valid, false);
   assert.equal(validateSidePanelSender({ ...sender, url: sender.url + "?x" }, "id", sender.url).valid, false);
+});
+
+test("unauthorized sender rejection uses normalized request identities only", () => {
+  const poisoned = request({ status: "registered", runtimeSessionId: "injected-session", authorityCommitted: true, warnings: ["injected"] });
+  const result = createContextResultFromRequest(poisoned, { status: "rejected", reason: "sender_not_authorized" });
+  assert.deepEqual({ status: result.status, reason: result.reason, operationId: result.operationId, contextId: result.contextId, windowId: result.windowId, runtimeSessionId: result.runtimeSessionId, committed: result.authorityCommitted, warnings: result.warnings }, { status: "rejected", reason: "sender_not_authorized", operationId: "op-1", contextId: "context-1", windowId: 1, runtimeSessionId: "", committed: false, warnings: [] });
+  assert.equal(validateContextRegisterResult(result, poisoned).valid, true);
 });
 
 test("root rejects duplicate contexts and malformed active-only records", () => {
@@ -138,4 +156,6 @@ test("service worker recognizes no public assignment activation message", async 
   const senderCheck = source.indexOf("validateSidePanelSender(sender", route);
   const coordination = source.indexOf("coordinateContextRegistration(message", route);
   assert.ok(route >= 0 && senderCheck > route && coordination > senderCheck, "sender authorization must precede storage coordination");
+  assert.equal(source.includes("createContextResult({ ...message"), false);
+  assert.equal(source.includes("createContextResultFromRequest(message"), true);
 });

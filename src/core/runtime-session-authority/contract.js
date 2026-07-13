@@ -115,6 +115,15 @@ export function createContextResult(fields = {}) {
   };
 }
 
+export function createContextResultFromRequest(request, trustedFields = {}) {
+  return createContextResult({
+    ...trustedFields,
+    operationId: request?.operationId,
+    contextId: request?.contextId,
+    windowId: request?.windowId
+  });
+}
+
 export function validateContextRegisterResult(result, expected = {}) {
   const errors = [];
   if (!isPlainObject(result)) return { valid: false, errors: ["result must be a plain object"] };
