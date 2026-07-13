@@ -53,11 +53,12 @@ npm run test:characterization
 npm run check:inventory
 npm run test:runtime-contract
 npm run test:journal-coordination
+npm run test:reconciliation-coordination
 npm run check:runtime-contract-purity
 npm run check
 ```
 
-`npm test` runs the characterization and runtime-contract suites. `npm run test:characterization` runs the Layer 2.3B characterization tests. `npm run test:runtime-contract` runs the dormant Layer 2.3C-A pure foundation tests. `npm run check:inventory` validates the machine-readable runtime authority inventory. `npm run check:runtime-contract-purity` applies a lightweight token-pattern guard to the contained runtime-contract modules; it is not a JavaScript parser. `npm run check` runs both static checks and all pure tests. These commands do not authorize live Chrome, migration, import, resume, archive, recovery, rollback, production-save, or browser-projection actions.
+`npm test` runs the characterization, runtime-contract, journal-coordination, and reconciliation-coordination suites. `npm run test:characterization` runs the Layer 2.3B characterization tests. `npm run test:runtime-contract` runs the Layer 2.3C pure mutation foundation tests. `npm run test:journal-coordination` exercises the ledgered journal production authority with deterministic adapters. `npm run test:reconciliation-coordination` exercises the unledgered observation authority, compatibility persistence, and in-memory scheduler with deterministic adapters and timers. `npm run check:inventory` validates the machine-readable runtime authority inventory. `npm run check:runtime-contract-purity` applies a lightweight token-pattern guard to the contained runtime-contract and pure reconciliation modules; it is not a JavaScript parser. `npm run check` runs both static checks and all pure tests. These commands do not authorize live Chrome, migration, import, resume, archive, recovery, rollback, production-save, or browser-projection actions.
 
 The repository requires Node 24 or newer and uses Node's built-in test runner with `--test-isolation=none`. Tests must remain free of shared mutable process state and must not import listener-heavy extension entry points. No package installation step is required because the harness has zero dependencies.
 

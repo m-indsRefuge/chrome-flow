@@ -25,5 +25,7 @@ jobs:
         run: npm run test:runtime-contract
       - name: Run journal coordination tests
         run: npm run test:journal-coordination
+      - name: Run reconciliation coordination tests
+        run: npm run test:reconciliation-coordination
       - name: Run aggregate pure check
         run: npm run check

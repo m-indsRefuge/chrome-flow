@@ -144,3 +144,45 @@ test("all production modules import without browser globals", async () => {
   for (const name of ["constants", "value-utils", "context", "revision", "envelope", "ledger", "assignments", "reducers", "dirty-registry", "mutation-engine", "index"]) await import("../../src/core/runtime-contract/" + name + ".js");
   assert.equal(typeof globalThis.chrome, "undefined"); assert.equal(contract.LOCK_ORDER[0], contract.LOCK_NAMES.exclusiveOperation);
 });
+
+const reconciliationPayload = (overrides = {}) => ({
+  schema: contract.SCHEMAS.projectionReconciliation,
+  operationId: "reconcile-1",
+  snapshot: { workspaceId: "ws-1", observedWorkspaceRevision: 2, capturedAt: NOW, workspaceTabIds: ["tab-a", "tab-b"] },
+  patches: [
+    { workspaceTabId: "tab-a", observedProjection: { tabId: 1, windowId: 1, groupId: -1, index: 0, url: "https://a.test", displayUrl: "a.test", originalTitle: "A", tabKey: "a", isOpen: true, lastMatchStatus: "exact_tab_id", lastSeenAt: NOW }, projection: { tabId: 1, windowId: 2, groupId: -1, index: 1, url: "https://a.test", displayUrl: "a.test", originalTitle: "A", tabKey: "a", isOpen: true, lastMatchStatus: "exact_tab_id" }, candidateCount: 1 },
+    { workspaceTabId: "tab-b", observedProjection: { tabId: 2, windowId: 1, groupId: -1, index: 1, url: "https://b.test", displayUrl: "b.test", originalTitle: "B", tabKey: "b", isOpen: true, lastMatchStatus: "exact_tab_id", lastSeenAt: NOW }, projection: { tabId: 2, windowId: 2, groupId: 3, index: 0, url: "https://b.test", displayUrl: "b.test", originalTitle: "B", tabKey: "b", isOpen: true, lastMatchStatus: "exact_tab_id" }, candidateCount: 1 }
+  ],
+  triggers: ["tab_moved", "tab_updated"],
+  reconciledAt: later,
+  ...overrides
+});
+const reconciliationWorkspace = () => ({ workspaceId: "ws-1", workspaceRevision: 2, name: "Name", aim: "Aim", workspaceType: "research", journal: [{ entryId: "journal-1", text: "keep" }], timeline: [{ eventId: "old" }], unknownWorkspace: { keep: true }, tabs: [
+  { workspaceTabId: "tab-a", alias: "Alias A", role: "Role A", pinned: true, firstSeenAt: NOW, unknownTab: { keep: "a" }, tabId: 1, windowId: 1, groupId: -1, index: 0, url: "https://a.test", displayUrl: "a.test", originalTitle: "A", tabKey: "a", isOpen: true, lastMatchStatus: "exact_tab_id", lastSeenAt: NOW },
+  { workspaceTabId: "tab-b", alias: "Alias B", role: "Role B", pinned: false, firstSeenAt: NOW, unknownTab: { keep: "b" }, tabId: 2, windowId: 1, groupId: -1, index: 1, url: "https://b.test", displayUrl: "b.test", originalTitle: "B", tabKey: "b", isOpen: true, lastMatchStatus: "exact_tab_id", lastSeenAt: NOW }
+] });
+const reconciliationEnvelope = (payload = reconciliationPayload()) => envelope({ operationId: payload.operationId, contextType: "service_worker", expectedRevision: 2, mutationType: "workspace.projection.reconcile", payload, authorization: { mode: "automatic_browser_projection_reconciliation" } });
+
+test("multi-tab reconciliation is one immutable revision transition with bounded evidence", () => {
+  const workspace=reconciliationWorkspace(),before=json(workspace),evaluated=contract.evaluateRuntimeObservation({workspace,envelope:reconciliationEnvelope(),assignmentRegistry:contract.createAssignmentRegistry(),now:later});
+  assert.equal(evaluated.result.status,"committed");assert.equal(evaluated.workspace.workspaceRevision,3);assert.deepEqual(workspace,before);
+  assert.equal(evaluated.workspace.timeline.filter((item)=>item.type==="workspace_tabs_refreshed").length,1);
+  assert.deepEqual(evaluated.workspace.journal,before.journal);assert.deepEqual(evaluated.workspace.unknownWorkspace,before.unknownWorkspace);
+  for(let i=0;i<2;i++){assert.equal(evaluated.workspace.tabs[i].alias,before.tabs[i].alias);assert.equal(evaluated.workspace.tabs[i].role,before.tabs[i].role);assert.equal(evaluated.workspace.tabs[i].pinned,before.tabs[i].pinned);assert.deepEqual(evaluated.workspace.tabs[i].unknownTab,before.tabs[i].unknownTab);}
+  assert.equal(Object.hasOwn(evaluated.workspace.tabs[0],"candidateCount"),false);
+});
+
+test("unledgered observation evaluation neither inspects nor modifies a ledger", () => {
+  const ledger=contract.createOperationLedger(),before=json(ledger),evaluated=contract.evaluateRuntimeObservation({workspace:reconciliationWorkspace(),envelope:reconciliationEnvelope(),assignmentRegistry:contract.createAssignmentRegistry(),now:later,operationLedger:ledger});
+  assert.equal(evaluated.result.status,"committed");assert.equal(Object.hasOwn(evaluated,"operationLedger"),false);assert.deepEqual(ledger,before);
+});
+
+test("reconciliation rejects stale or malformed plans without mutation", () => {
+  const workspace=reconciliationWorkspace();
+  const stale=reconciliationPayload();stale.patches[0].observedProjection.index=99;
+  const staleResult=contract.evaluateRuntimeObservation({workspace,envelope:reconciliationEnvelope(stale),assignmentRegistry:contract.createAssignmentRegistry(),now:later});
+  assert.equal(staleResult.result.reason,"projection_baseline_changed");assert.deepEqual(staleResult.workspace,workspace);
+  const duplicate=reconciliationPayload({patches:[reconciliationPayload().patches[0],reconciliationPayload().patches[0]]});
+  const duplicateResult=contract.evaluateRuntimeObservation({workspace,envelope:reconciliationEnvelope(duplicate),assignmentRegistry:contract.createAssignmentRegistry(),now:later});
+  assert.equal(duplicateResult.result.status,"rejected");assert.deepEqual(duplicateResult.workspace,workspace);
+});

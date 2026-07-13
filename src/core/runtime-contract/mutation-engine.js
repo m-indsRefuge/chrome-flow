@@ -7,12 +7,7 @@ import { normalizeWorkspaceRevision } from "./revision.js";
 import { clone } from "./value-utils.js";
 function safeIdentity(value) { return typeof value === "string" && value.trim().length ? value : ""; }
 function resultFor(envelope, status, fields = {}) { return { schema: SCHEMAS.result, operationId: safeIdentity(envelope.operationId), status, workspaceId: safeIdentity(envelope.workspaceId), runtimeAssignmentId: safeIdentity(envelope.runtimeAssignmentId), writerContextId: safeIdentity(envelope.contextId), ...fields }; }
-export function evaluateRuntimeMutation({ workspace, envelope, operationLedger, assignmentRegistry, now }) {
-  const original = clone(workspace); const validation = validateMutationEnvelope(envelope);
-  if (!validation.valid) return { workspace: original, operationLedger: clone(operationLedger), result: resultFor(envelope || {}, "rejected", { reason: "invalid_envelope", errors: validation.errors }) };
-  const fingerprint = createRequestFingerprint(envelope); const inspected = inspectOperation(operationLedger, envelope.operationId, fingerprint);
-  if (inspected.status === "replay") return { workspace: original, operationLedger: clone(operationLedger), result: { ...clone(inspected.entry.result), status: "replayed", replayedAt: now, originalStatus: inspected.entry.result.status } };
-  if (inspected.status === "conflict") return { workspace: original, operationLedger: clone(operationLedger), result: resultFor(envelope, "operation_id_conflict", { reason: "operation_id_reused_with_different_request" }) };
+function evaluateValidatedMutation({ original, envelope, assignmentRegistry, now }) {
   let status; let reason; let nextWorkspace = original; let previousRevision = null; let committedRevision = null;
   if (original.workspaceId !== envelope.workspaceId) { status = "workspace_conflict"; reason = "workspace_id_mismatch"; }
   else { const revision = normalizeWorkspaceRevision(original); previousRevision = revision.revision;
@@ -26,6 +21,20 @@ export function evaluateRuntimeMutation({ workspace, envelope, operationLedger, 
     }
   }
   const result = resultFor(envelope, status, { previousRevision, committedRevision, committedAt: status === "committed" ? now : null, reason: reason || null });
-  const recorded = recordOperation(operationLedger, { operationId: envelope.operationId, requestFingerprint: fingerprint, result, recordedAt: now });
-  return { workspace: nextWorkspace, operationLedger: recorded.ledger, result };
+  return { workspace: nextWorkspace, result };
+}
+export function evaluateRuntimeMutation({ workspace, envelope, operationLedger, assignmentRegistry, now }) {
+  const original = clone(workspace); const validation = validateMutationEnvelope(envelope);
+  if (!validation.valid) return { workspace: original, operationLedger: clone(operationLedger), result: resultFor(envelope || {}, "rejected", { reason: "invalid_envelope", errors: validation.errors }) };
+  const fingerprint = createRequestFingerprint(envelope); const inspected = inspectOperation(operationLedger, envelope.operationId, fingerprint);
+  if (inspected.status === "replay") return { workspace: original, operationLedger: clone(operationLedger), result: { ...clone(inspected.entry.result), status: "replayed", replayedAt: now, originalStatus: inspected.entry.result.status } };
+  if (inspected.status === "conflict") return { workspace: original, operationLedger: clone(operationLedger), result: resultFor(envelope, "operation_id_conflict", { reason: "operation_id_reused_with_different_request" }) };
+  const evaluated = evaluateValidatedMutation({ original, envelope, assignmentRegistry, now });
+  const recorded = recordOperation(operationLedger, { operationId: envelope.operationId, requestFingerprint: fingerprint, result: evaluated.result, recordedAt: now });
+  return { workspace: evaluated.workspace, operationLedger: recorded.ledger, result: evaluated.result };
+}
+export function evaluateRuntimeObservation({ workspace, envelope, assignmentRegistry, now }) {
+  const original = clone(workspace); const validation = validateMutationEnvelope(envelope);
+  if (!validation.valid) return { workspace: original, result: resultFor(envelope || {}, "rejected", { reason: "invalid_envelope", errors: validation.errors }) };
+  return evaluateValidatedMutation({ original, envelope, assignmentRegistry, now });
 }

@@ -542,25 +542,27 @@
     },
     {
       "id": "operation-reconciliation",
-      "path": "src/core/automatic-workspace-projection-reconciler.js",
-      "symbol": "reconcileActiveWorkspaceProjection",
+      "path": "src/core/workspace-projection-reconciliation/coordinator.js",
+      "symbol": "coordinateWorkspaceProjectionReconciliation",
       "context": "service_worker",
       "responsibility": "reconciliation of browser projection into active workspace",
       "reads": [
-        "whole active workspace",
+        "compatible active-workspace peers under shared authority",
+        "captured projection baselines",
         "all browser tabs"
       ],
       "writes": [
-        "whole active workspace",
-        "timeline events",
+        "bounded browser projection fields",
+        "reconciliation-derived timeline events",
+        "canonical and legacy active-workspace peers",
         "diagnostics"
       ],
       "storage": [
         "chrome.storage.local"
       ],
-      "mutationType": "read_modify_write",
-      "writeScope": "whole_object",
-      "lockName": null,
+      "mutationType": "workspace.projection.reconcile",
+      "writeScope": "named_domain_mutation",
+      "lockName": "constellation-runtime-state-v0.1",
       "events": [
         "chrome-flow-workspace-projection-reconciled"
       ],
@@ -568,11 +570,12 @@
       "browserMutation": false,
       "operatorConfirmation": false,
       "compatibilityIdentities": [
+        "constellationActiveWorkspace",
         "chromeFlowWorkspace"
       ],
       "confidence": "high",
       "evidenceType": "direct_observation",
-      "notes": "Exact ID then unique URL fallback; ambiguity remains unresolved."
+      "notes": "Browser observation occurs before the shared lock. Latest compatible state, projection baselines, one revision transition, peer write-through and fresh complete verification are coordinated under the journal-shared runtime-state lock; diagnostics and notification occur after lock release."
     },
     {
       "id": "operation-archive-browser",

@@ -57,6 +57,12 @@ for (const operation of ["active_workspace", "active_selection", "journal", "tim
   assert.ok(inventory.items.some((item) => item.responsibility.includes(operation)), `missing critical operation class: ${operation}`);
 }
 
+const reconciliation = inventory.items.find((item) => item.id === "operation-reconciliation");
+assert.equal(reconciliation?.mutationType, "workspace.projection.reconcile", "reconciliation must use its atomic semantic mutation");
+assert.equal(reconciliation?.lockName, "constellation-runtime-state-v0.1", "reconciliation must share journal runtime-state authority");
+assert.ok(reconciliation?.compatibilityIdentities.includes("constellationActiveWorkspace"), "reconciliation must name the canonical active-workspace peer");
+assert.ok(reconciliation?.compatibilityIdentities.includes("chromeFlowWorkspace"), "reconciliation must name the legacy active-workspace peer");
+
 const structuredEvidence = new Set();
 for (const item of inventory.items) collectStrings(item, structuredEvidence);
 for (const identity of protectedRequirements) {

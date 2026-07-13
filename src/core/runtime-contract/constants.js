@@ -4,7 +4,9 @@ export const SCHEMAS = Object.freeze({
   ledger: "constellation-runtime-operation-ledger-v0.1",
   dirty: "constellation-runtime-dirty-registry-v0.1",
   mutation: "constellation-runtime-mutation-v0.1",
-  result: "constellation-runtime-mutation-result-v0.1"
+  result: "constellation-runtime-mutation-result-v0.1",
+  projectionReconciliation: "constellation-workspace-projection-reconcile-v0.1",
+  projectionReconciliationResult: "constellation-workspace-projection-reconciliation-result-v0.1"
 });
 export const LOCK_NAMES = Object.freeze({
   runtimeState: "constellation-runtime-state-v0.1",
@@ -13,4 +15,4 @@ export const LOCK_NAMES = Object.freeze({
 export const LOCK_ORDER = Object.freeze([LOCK_NAMES.exclusiveOperation, LOCK_NAMES.runtimeState]);
 export const CONTEXT_TYPES = Object.freeze(["side_panel", "service_worker", "migration_page", "developer_validation"]);
 export const RESULT_STATUSES = Object.freeze(["committed", "no_change", "replayed", "revision_conflict", "assignment_conflict", "workspace_conflict", "operation_id_conflict", "rejected", "failed"]);
-export const MUTATION_TYPES = Object.freeze(["journal.append", "timeline.append", "workspace.metadata.patch", "workspace.tab.add", "workspace.tab.remove", "workspace.tab.metadata.patch", "workspace.tab.projection.patch"]);
+export const MUTATION_TYPES = Object.freeze(["journal.append", "timeline.append", "workspace.metadata.patch", "workspace.tab.add", "workspace.tab.remove", "workspace.tab.metadata.patch", "workspace.tab.projection.patch", "workspace.projection.reconcile"]);
