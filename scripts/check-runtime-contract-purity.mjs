@@ -70,9 +70,73 @@ export async function checkRuntimeSessionAuthorityPurity(root = new URL("../src/
   return names.length;
 }
 
+export async function checkWorkspaceResolutionPurity(root = new URL("../src/core/workspace-resolution/", import.meta.url)) {
+  const names = await readdir(root);
+  const allowed = new Set(["resolver.js"]);
+  for (const name of names) {
+    if (!allowed.has(name)) throw new Error("unexpected workspace-resolution artifact: " + name);
+    const source = await readFile(new URL(name, root), "utf8");
+    const browserErrors = inspectRuntimeContractSource(name, source).filter((error) => !error.includes("imports outside the module family"));
+    if (browserErrors.length) throw new Error(browserErrors.join("\n"));
+    for (const dependency of inspectWorkspaceResolutionDependencies(source, name)) if (!validWorkspaceResolutionSpecifier(dependency.specifier)) throw new Error(name + " imports outside approved pure families: " + dependency.specifier);
+  }
+  return names.length;
+}
+
+export function validWorkspaceResolutionSpecifier(specifier) {
+  if (typeof specifier !== "string" || specifier.includes("?") || specifier.includes("#")) return false;
+  const canonical = /^\.\/[^/\\]+\.js$/.test(specifier) || /^\.\.\/runtime-contract\/[^/\\]+\.js$/.test(specifier);
+  if (!canonical) return false;
+  const resolved = posix.normalize("/core/workspace-resolution/" + specifier);
+  const parent = posix.dirname(resolved);
+  return parent === "/core/workspace-resolution" || parent === "/core/runtime-contract";
+}
+
+function inspectWorkspaceResolutionDependencies(source, name) {
+  const lexical = maskCommentsAndTemplates(source);
+  if (/\bimport\s*\./.test(lexical)) throw new Error(name + " contains forbidden import.meta");
+  if (/\bimport\s*\(/.test(lexical)) throw new Error(name + " contains a forbidden dynamic import");
+  const dependencies = [];
+  const classifiedImports = new Set();
+  const patterns = [
+    { kind: "import", expression: /\bimport\s*(["'])([^"']*)\1/g },
+    { kind: "import", expression: /\bimport\b(?!\s*["'(])(?:(?!\bimport\b|;)[\s\S])*?\bfrom\s*(["'])([^"']*)\1/g },
+    { kind: "export", expression: /\bexport\b(?:(?!\b(?:import|export)\b|;)[\s\S])*?\bfrom\s*(["'])([^"']*)\1/g }
+  ];
+  for (const { kind, expression } of patterns) for (const match of lexical.matchAll(expression)) {
+    dependencies.push({ kind, specifier: match[2] });
+    if (kind === "import") classifiedImports.add(match.index);
+  }
+  for (const match of lexical.matchAll(/\bimport\b/g)) if (!classifiedImports.has(match.index)) throw new Error(name + " contains unclassified module dependency syntax");
+  return dependencies;
+}
+
+function maskCommentsAndTemplates(source) {
+  let output = "", index = 0, state = "code";
+  while (index < source.length) {
+    const current = source[index], next = source[index + 1];
+    if (state === "line") { if (isLineTerminator(current)) { output += current; state = "code"; } else output += " "; index += 1; continue; }
+    if (state === "block") { if (current === "*" && next === "/") { output += "  "; index += 2; state = "code"; } else { output += current === "\n" ? "\n" : " "; index += 1; } continue; }
+    if (current === "/" && next === "/") { output += "  "; index += 2; state = "line"; continue; }
+    if (current === "/" && next === "*") { output += "  "; index += 2; state = "block"; continue; }
+    if (current === "`") throw new Error("workspace-resolution source contains a forbidden template literal");
+    if (current === '"' || current === "'") {
+      const quote = current; output += current; index += 1;
+      while (index < source.length) { const character = source[index]; output += character; index += 1; if (character === "\\" && index < source.length) { output += source[index]; index += 1; } else if (character === quote) break; }
+      continue;
+    }
+    output += current; index += 1;
+  }
+  if (state === "block") throw new Error("workspace-resolution source contains unterminated lexical syntax");
+  return output;
+}
+
+function isLineTerminator(character) { return character === "\n" || character === "\r" || character === "\u2028" || character === "\u2029"; }
+
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const count = await checkRuntimeContractPurity();
   const reconciliationCount = await checkReconciliationPurity();
   const sessionAuthorityCount = await checkRuntimeSessionAuthorityPurity();
-  console.log("Runtime contract purity valid: " + count + " runtime modules, " + reconciliationCount + " reconciliation modules, and " + sessionAuthorityCount + " runtime session authority modules.");
+  const workspaceResolutionCount = await checkWorkspaceResolutionPurity();
+  console.log("Runtime contract purity valid: " + count + " runtime modules, " + reconciliationCount + " reconciliation modules, " + sessionAuthorityCount + " runtime session authority modules, and " + workspaceResolutionCount + " workspace resolution modules.");
 }
