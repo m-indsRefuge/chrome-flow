@@ -7,13 +7,14 @@
     "node": ">=24"
   },
   "scripts": {
-    "test": "npm run test:characterization && npm run test:runtime-contract && npm run test:runtime-session-authority && npm run test:journal-coordination && npm run test:reconciliation-coordination && npm run test:workspace-resolution",
+    "test": "npm run test:characterization && npm run test:runtime-contract && npm run test:runtime-session-authority && npm run test:journal-coordination && npm run test:reconciliation-coordination && npm run test:workspace-resolution && npm run test:workspace-resolution-coordination",
     "test:characterization": "node --test --test-isolation=none tests/characterization/*.test.js",
     "test:runtime-contract": "node --test --test-isolation=none tests/runtime-contract/*.test.js",
     "test:runtime-session-authority": "node --test --test-isolation=none tests/runtime-session-authority/*.test.js",
     "test:journal-coordination": "node --test --test-isolation=none tests/journal-append-coordination/*.test.js",
     "test:reconciliation-coordination": "node --test --test-isolation=none tests/workspace-projection-reconciliation/*.test.js",
     "test:workspace-resolution": "node --test --test-isolation=none tests/workspace-resolution/*.test.js",
+    "test:workspace-resolution-coordination": "node --test --test-isolation=none tests/workspace-resolution-coordination/*.test.js",
     "check:inventory": "node scripts/check-runtime-inventory.mjs",
     "check:runtime-contract-purity": "node scripts/check-runtime-contract-purity.mjs",
     "check": "npm run check:inventory && npm run check:runtime-contract-purity && npm test"
