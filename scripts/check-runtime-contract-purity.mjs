@@ -149,6 +149,37 @@ export async function checkWorkspaceExistingTabMoveEnginePurity(root = new URL("
   return names.length;
 }
 
+export async function checkWorkspaceAutomaticPromotionTransactionPurity(root = new URL("../src/core/workspace-automatic-promotion-transaction/", import.meta.url)) {
+  const names = await readdir(root);
+  const allowed = new Set(["contract.js", "fingerprint.js", "coordinator.js"]);
+  for (const name of names) {
+    if (!allowed.has(name)) throw new Error("unexpected workspace-automatic-promotion-transaction artifact: " + name);
+    const source = await readFile(new URL(name, root), "utf8");
+    const lexical = maskCommentsAndTemplates(source);
+    if (/\bimport\s*\./.test(lexical) || /\bimport\s*\(/.test(lexical)) throw new Error(name + " contains a forbidden dynamic or meta import");
+    if (/\.\s*localeCompare\s*\(/.test(lexical)) throw new Error(name + " contains locale-sensitive comparison");
+    if (/\b(?:chrome|document|navigator|indexedDB|fetch|XMLHttpRequest|WebSocket|crypto|setTimeout|setInterval|localStorage|sessionStorage)\b/.test(lexical)) throw new Error(name + " contains a forbidden environmental dependency");
+    if (/\bnew\s+Date\b/.test(lexical) || /\bDate\s*\.\s*now\b/.test(lexical) || /\bMath\s*\.\s*random\b/.test(lexical)) throw new Error(name + " contains a forbidden nondeterministic dependency");
+    if (/\bprocess\s*\./.test(lexical) || /\bconsole\s*\./.test(lexical)) throw new Error(name + " contains a forbidden host dependency");
+    if (/\b(?:globalThis\s*\.\s*)?window\s*[.[]/.test(lexical)) throw new Error(name + " contains a forbidden window dependency");
+    for (const dependency of inspectWorkspaceResolutionDependencies(source, name)) {
+      if (!validWorkspaceAutomaticPromotionTransactionSpecifier(dependency.specifier)) throw new Error(name + " imports outside approved pure families: " + dependency.specifier);
+    }
+  }
+  return names.length;
+}
+
+export function validWorkspaceAutomaticPromotionTransactionSpecifier(specifier) {
+  if (typeof specifier !== "string" || specifier.includes("?") || specifier.includes("#")) return false;
+  if (/^\.\/[^/\\]+\.js$/.test(specifier)) return posix.dirname(posix.normalize("/core/workspace-automatic-promotion-transaction/" + specifier)) === "/core/workspace-automatic-promotion-transaction";
+  return [
+    "../runtime-contract/value-utils.js",
+    "../runtime-contract/assignments.js",
+    "../runtime-contract/ledger.js",
+    "../workspace-existing-tab-move-engine/contract.js"
+  ].includes(specifier);
+}
+
 export function validWorkspaceResolutionSpecifier(specifier) {
   if (typeof specifier !== "string" || specifier.includes("?") || specifier.includes("#")) return false;
   const canonical = /^\.\/[^/\\]+\.js$/.test(specifier) || /^\.\.\/runtime-contract\/[^/\\]+\.js$/.test(specifier);
@@ -207,5 +238,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const workspaceResolutionCoordinationCount = await checkWorkspaceResolutionCoordinationPurity();
   const workspaceCreationAssignmentTransactionCount = await checkWorkspaceCreationAssignmentTransactionPurity();
   const workspaceExistingTabMoveEngineCount = await checkWorkspaceExistingTabMoveEnginePurity();
-  console.log("Runtime contract purity valid: " + count + " runtime modules, " + reconciliationCount + " reconciliation modules, " + sessionAuthorityCount + " runtime session authority modules, " + workspaceResolutionCount + " workspace resolution modules, " + workspaceResolutionCoordinationCount + " workspace resolution coordination modules, " + workspaceCreationAssignmentTransactionCount + " workspace creation assignment transaction modules, and " + workspaceExistingTabMoveEngineCount + " workspace existing-tab move engine modules.");
+  const workspaceAutomaticPromotionTransactionCount = await checkWorkspaceAutomaticPromotionTransactionPurity();
+  console.log("Runtime contract purity valid: " + count + " runtime modules, " + reconciliationCount + " reconciliation modules, " + sessionAuthorityCount + " runtime session authority modules, " + workspaceResolutionCount + " workspace resolution modules, " + workspaceResolutionCoordinationCount + " workspace resolution coordination modules, " + workspaceCreationAssignmentTransactionCount + " workspace creation assignment transaction modules, and " + workspaceExistingTabMoveEngineCount + " workspace existing-tab move engine modules, and " + workspaceAutomaticPromotionTransactionCount + " workspace automatic promotion transaction modules.");
 }
