@@ -127,6 +127,28 @@ export function validWorkspaceCreationAssignmentTransactionSpecifier(specifier) 
   return ["../runtime-contract/value-utils.js", "../runtime-contract/assignments.js", "../runtime-contract/ledger.js", "../workspace-resolution-coordination/contract.js"].includes(specifier);
 }
 
+export async function checkWorkspaceExistingTabMoveEnginePurity(root = new URL("../src/core/workspace-existing-tab-move-engine/", import.meta.url)) {
+  const names = await readdir(root);
+  const allowed = new Set(["contract.js", "coordinator.js"]);
+  for (const name of names) {
+    if (!allowed.has(name)) throw new Error("unexpected workspace-existing-tab-move-engine artifact: " + name);
+    const source = await readFile(new URL(name, root), "utf8");
+    const lexical = maskCommentsAndTemplates(source);
+    if (/\bimport\s*\./.test(lexical) || /\bimport\s*\(/.test(lexical)) throw new Error(name + " contains a forbidden dynamic or meta import");
+    if (/\.\s*localeCompare\s*\(/.test(lexical)) throw new Error(name + " contains locale-sensitive comparison");
+    if (/\b(?:chrome|document|navigator|indexedDB|fetch|XMLHttpRequest|WebSocket|crypto|setTimeout|setInterval|localStorage|sessionStorage)\b/.test(lexical)) throw new Error(name + " contains a forbidden environmental dependency");
+    if (/\bnew\s+Date\b/.test(lexical) || /\bDate\s*\.\s*now\b/.test(lexical) || /\bMath\s*\.\s*random\b/.test(lexical)) throw new Error(name + " contains a forbidden nondeterministic dependency");
+    if (/\bprocess\s*\./.test(lexical) || /\bconsole\s*\./.test(lexical)) throw new Error(name + " contains a forbidden host dependency");
+    if (/\b(?:globalThis\s*\.\s*)?window\s*[.[]/.test(lexical)) throw new Error(name + " contains a forbidden window dependency");
+    for (const dependency of inspectWorkspaceResolutionDependencies(source, name)) {
+      if (!/^\.\/[^/\\]+\.js$/.test(dependency.specifier) || posix.dirname(posix.normalize("/core/workspace-existing-tab-move-engine/" + dependency.specifier)) !== "/core/workspace-existing-tab-move-engine") {
+        throw new Error(name + " imports outside its pure family: " + dependency.specifier);
+      }
+    }
+  }
+  return names.length;
+}
+
 export function validWorkspaceResolutionSpecifier(specifier) {
   if (typeof specifier !== "string" || specifier.includes("?") || specifier.includes("#")) return false;
   const canonical = /^\.\/[^/\\]+\.js$/.test(specifier) || /^\.\.\/runtime-contract\/[^/\\]+\.js$/.test(specifier);
@@ -184,5 +206,6 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const workspaceResolutionCount = await checkWorkspaceResolutionPurity();
   const workspaceResolutionCoordinationCount = await checkWorkspaceResolutionCoordinationPurity();
   const workspaceCreationAssignmentTransactionCount = await checkWorkspaceCreationAssignmentTransactionPurity();
-  console.log("Runtime contract purity valid: " + count + " runtime modules, " + reconciliationCount + " reconciliation modules, " + sessionAuthorityCount + " runtime session authority modules, " + workspaceResolutionCount + " workspace resolution modules, " + workspaceResolutionCoordinationCount + " workspace resolution coordination modules, and " + workspaceCreationAssignmentTransactionCount + " workspace creation assignment transaction modules.");
+  const workspaceExistingTabMoveEngineCount = await checkWorkspaceExistingTabMoveEnginePurity();
+  console.log("Runtime contract purity valid: " + count + " runtime modules, " + reconciliationCount + " reconciliation modules, " + sessionAuthorityCount + " runtime session authority modules, " + workspaceResolutionCount + " workspace resolution modules, " + workspaceResolutionCoordinationCount + " workspace resolution coordination modules, " + workspaceCreationAssignmentTransactionCount + " workspace creation assignment transaction modules, and " + workspaceExistingTabMoveEngineCount + " workspace existing-tab move engine modules.");
 }

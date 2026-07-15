@@ -6,6 +6,8 @@ import {
 import { createJournalAppendClient } from "../core/journal-append-coordination/client.js";
 import { readActiveWorkspaceReadonly } from "../core/journal-append-coordination/readonly-workspace.js";
 import { createRuntimeSessionContextClient, startRuntimeSessionContextRegistration } from "../core/runtime-session-authority/client.js";
+import { MOVE_REQUEST_SCHEMA } from "../core/workspace-existing-tab-move-engine/contract.js";
+import { moveExistingWorkspaceTabs } from "../core/workspace-existing-tab-move-engine/coordinator.js";
 
 import {
   createBrowserTabSnapshot,
@@ -538,28 +540,24 @@ async function moveWorkspaceTabsIntoNewWindow() {
       return;
     }
     const sortedResults = sortResultsByRoleOrder(workspace, liveResults);
-    const primaryResult = sortedResults[0];
-    const remainingResults = sortedResults.slice(1);
-    const movedTabIds = sortedResults.map((result) => result.liveTab.id);
-    const workspaceTabIds = sortedResults.map((result) => result.workspaceTab.workspaceTabId);
-    const newWindow = await chrome.windows.create({ tabId: primaryResult.liveTab.id, focused: true, state: "normal" });
-    const newWindowId = newWindow.id;
-    await focusNormalWindow(newWindowId);
-    await delay(WINDOW_SETTLE_DELAY_MS);
-    if (remainingResults.length) await chrome.tabs.move(remainingResults.map((result) => result.liveTab.id), { windowId: newWindowId, index: -1 });
-    await delay(WINDOW_SETTLE_DELAY_MS);
-    await focusNormalWindow(newWindowId);
-    await refreshWorkspaceTabMetadata({ silent: true });
-    const movedWorkspace = await getWorkspace();
-    const postMoveResolution = await resolveWorkspaceTabsToLiveTabs(movedWorkspace);
-    const newWindowResults = postMoveResolution.results.filter((result) => result.liveTab && result.liveTab.windowId === newWindowId);
-    const groupSummary = await recreateChromeGroupsForResults(movedWorkspace, newWindowResults);
-    await delay(WINDOW_SETTLE_DELAY_MS);
-    await focusNormalWindow(newWindowId);
-    await refreshWorkspaceTabMetadata({ silent: true });
-    const finalWindow = await getWindowSummary(newWindowId);
-    await addTimelineEvent("workspace_tabs_moved_to_new_window", "Moved " + movedTabIds.length + " open workspace tab(s) into a new Chrome window and recreated " + groupSummary.groups.length + " workspace Chrome group(s).", { newWindowId, primaryTabId: primaryResult.liveTab.id, tabIds: movedTabIds, workspaceTabIds, resolutionMode: "stable_one_to_one", newWindowCreationMode: "primary_tab_new_window_focus_recovery_v2", finalWindow, recreatedChromeGroups: true, recreatedGroupCount: groupSummary.groups.length, groupedTabCount: groupSummary.groupedTabCount, groups: groupSummary.groups });
-    setAdvancedStatus("Moved " + movedTabIds.length + " workspace tab(s) into a new Chrome window and recreated " + groupSummary.groups.length + " Chrome group(s).");
+    const sourceWindowIds = unique(sortedResults.map((result) => result.liveTab.windowId)).sort((left, right) => left - right);
+    const groupsByRole = groupBy(sortedResults.filter((result) => (result.workspaceTab.role || "unassigned") !== "unassigned"), (result) => result.workspaceTab.role);
+    const assignedRoleLabels = new Map(Array.from(groupsByRole.keys()).map((role) => [role, createChromeGroupTitle(workspace, getWorkspaceRoleLabel(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE, role))]));
+    const request = {
+      schema: MOVE_REQUEST_SCHEMA, operationId: crypto.randomUUID(), workspaceId: workspace.workspaceId, mode: "create_dedicated_window",
+      sourceWindowIds, targetWindowId: null, requestedAt: new Date().toISOString(),
+      tabs: sortedResults.map((result, order) => { const role = result.workspaceTab.role || "unassigned"; return { workspaceTabId: result.workspaceTab.workspaceTabId, tabId: result.liveTab.id, sourceWindowId: result.liveTab.windowId, sourceGroupId: Number.isInteger(result.liveTab.groupId) ? result.liveTab.groupId : -1, role, roleLabel: role === "unassigned" ? "Unassigned" : assignedRoleLabels.get(role), order }; }),
+      groups: Array.from(groupsByRole.entries()).map(([role, results]) => ({ role, roleLabel: assignedRoleLabels.get(role), workspaceTabIds: results.map((result) => result.workspaceTab.workspaceTabId), collapsed: false }))
+    };
+    const result = await moveExistingWorkspaceTabs(request, createExistingTabMoveChromeAdapters());
+    if (["completed_verified", "no_change"].includes(result.status)) {
+      await refreshWorkspaceTabMetadata({ silent: true });
+      await addTimelineEvent("workspace_tabs_moved_to_new_window", "Moved workspace tabs into dedicated-window placement with verified shared-engine evidence.", { engineResult: result, resolutionMode: "stable_one_to_one", newWindowCreationMode: "shared_verified_existing_tab_move_engine_v0.1" });
+      setAdvancedStatus("Workspace tab move verified in the dedicated Chrome window.");
+    } else {
+      await addTimelineEvent("workspace_tabs_new_window_failed", "Move Workspace Into New Window was blocked or could not be verified.", { engineResult: result, resolutionMode: "stable_one_to_one", newWindowCreationMode: "shared_verified_existing_tab_move_engine_v0.1" });
+      setAdvancedStatus("Move Workspace Into New Window was not verified: " + result.status + " (" + result.reason + ").");
+    }
     await renderWorkspace();
   } catch (error) {
     await addTimelineEvent("workspace_tabs_new_window_failed", "Move Workspace Into New Window failed before Chrome Flow could complete the tab move.", { error: summarizeError(error), newWindowCreationMode: "primary_tab_new_window_focus_recovery_v2" });
@@ -793,6 +791,21 @@ async function saveJournalEntry() {
   const relatedRoleId = journalRelatedRoleSelect?.value || "";
   const relatedRoleLabel = relatedRoleId ? getWorkspaceRoleLabel(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE, relatedRoleId) : "";
   await journalAppendClient.submit({ workspaceId: workspace.workspaceId, entry: { text, tag: journalTagInput?.value?.trim() || "", relatedRoleId, relatedRoleLabel, createdAt: new Date().toISOString() } });
+}
+
+function createExistingTabMoveChromeAdapters() {
+  return {
+    readBrowserProjection: async () => {
+      const browserWindows = await chrome.windows.getAll({ populate: true });
+      const browserGroups = await chrome.tabGroups.query({});
+      return { windows: browserWindows.map((browserWindow) => ({ id: browserWindow.id, focused: Boolean(browserWindow.focused), tabs: (browserWindow.tabs || []).map((tab) => ({ id: tab.id, windowId: tab.windowId, index: tab.index, groupId: Number.isInteger(tab.groupId) ? tab.groupId : -1, url: tab.url || "", title: tab.title || "" })), groups: browserGroups.filter((group) => group.windowId === browserWindow.id).map((group) => ({ id: group.id, windowId: group.windowId, title: group.title || "", colour: group.color || "grey", collapsed: Boolean(group.collapsed), tabIds: (browserWindow.tabs || []).filter((tab) => tab.groupId === group.id).map((tab) => tab.id) })) })) };
+    },
+    createWindowFromTab: async (tabId) => { const created = await chrome.windows.create({ tabId, focused: true, state: "normal" }); return { id: created.id }; },
+    moveTabs: async (tabIds, windowId) => { await chrome.tabs.move(tabIds, { windowId, index: -1 }); return { tabIds: [...tabIds], windowId }; },
+    groupTabs: async (tabIds, windowId) => { const groupId = await chrome.tabs.group({ tabIds, createProperties: { windowId } }); return { groupId, tabIds: [...tabIds], windowId }; },
+    updateGroup: async (groupId, properties) => { const update = { title: properties.title }; if (properties.colour !== undefined) update.color = properties.colour; if (properties.collapsed !== undefined) update.collapsed = properties.collapsed; await chrome.tabGroups.update(groupId, update); return { groupId }; },
+    focusWindow: async (windowId) => { await chrome.windows.update(windowId, { state: "normal" }); await chrome.windows.update(windowId, { focused: true }); return { windowId }; }
+  };
 }
 
 async function refreshJournalReadonly(){const read=await readActiveWorkspaceReadonly();if(!read.ok){setIntakeStatus("Journal refresh failed: "+read.reason);return}populateJournalRoleSelect(read.workspace.workspaceType||DEFAULT_WORKSPACE_TYPE);renderJournal(read.workspace)}
