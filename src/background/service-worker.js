@@ -7,6 +7,7 @@ import { JOURNAL_APPEND_REQUEST_SCHEMA, response as journalResponse } from "../c
 import { coordinateContextRegistration, coordinateWindowCloseCleanup } from "../core/runtime-session-authority/coordinator.js";
 import { createChromeRuntimeSessionAuthorityAdapters } from "../core/runtime-session-authority/chrome-adapter.js";
 import { createContextResultFromRequest, isContextRegisterMessage, validateContextRegisterRequest, validateSidePanelSender } from "../core/runtime-session-authority/contract.js";
+import { handleAutomaticPromotionMessage, isAutomaticPromotionMessage } from "../core/workspace-automatic-promotion-integration/service-worker-handler.js";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log(CONSTELLATION_PRODUCT_NAME + " installed.");
@@ -117,9 +118,16 @@ if (chrome.tabGroups?.onRemoved) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const sidePanelUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
+  if (isAutomaticPromotionMessage(message)) {
+    return handleAutomaticPromotionMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl
+    });
+  }
   if (isContextRegisterMessage(message)) {
-    const expectedUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
-    const senderValidation = validateSidePanelSender(sender, chrome.runtime.id, expectedUrl);
+    const senderValidation = validateSidePanelSender(sender, chrome.runtime.id, sidePanelUrl);
     const requestValidation = validateContextRegisterRequest(message);
     if (!senderValidation.valid || !requestValidation.valid) {
       sendResponse(createContextResultFromRequest(message, { status: "rejected", reason: senderValidation.valid ? "invalid_request" : senderValidation.reason, errors: requestValidation.errors || [] }));
@@ -129,8 +137,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
   if (message?.schema === JOURNAL_APPEND_REQUEST_SCHEMA) {
-    const expectedUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
-    if (sender?.id !== chrome.runtime.id || sender?.url !== expectedUrl) { sendResponse(journalResponse(message, "rejected", { reason: "sender_not_authorized" })); return false; }
+    if (sender?.id !== chrome.runtime.id || sender?.url !== sidePanelUrl) { sendResponse(journalResponse(message, "rejected", { reason: "sender_not_authorized" })); return false; }
     coordinateJournalAppend(message, createChromeJournalAdapters(chrome)).then(sendResponse, () => sendResponse(journalResponse(message, "failed", { reason: "unhandled_coordination_failure", retrySafe: true })));
     return true;
   }
