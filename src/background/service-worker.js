@@ -1,6 +1,16 @@
 import { scheduleWorkspaceProjectionReconciliation } from "../core/automatic-workspace-projection-reconciler.js";
 import { CONSTELLATION_PRODUCT_NAME } from "../core/product-identity.js";
 import { EVENT_IDENTITIES } from "../core/constellation-identity-contract.js";
+import { coordinateJournalAppend } from "../core/journal-append-coordination/coordinator.js";
+import { createChromeJournalAdapters } from "../core/journal-append-coordination/chrome-adapter.js";
+import { JOURNAL_APPEND_REQUEST_SCHEMA, response as journalResponse } from "../core/journal-append-coordination/contract.js";
+import { coordinateContextRegistration, coordinateWindowCloseCleanup } from "../core/runtime-session-authority/coordinator.js";
+import { createChromeRuntimeSessionAuthorityAdapters } from "../core/runtime-session-authority/chrome-adapter.js";
+import { createContextResultFromRequest, isContextRegisterMessage, validateContextRegisterRequest, validateSidePanelSender } from "../core/runtime-session-authority/contract.js";
+import { handleRuntimeWorkspaceActivationMessage, isRuntimeWorkspaceActivationMessage } from "../core/runtime-workspace-activation/service-worker-handler.js";
+import { handleWorkspaceManualPlacementMessage, isWorkspaceManualPlacementMessage } from "../core/workspace-manual-placement-transaction/service-worker-handler.js";
+import { handleAutomaticPromotionMessage, isAutomaticPromotionMessage } from "../core/workspace-automatic-promotion-integration/service-worker-handler.js";
+import { classifyWorkspaceMembershipMessage, handleWorkspaceMembershipMessage } from "../core/workspace-membership-mutation/service-worker-handler.js";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log(CONSTELLATION_PRODUCT_NAME + " installed.");
@@ -79,8 +89,36 @@ chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
 });
 
 chrome.windows.onRemoved.addListener((windowId) => {
-  scheduleWorkspaceProjectionReconciliation("window_removed", { windowId });
+  void cleanupRemovedWindowAuthorityThenReconcile(windowId);
 });
+
+async function cleanupRemovedWindowAuthorityThenReconcile(windowId) {
+  let cleanupResult;
+
+  try {
+    cleanupResult = await coordinateWindowCloseCleanup(
+      windowId,
+      createChromeRuntimeSessionAuthorityAdapters(chrome)
+    );
+  } catch (error) {
+    cleanupResult = {
+      status: "failed",
+      reason: "window_authority_cleanup_failed",
+      authorityCommitted: false,
+      authorityVerified: false,
+      error: String(error?.message || error || "unknown_error")
+    };
+  }
+
+  scheduleWorkspaceProjectionReconciliation("window_removed", {
+    windowId,
+    authorityCleanupStatus: cleanupResult?.status || "failed",
+    authorityCleanupVerified: cleanupResult?.authorityVerified === true,
+    authorityCleanupReason: cleanupResult?.reason || ""
+  });
+
+  return cleanupResult;
+}
 
 if (chrome.tabGroups?.onCreated) {
   chrome.tabGroups.onCreated.addListener((group) => {
@@ -110,6 +148,52 @@ if (chrome.tabGroups?.onRemoved) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  const sidePanelUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
+  if (isWorkspaceManualPlacementMessage(message)) {
+    return handleWorkspaceManualPlacementMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl
+    });
+  }
+  if (isRuntimeWorkspaceActivationMessage(message)) {
+    return handleRuntimeWorkspaceActivationMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl
+    });
+  }
+  const membershipClassification = classifyWorkspaceMembershipMessage(message);
+  if (membershipClassification.isMembership) {
+    return handleWorkspaceMembershipMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl,
+      membershipClassification
+    });
+  }
+  if (isAutomaticPromotionMessage(message)) {
+    return handleAutomaticPromotionMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl
+    });
+  }
+  if (isContextRegisterMessage(message)) {
+    const senderValidation = validateSidePanelSender(sender, chrome.runtime.id, sidePanelUrl);
+    const requestValidation = validateContextRegisterRequest(message);
+    if (!senderValidation.valid || !requestValidation.valid) {
+      sendResponse(createContextResultFromRequest(message, { status: "rejected", reason: senderValidation.valid ? "invalid_request" : senderValidation.reason, errors: requestValidation.errors || [] }));
+      return false;
+    }
+    coordinateContextRegistration(message, { sourceUrl: sender.url }, createChromeRuntimeSessionAuthorityAdapters(chrome)).then(sendResponse, () => sendResponse(createContextResultFromRequest(message, { status: "failed", reason: "unhandled_coordination_failure", retrySafe: true })));
+    return true;
+  }
+  if (message?.schema === JOURNAL_APPEND_REQUEST_SCHEMA) {
+    if (sender?.id !== chrome.runtime.id || sender?.url !== sidePanelUrl) { sendResponse(journalResponse(message, "rejected", { reason: "sender_not_authorized" })); return false; }
+    coordinateJournalAppend(message, createChromeJournalAdapters(chrome)).then(sendResponse, () => sendResponse(journalResponse(message, "failed", { reason: "unhandled_coordination_failure", retrySafe: true })));
+    return true;
+  }
   const messageType = String(message?.type || "");
   const identity = EVENT_IDENTITIES.reconcileWorkspaceProjection;
 

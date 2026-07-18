@@ -29,7 +29,7 @@ async function refreshWorkspaceLibrarySurfaceDirectly() {
     select.appendChild(option);
     select.disabled = true;
 
-    setLibrarySummary("Saved workspaces: 0 | Active saved workspace: none.");
+    setLibrarySummary("Saved workspaces: 0 | Last saved workspace: none.");
     updateLibraryViewSurface(currentView, select, recentWorkspaceIds, new Map());
 
     return {
@@ -69,7 +69,7 @@ async function refreshWorkspaceLibrarySurfaceDirectly() {
     " | Paused: " + pausedCount +
     " | Active records: " + activeCount +
     " | Archived: " + archivedCount +
-    " | Active saved workspace: " + (activeWorkspaceId || "none") + "."
+    " | Last saved workspace: " + (activeWorkspaceId || "none") + "."
   );
 
   const viewResult = updateLibraryViewSurface(currentView, select, recentWorkspaceIds, workspacesById);
@@ -173,7 +173,7 @@ function updateLibraryViewExplainer(currentView, visibleCount) {
 }
 
 function createWorkspaceOptionLabel(workspace, activeWorkspaceId) {
-  const activeMarker = workspace.workspaceId === activeWorkspaceId ? " [active saved]" : "";
+  const activeMarker = workspace.workspaceId === activeWorkspaceId ? " [last saved]" : "";
   const name = workspace.name || "Untitled Workspace";
   const type = workspace.workspaceType || "unknown";
   const state = workspace.lifecycleState || "unknown";

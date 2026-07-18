@@ -1,9 +1,27 @@
 import {
   getWorkspace,
   saveWorkspace,
-  addJournalEntry,
   addTimelineEvent
 } from "../core/workspace-store.js";
+import { createJournalAppendClient } from "../core/journal-append-coordination/client.js";
+import { readActiveWorkspaceReadonly } from "../core/journal-append-coordination/readonly-workspace.js";
+import { readCompatibleStorageValue, writeCompatibleStorageValue } from "../core/constellation-storage-compatibility.js";
+import { LOCK_NAMES } from "../core/runtime-contract/constants.js";
+import { normalizeWorkspaceRevision } from "../core/runtime-contract/revision.js";
+import { getSidePanelRuntimeWorkspaceAuthority } from "../core/runtime-workspace-activation/side-panel-runtime.js";
+import { RUNTIME_SESSION_AUTHORITY_KEY } from "../core/runtime-session-authority/contract.js";
+import { createWorkspaceManualPlacementClient } from "../core/workspace-manual-placement-transaction/client.js";
+import {
+  classifyExistingRecoveryMembership,
+  createBrowserTabMembershipFailureEvidence,
+  createWorkspaceMembershipPromotionSequencer,
+  findExactBrowserMembership,
+  planSelectedMembershipBatch
+} from "./workspace-membership-promotion-sequencer.js";
+import { runWithWorkspaceMetadataBarrier, runWithWorkspaceMetadataWriter } from "./workspace-metadata-autosave.js";
+import { saveWorkspaceDetailsAgainstLatest, updateWorkspaceTypeAgainstLatest } from "./workspace-metadata-barrier.js";
+import { createWorkspacePromotionNoticeController } from "./workspace-promotion-notice.js";
+import { MOVE_REQUEST_SCHEMA } from "../core/workspace-existing-tab-move-engine/contract.js";
 
 import {
   createBrowserTabSnapshot,
@@ -33,6 +51,7 @@ const deselectAllScannedTabsButton = document.getElementById("deselectAllScanned
 const addSelectedTabsButton = document.getElementById("addSelectedTabsButton");
 const clearScannedTabsButton = document.getElementById("clearScannedTabsButton");
 const intakeStatus = document.getElementById("intakeStatus");
+const workspacePromotionNoticeController = createWorkspacePromotionNoticeController(document.getElementById("workspacePromotionNotice"));
 const availableTabsList = document.getElementById("availableTabsList");
 const searchQueryInput = document.getElementById("searchQuery");
 const openSearchTabButton = document.getElementById("openSearchTabButton");
@@ -60,42 +79,163 @@ const WINDOW_SETTLE_DELAY_MS = 600;
 const MISSING_REOPEN_STATUSES = new Set(["not_found", "exact_tab_id_consumed", "no_reopened_url_tab_found"]);
 let availableTabs = [];
 let moveWorkspaceIntoNewWindowInProgress = false;
+const runtimeAuthorityReadOnlyControlIds = new Set(["journalTabUser", "journalTabRecovery", "journalTabSystem"]);
+const runtimeAuthorityIndependentControlIds = new Set([
+  "toggleDeveloperModeButton",
+  "refreshDiagnosticsButton",
+  "copyDiagnosticPacketButton",
+  "clearDiagnosticsButton",
+  "copyAutomaticPromotionScenarioChecklistButton",
+  "prepareAutomaticPromotionEvidencePacketButton",
+  "copyAutomaticPromotionEvidencePacketButton"
+]);
+const runtimeAuthorityEnableWhenActiveControlIds = new Set(["addSelectedTabsButton", "addActiveTabButton", "openSearchTabButton", "moveWorkspaceTabsToNewWindowButton"]);
+const journalAppendClient = createJournalAppendClient({ createId: () => crypto.randomUUID(), now: () => new Date().toISOString(), send: (request) => chrome.runtime.sendMessage(request), refresh: refreshJournalReadonly, clear: () => { if (journalEntryInput) journalEntryInput.value = ""; if (journalTagInput) journalTagInput.value = ""; }, status: (result) => { const success=["committed","replayed","no_change"].includes(result.status)&&result.workspaceVerified===true; setIntakeStatus(success ? "Journal entry saved and verified." : "Journal entry not saved or verified: " + (result.reason || result.status || "unknown_result")); } });
+const runtimeWorkspaceAuthority = getSidePanelRuntimeWorkspaceAuthority();
+const workspaceManualPlacementClient = createWorkspaceManualPlacementClient({ createId: () => crypto.randomUUID(), now: () => new Date().toISOString(), send: (request) => chrome.runtime.sendMessage(request) });
+const workspaceMembershipPromotionSequencer = createWorkspaceMembershipPromotionSequencer({
+  createId: () => crypto.randomUUID(),
+  now: () => new Date().toISOString(),
+  sendMembership: (request) => chrome.runtime.sendMessage(request),
+  sendPromotion: (request) => chrome.runtime.sendMessage(request),
+  activateWorkspace: (workspace) => runtimeWorkspaceAuthority.bootstrapExisting({ workspace, force: true }),
+  runMetadataBarrier: runWithWorkspaceMetadataBarrier,
+  onPromotionStarting: async (details) => {
+    workspacePromotionNoticeController.showPending(details);
+    setIntakeStatus("This workspace reached the dedicated-window threshold. Moving it now; keep this panel open until verification completes.");
+    await waitForPromotionNoticePaint();
+  }
+});
+let runtimeWorkspaceReadOnly = true;
+runtimeWorkspaceAuthority.subscribe(applyRuntimeWorkspaceAuthorityState);
+new MutationObserver(() => {
+  if (runtimeWorkspaceReadOnly) setAuthoritySensitiveControlsDisabled(true);
+}).observe(document.documentElement, { childList: true, subtree: true });
 
 await initializeSidePanel();
+installRuntimeWorkspaceAuthorityRefreshListener();
 
 async function initializeSidePanel() {
-  await migrateWorkspaceTabIds();
+  setAuthoritySensitiveControlsDisabled(true);
   populateWorkspaceTypeSelect();
   renderAdvancedTabControls();
+  setAuthoritySensitiveControlsDisabled(true);
   attachEventHandlers();
   await renderWorkspace();
+  const activationState = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
+  applyRuntimeWorkspaceAuthorityState(activationState);
+  if (activationState.status === "active" && await migrateWorkspaceTabIds()) await renderWorkspace();
+}
+
+async function requireRuntimeWorkspaceAuthority(workspace = null) {
+  const activationState = await runtimeWorkspaceAuthority.bootstrapExisting({ workspace, force: true });
+  applyRuntimeWorkspaceAuthorityState(activationState);
+  return activationState.status === "active";
+}
+
+function applyRuntimeWorkspaceAuthorityState(state) {
+  runtimeWorkspaceReadOnly = state?.status !== "active";
+  document.documentElement.dataset.runtimeWorkspaceAuthority = state?.status || "blocked";
+  setAuthoritySensitiveControlsDisabled(runtimeWorkspaceReadOnly);
+  if (state?.status === "read_only") setIntakeStatus("This workspace is active in another Chrome window. This panel is read-only; open the panel in the assigned window to make changes.");
+  else if (state?.status === "blocked") setIntakeStatus("Workspace authority is not verified. Authority-sensitive actions remain disabled: " + (state.reason || "unknown_reason") + ".");
+}
+
+let runtimeWorkspaceAuthorityRefreshTimer = null;
+
+function installRuntimeWorkspaceAuthorityRefreshListener() {
+  chrome.storage.onChanged?.addListener((changes, areaName) => {
+    if (
+      areaName !== "session"
+      || !changes
+      || !Object.hasOwn(changes, RUNTIME_SESSION_AUTHORITY_KEY)
+      || !runtimeWorkspaceReadOnly
+    ) return;
+
+    queueRuntimeWorkspaceAuthorityRefresh();
+  });
+}
+
+function queueRuntimeWorkspaceAuthorityRefresh() {
+  if (runtimeWorkspaceAuthorityRefreshTimer !== null) return;
+
+  runtimeWorkspaceAuthorityRefreshTimer = window.setTimeout(async () => {
+    runtimeWorkspaceAuthorityRefreshTimer = null;
+
+    try {
+      const state = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
+      applyRuntimeWorkspaceAuthorityState(state);
+      if (["active", "read_only"].includes(state.status)) await renderWorkspace();
+    } catch (_error) {
+      applyRuntimeWorkspaceAuthorityState({
+        status: "blocked",
+        reason: "runtime_authority_change_refresh_failed",
+        result: null
+      });
+    }
+  }, 75);
+}
+
+function setAuthoritySensitiveControlsDisabled(disabled) {
+  for (const control of document.querySelectorAll("button, input, select, textarea")) {
+    if (runtimeAuthorityReadOnlyControlIds.has(control.id) || runtimeAuthorityIndependentControlIds.has(control.id)) {
+      restoreRuntimeAuthorityControlState(control);
+      continue;
+    }
+    if (disabled) {
+      if (control.dataset.runtimeAuthorityDisabled !== "true") {
+        control.dataset.runtimeAuthorityDisabled = "true";
+        control.dataset.runtimeAuthorityPreviouslyDisabled = control.disabled && !runtimeAuthorityEnableWhenActiveControlIds.has(control.id) ? "true" : "false";
+      }
+      control.disabled = true;
+    } else {
+      restoreRuntimeAuthorityControlState(control);
+    }
+  }
+}
+
+function restoreRuntimeAuthorityControlState(control) {
+  if (control.dataset.runtimeAuthorityDisabled !== "true") return;
+  control.disabled = control.dataset.runtimeAuthorityPreviouslyDisabled === "true";
+  delete control.dataset.runtimeAuthorityDisabled;
+  delete control.dataset.runtimeAuthorityPreviouslyDisabled;
+}
+
+function guardRuntimeWorkspaceMutation(handler) {
+  return async (...args) => {
+    if (!await requireRuntimeWorkspaceAuthority()) {
+      setIntakeStatus("This action is disabled because this panel does not own active workspace authority.");
+      return undefined;
+    }
+    return handler(...args);
+  };
 }
 
 function attachEventHandlers() {
-  saveWorkspaceButton?.addEventListener("click", saveWorkspaceDetails);
-  workspaceTypeSelect?.addEventListener("change", updateWorkspaceType);
-  scanTabsButton?.addEventListener("click", scanCurrentWindowTabs);
-  addActiveTabButton?.addEventListener("click", addActiveTabToWorkspace);
+  saveWorkspaceButton?.addEventListener("click", guardRuntimeWorkspaceMutation(saveWorkspaceDetails));
+  workspaceTypeSelect?.addEventListener("change", guardRuntimeWorkspaceMutation(updateWorkspaceType));
+  scanTabsButton?.addEventListener("click", guardRuntimeWorkspaceMutation(scanCurrentWindowTabs));
+  addActiveTabButton?.addEventListener("click", guardRuntimeWorkspaceMutation(addActiveTabToWorkspace));
   selectAllScannedTabsButton?.addEventListener("click", selectAllScannedTabs);
   deselectAllScannedTabsButton?.addEventListener("click", deselectAllScannedTabs);
-  addSelectedTabsButton?.addEventListener("click", addSelectedTabsToWorkspace);
+  addSelectedTabsButton?.addEventListener("click", guardRuntimeWorkspaceMutation(addSelectedTabsToWorkspace));
   clearScannedTabsButton?.addEventListener("click", clearScannedTabs);
-  openSearchTabButton?.addEventListener("click", openSearchTab);
-  createChromeGroupsButton?.addEventListener("click", createChromeTabGroupsFromWorkspace);
-  removeChromeGroupsButton?.addEventListener("click", removeAllChromeTabGroupsForWorkspace);
-  refreshWorkspaceTabsButton?.addEventListener("click", refreshWorkspaceTabMetadata);
-  clearWorkspaceTabsButton?.addEventListener("click", clearWorkspaceTabs);
-  refreshTabStatusButton?.addEventListener("click", refreshTabStatus);
-  addJournalButton?.addEventListener("click", saveJournalEntry);
-  tabsList?.addEventListener("click", handleTabsListClick);
-  tabsList?.addEventListener("change", handleTabsListChange);
-  recoveryList?.addEventListener("click", handleRecoveryClick);
-  document.getElementById("collapseWorkspaceGroupsButton")?.addEventListener("click", () => setWorkspaceChromeGroupsCollapsed(true));
-  document.getElementById("expandWorkspaceGroupsButton")?.addEventListener("click", () => setWorkspaceChromeGroupsCollapsed(false));
-  document.getElementById("moveWorkspaceTabsToNewWindowButton")?.addEventListener("click", moveWorkspaceTabsIntoNewWindow);
-  document.getElementById("arrangeWorkspaceTabsByRoleButton")?.addEventListener("click", arrangeWorkspaceTabsByRoleOrder);
-  document.getElementById("reopenMissingWorkspaceTabsButton")?.addEventListener("click", reopenAllMissingWorkspaceTabs);
-  document.getElementById("copyWorkspaceUrlListButton")?.addEventListener("click", copyWorkspaceUrlList);
+  openSearchTabButton?.addEventListener("click", guardRuntimeWorkspaceMutation(openSearchTab));
+  createChromeGroupsButton?.addEventListener("click", guardRuntimeWorkspaceMutation(createChromeTabGroupsFromWorkspace));
+  removeChromeGroupsButton?.addEventListener("click", guardRuntimeWorkspaceMutation(removeAllChromeTabGroupsForWorkspace));
+  refreshWorkspaceTabsButton?.addEventListener("click", guardRuntimeWorkspaceMutation(refreshWorkspaceTabMetadata));
+  clearWorkspaceTabsButton?.addEventListener("click", guardRuntimeWorkspaceMutation(clearWorkspaceTabs));
+  refreshTabStatusButton?.addEventListener("click", guardRuntimeWorkspaceMutation(refreshTabStatus));
+  addJournalButton?.addEventListener("click", guardRuntimeWorkspaceMutation(saveJournalEntry));
+  tabsList?.addEventListener("click", guardRuntimeWorkspaceMutation(handleTabsListClick));
+  tabsList?.addEventListener("change", guardRuntimeWorkspaceMutation(handleTabsListChange));
+  recoveryList?.addEventListener("click", guardRuntimeWorkspaceMutation(handleRecoveryClick));
+  document.getElementById("collapseWorkspaceGroupsButton")?.addEventListener("click", guardRuntimeWorkspaceMutation(() => setWorkspaceChromeGroupsCollapsed(true)));
+  document.getElementById("expandWorkspaceGroupsButton")?.addEventListener("click", guardRuntimeWorkspaceMutation(() => setWorkspaceChromeGroupsCollapsed(false)));
+  document.getElementById("moveWorkspaceTabsToNewWindowButton")?.addEventListener("click", guardRuntimeWorkspaceMutation(moveWorkspaceTabsIntoNewWindow));
+  document.getElementById("arrangeWorkspaceTabsByRoleButton")?.addEventListener("click", guardRuntimeWorkspaceMutation(arrangeWorkspaceTabsByRoleOrder));
+  document.getElementById("reopenMissingWorkspaceTabsButton")?.addEventListener("click", guardRuntimeWorkspaceMutation(reopenAllMissingWorkspaceTabs));
+  document.getElementById("copyWorkspaceUrlListButton")?.addEventListener("click", guardRuntimeWorkspaceMutation(copyWorkspaceUrlList));
   document.getElementById("refreshDuplicateUrlReviewButton")?.addEventListener("click", renderDuplicateUrlReview);
 }
 
@@ -111,6 +251,7 @@ function populateWorkspaceTypeSelect() {
 }
 
 async function migrateWorkspaceTabIds() {
+  if (!await requireRuntimeWorkspaceAuthority()) return false;
   const workspace = await getWorkspace();
   let changed = false;
   workspace.tabs.forEach((tab) => {
@@ -119,14 +260,17 @@ async function migrateWorkspaceTabIds() {
       changed = true;
     }
   });
-  if (changed) {
-    workspace.updatedAt = new Date().toISOString();
-    await saveWorkspace(workspace);
-  }
+  if (!changed) return false;
+  if (!await requireRuntimeWorkspaceAuthority()) return false;
+  workspace.updatedAt = new Date().toISOString();
+  await saveWorkspace(workspace);
+  return true;
 }
 
 async function renderWorkspace() {
-  const workspace = await getWorkspace();
+  const workspaceRead = await readActiveWorkspaceReadonly();
+  if (!workspaceRead.ok) { setIntakeStatus("Workspace display refresh failed: " + workspaceRead.reason + "."); return; }
+  const workspace = workspaceRead.workspace;
   if (workspaceNameInput) workspaceNameInput.value = workspace.name || "";
   if (workspaceAimInput) workspaceAimInput.value = workspace.aim || "";
   if (workspaceTypeSelect) workspaceTypeSelect.value = workspace.workspaceType || DEFAULT_WORKSPACE_TYPE;
@@ -159,30 +303,44 @@ function populateJournalRoleSelect(workspaceType) {
 }
 
 async function saveWorkspaceDetails() {
-  const workspace = await getWorkspace();
-  workspace.name = workspaceNameInput?.value?.trim() || "";
-  workspace.aim = workspaceAimInput?.value?.trim() || "";
-  workspace.workspaceType = workspaceTypeSelect?.value || DEFAULT_WORKSPACE_TYPE;
-  workspace.updatedAt = new Date().toISOString();
-  await saveWorkspace(workspace);
-  await addTimelineEvent("workspace_saved", "Workspace saved.");
-  setIntakeStatus("Workspace saved.");
-  await renderWorkspace();
+  let saved = false;
+  try {
+    await runWithWorkspaceMetadataWriter((snapshot) => saveWorkspaceDetailsAgainstLatest({
+      ...snapshot,
+      eventId: crypto.randomUUID(),
+      updatedAt: new Date().toISOString()
+    }, createWorkspaceMetadataWriterAdapters()));
+    saved = true;
+    setIntakeStatus("Workspace saved.");
+  } catch (error) {
+    setIntakeStatus("Workspace was not saved or verified: " + (error?.message || "metadata writer failed") + ".");
+  }
+  if (saved) await renderWorkspace();
 }
 
 async function updateWorkspaceType() {
-  const workspace = await getWorkspace();
-  const previousType = workspace.workspaceType || DEFAULT_WORKSPACE_TYPE;
-  const nextType = workspaceTypeSelect?.value || DEFAULT_WORKSPACE_TYPE;
-  if (previousType === nextType) return;
-  workspace.workspaceType = nextType;
-  workspace.tabs.forEach((tab) => {
-    if (!isValidWorkspaceRole(nextType, tab.role || "unassigned")) tab.role = "unassigned";
-  });
-  workspace.updatedAt = new Date().toISOString();
-  await saveWorkspace(workspace);
-  await addTimelineEvent("workspace_type_updated", "Workspace type changed from " + getWorkspaceTypeLabel(previousType) + " to " + getWorkspaceTypeLabel(nextType) + ".", { previousType, nextType });
-  await renderWorkspace();
+  let updated = false;
+  try {
+    await runWithWorkspaceMetadataWriter((snapshot) => updateWorkspaceTypeAgainstLatest({
+      ...snapshot,
+      eventId: crypto.randomUUID(),
+      updatedAt: new Date().toISOString()
+    }, createWorkspaceMetadataWriterAdapters()));
+    updated = true;
+  } catch (error) {
+    setIntakeStatus("Workspace type was not changed or verified: " + (error?.message || "metadata writer failed") + ".");
+  }
+  if (updated) await renderWorkspace();
+}
+
+function createWorkspaceMetadataWriterAdapters() {
+  return {
+    withRuntimeStateLock: (callback) => navigator.locks.request(LOCK_NAMES.runtimeState, callback),
+    readCompatibleWorkspace: () => readCompatibleStorageValue("activeWorkspace"),
+    writeCompatibleWorkspace: (workspace) => writeCompatibleStorageValue("activeWorkspace", workspace),
+    isValidWorkspaceRole,
+    getWorkspaceTypeLabel
+  };
 }
 
 async function scanCurrentWindowTabs() {
@@ -195,7 +353,9 @@ async function scanCurrentWindowTabs() {
 async function renderAvailableTabs() {
   if (!availableTabsList) return;
   clearElement(availableTabsList);
-  const workspace = await getWorkspace();
+  const workspaceRead = await readActiveWorkspaceReadonly();
+  if (!workspaceRead.ok) { setIntakeStatus("Scanned-tab display refresh failed: " + workspaceRead.reason + "."); return; }
+  const workspace = workspaceRead.workspace;
   if (!availableTabs.length) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
@@ -248,29 +408,29 @@ async function addSelectedTabsToWorkspace() {
     setIntakeStatus("No scanned tabs selected.");
     return;
   }
-  const workspace = await getWorkspace();
-  const selectedTabs = availableTabs.filter((tab) => selectedIds.includes(tab.id));
-  const added = [];
-  let exactSkippedCount = 0;
-  let duplicateUrlAddedCount = 0;
-  let missingCount = 0;
-  selectedTabs.forEach((tab) => {
-    const exactMatch = workspace.tabs.some((workspaceTab) => workspaceTab.tabId === tab.id);
-    if (exactMatch) { exactSkippedCount += 1; return; }
-    const sameUrlDuplicate = workspace.tabs.some((workspaceTab) => workspaceTab.url && tab.url && workspaceTab.url === tab.url);
-    const workspaceTab = createWorkspaceTabFromBrowserTab(tab, { sameUrlDuplicate });
-    workspace.tabs.push(workspaceTab);
-    added.push(workspaceTab);
-    if (sameUrlDuplicate) duplicateUrlAddedCount += 1;
+  const workspaceRead = await readActiveWorkspaceReadonly();
+  if (!workspaceRead.ok) { setIntakeStatus("Selected tabs were not added: " + workspaceRead.reason + "."); return; }
+  const workspace = workspaceRead.workspace;
+  const { added, exactSkippedCount, duplicateUrlAddedCount, missingCount } = planSelectedMembershipBatch({ workspaceTabs: workspace.tabs, availableTabs, selectedIds, createWorkspaceTab: createWorkspaceTabFromBrowserTab });
+  if (!added.length) {
+    await addTimelineEvent("selected_tabs_add_skipped", "No genuinely new scanned tabs required workspace membership mutation.", { exactSkippedCount, missingCount });
+    setIntakeStatus("No genuinely new scanned tabs were added.");
+    return;
+  }
+  setAuthoritySensitiveControlsDisabled(true);
+  const sequence = await workspaceMembershipPromotionSequencer.sequenceWorkspaceMembershipPromotion({
+    mutationKind: "selected_tab_batch",
+    workspaceId: workspace.workspaceId,
+    workspace,
+    workspaceTabsToAdd: added,
+    afterMembership: async () => addTimelineEvent("selected_tabs_added", "Added " + added.length + " selected tab(s) to workspace. Skipped " + exactSkippedCount + " exact existing tab(s). Allowed " + duplicateUrlAddedCount + " same-URL duplicate tab(s).", { addedCount: added.length, exactSkippedCount, duplicateUrlAddedCount, missingCount, intakeMatchingMode: "instance_aware" })
   });
-  missingCount = selectedIds.length - selectedTabs.length;
-  workspace.updatedAt = new Date().toISOString();
-  await saveWorkspace(workspace);
-  await addTimelineEvent("selected_tabs_added", "Added " + added.length + " selected tab(s) to workspace. Skipped " + exactSkippedCount + " exact existing tab(s). Allowed " + duplicateUrlAddedCount + " same-URL duplicate tab(s).", { addedCount: added.length, exactSkippedCount, duplicateUrlAddedCount, missingCount, intakeMatchingMode: "instance_aware" });
-  availableTabs = [];
-  setIntakeStatus("Added " + added.length + " selected scanned tab(s) to workspace.");
-  await renderAvailableTabs();
-  await renderWorkspace();
+  if (hasVerifiedMembership(sequence)) {
+    availableTabs = [];
+    await renderAvailableTabs();
+  }
+  const mayRenderSourceWorkspace = await setMembershipSequenceIntakeStatus(sequence, "selected scanned tab(s)");
+  if (mayRenderSourceWorkspace) await renderWorkspace();
 }
 
 function clearScannedTabs() {
@@ -283,8 +443,10 @@ async function addActiveTabToWorkspace() {
   const [activeTab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!activeTab) { setIntakeStatus("No active tab found."); return; }
   const browserTab = createBrowserTabSnapshot(activeTab);
-  const workspace = await getWorkspace();
-  const exactMatch = workspace.tabs.find((tab) => tab.tabId === browserTab.id);
+  const workspaceRead = await readActiveWorkspaceReadonly();
+  if (!workspaceRead.ok) { setIntakeStatus("Active tab was not added: " + workspaceRead.reason + "."); return; }
+  const workspace = workspaceRead.workspace;
+  const exactMatch = findExactBrowserMembership(workspace.tabs, browserTab.id);
   if (exactMatch) {
     await addTimelineEvent("active_tab_add_skipped", "Active tab is already in the workspace: " + getTabName(exactMatch) + ".", { tabId: browserTab.id, url: browserTab.url, workspaceTabId: exactMatch.workspaceTabId });
     setIntakeStatus("Active tab is already in the workspace.");
@@ -292,33 +454,54 @@ async function addActiveTabToWorkspace() {
   }
   const sameUrlDuplicate = workspace.tabs.some((tab) => tab.url && browserTab.url && tab.url === browserTab.url);
   const workspaceTab = createWorkspaceTabFromBrowserTab(browserTab, { sameUrlDuplicate });
-  workspace.tabs.push(workspaceTab);
-  workspace.updatedAt = new Date().toISOString();
-  await saveWorkspace(workspace);
-  await addTimelineEvent("active_tab_added", "Added active tab to workspace: " + getTabName(workspaceTab) + ".", { tabId: workspaceTab.tabId, url: workspaceTab.url, workspaceTabId: workspaceTab.workspaceTabId, sameUrlDuplicate });
-  setIntakeStatus("Added active tab to workspace.");
-  await renderWorkspace();
+  setAuthoritySensitiveControlsDisabled(true);
+  const sequence = await workspaceMembershipPromotionSequencer.sequenceWorkspaceMembershipPromotion({
+    mutationKind: "active_tab",
+    workspaceId: workspace.workspaceId,
+    workspace,
+    workspaceTabsToAdd: [workspaceTab],
+    afterMembership: async () => addTimelineEvent("active_tab_added", "Added active tab to workspace: " + getTabName(workspaceTab) + ".", { tabId: workspaceTab.tabId, url: workspaceTab.url, workspaceTabId: workspaceTab.workspaceTabId, sameUrlDuplicate })
+  });
+  const mayRenderSourceWorkspace = await setMembershipSequenceIntakeStatus(sequence, "active tab");
+  if (mayRenderSourceWorkspace) await renderWorkspace();
 }
 
 async function openSearchTab() {
   const query = searchQueryInput?.value?.trim() || "";
   if (!query) { setIntakeStatus("Enter a search query first."); return; }
+  if (!await requireRuntimeWorkspaceAuthority()) { setIntakeStatus("Search intake is disabled until workspace authority is verified."); return; }
   const url = "https://www.google.com/search?q=" + encodeURIComponent(query);
   const createdTab = await chrome.tabs.create({ url, active: true });
   const browserTab = createBrowserTabSnapshot(createdTab);
-  await addTimelineEvent("browser_search_tab_opened", "Opened search tab for: " + query + ".", { query, url, tabId: browserTab.id });
-  const workspace = await getWorkspace();
+  const workspaceRead = await readActiveWorkspaceReadonly();
+  if (!workspaceRead.ok) {
+    if (await requireRuntimeWorkspaceAuthority()) await addTimelineEvent("browser_search_tab_membership_failed", "Opened a search tab, but the active workspace could not be read for membership verification.", createBrowserTabMembershipFailureEvidence({ query, url, tabId: browserTab.id, reason: workspaceRead.reason }));
+    setIntakeStatus("Search opened, but the tab was not added to the workspace. The browser tab remains open.");
+    return;
+  }
+  const workspace = workspaceRead.workspace;
   const exactMatch = workspace.tabs.find((tab) => tab.tabId === browserTab.id);
   if (exactMatch) { setIntakeStatus("Search opened. Search tab is already in the workspace."); return; }
   const sameUrlDuplicate = workspace.tabs.some((tab) => tab.url && tab.url === url);
   const workspaceTab = createWorkspaceTabFromBrowserTab(browserTab, { originalTitle: browserTab.title || "Search: " + query, searchLaunchAutoIntake: true, searchQuery: query, sameUrlDuplicate });
-  workspace.tabs.push(workspaceTab);
-  workspace.updatedAt = new Date().toISOString();
-  await saveWorkspace(workspace);
-  await addTimelineEvent("browser_search_tab_added_to_workspace", "Opened search tab and added it to the workspace: " + getTabName(workspaceTab) + ".", { query, tabId: workspaceTab.tabId, url: workspaceTab.url, workspaceTabId: workspaceTab.workspaceTabId, sameUrlDuplicate, searchLaunchAutoIntake: true });
-  setIntakeStatus("Search opened and added to workspace.");
-  window.setTimeout(() => void refreshWorkspaceTabMetadata({ silent: true }), 900);
-  await renderWorkspace();
+  setAuthoritySensitiveControlsDisabled(true);
+  const sequence = await workspaceMembershipPromotionSequencer.sequenceWorkspaceMembershipPromotion({
+    mutationKind: "search_tab",
+    workspaceId: workspace.workspaceId,
+    workspace,
+    workspaceTabsToAdd: [workspaceTab],
+    afterMembership: async () => {
+      await addTimelineEvent("browser_search_tab_opened", "Opened search tab for: " + query + ".", { query, url, tabId: browserTab.id });
+      await addTimelineEvent("browser_search_tab_added_to_workspace", "Opened search tab and added it to the workspace: " + getTabName(workspaceTab) + ".", { query, tabId: workspaceTab.tabId, url: workspaceTab.url, workspaceTabId: workspaceTab.workspaceTabId, sameUrlDuplicate, searchLaunchAutoIntake: true });
+    }
+  });
+  if (!hasVerifiedMembership(sequence)) {
+    if (await requireRuntimeWorkspaceAuthority()) await addTimelineEvent("browser_search_tab_membership_failed", "Opened a search tab, but workspace membership was not verified. The browser tab remains open for recovery.", createBrowserTabMembershipFailureEvidence({ query, url, tabId: browserTab.id, reason: sequence.reason }));
+  } else {
+    window.setTimeout(() => void refreshWorkspaceTabMetadata({ silent: true }), 900);
+  }
+  const mayRenderSourceWorkspace = await setMembershipSequenceIntakeStatus(sequence, "search tab");
+  if (mayRenderSourceWorkspace) await renderWorkspace();
 }
 
 function createWorkspaceTabFromBrowserTab(tab, extra = {}) {
@@ -522,8 +705,23 @@ async function moveWorkspaceTabsIntoNewWindow() {
   moveWorkspaceIntoNewWindowInProgress = true;
   const button = document.getElementById("moveWorkspaceTabsToNewWindowButton");
   if (button) button.disabled = true;
+  let sourceAuthorityVerified = false;
+  let transactionAttempted = false;
+  let result = null;
   try {
-    const workspace = await getWorkspace();
+    const workspaceRead = await readActiveWorkspaceReadonly();
+    if (!workspaceRead.ok) { setAdvancedStatus("Move Workspace Into New Window was not started: " + workspaceRead.reason + "."); return; }
+    let workspace = workspaceRead.workspace;
+    const activationState = await runtimeWorkspaceAuthority.bootstrapExisting({ workspace, force: true });
+    if (activationState.status !== "active") { setAdvancedStatus("Manual placement is disabled until this panel has verified workspace authority: " + (activationState.reason || "unknown_reason") + "."); return; }
+    sourceAuthorityVerified = true;
+    setAuthoritySensitiveControlsDisabled(true);
+    await runWithWorkspaceMetadataBarrier(async () => undefined);
+    const latestWorkspaceRead = await readActiveWorkspaceReadonly();
+    if (!latestWorkspaceRead.ok) throw new Error("latest compatible workspace unavailable after metadata barrier");
+    workspace = latestWorkspaceRead.workspace;
+    const revision = normalizeWorkspaceRevision(workspace);
+    if (!revision.valid) { setAdvancedStatus("Manual placement is blocked because the workspace revision is invalid."); return; }
     const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
     const liveResults = resolution.results.filter((result) => result.liveTab);
     if (!liveResults.length) {
@@ -532,35 +730,42 @@ async function moveWorkspaceTabsIntoNewWindow() {
       return;
     }
     const sortedResults = sortResultsByRoleOrder(workspace, liveResults);
-    const primaryResult = sortedResults[0];
-    const remainingResults = sortedResults.slice(1);
-    const movedTabIds = sortedResults.map((result) => result.liveTab.id);
-    const workspaceTabIds = sortedResults.map((result) => result.workspaceTab.workspaceTabId);
-    const newWindow = await chrome.windows.create({ tabId: primaryResult.liveTab.id, focused: true, state: "normal" });
-    const newWindowId = newWindow.id;
-    await focusNormalWindow(newWindowId);
-    await delay(WINDOW_SETTLE_DELAY_MS);
-    if (remainingResults.length) await chrome.tabs.move(remainingResults.map((result) => result.liveTab.id), { windowId: newWindowId, index: -1 });
-    await delay(WINDOW_SETTLE_DELAY_MS);
-    await focusNormalWindow(newWindowId);
-    await refreshWorkspaceTabMetadata({ silent: true });
-    const movedWorkspace = await getWorkspace();
-    const postMoveResolution = await resolveWorkspaceTabsToLiveTabs(movedWorkspace);
-    const newWindowResults = postMoveResolution.results.filter((result) => result.liveTab && result.liveTab.windowId === newWindowId);
-    const groupSummary = await recreateChromeGroupsForResults(movedWorkspace, newWindowResults);
-    await delay(WINDOW_SETTLE_DELAY_MS);
-    await focusNormalWindow(newWindowId);
-    await refreshWorkspaceTabMetadata({ silent: true });
-    const finalWindow = await getWindowSummary(newWindowId);
-    await addTimelineEvent("workspace_tabs_moved_to_new_window", "Moved " + movedTabIds.length + " open workspace tab(s) into a new Chrome window and recreated " + groupSummary.groups.length + " workspace Chrome group(s).", { newWindowId, primaryTabId: primaryResult.liveTab.id, tabIds: movedTabIds, workspaceTabIds, resolutionMode: "stable_one_to_one", newWindowCreationMode: "primary_tab_new_window_focus_recovery_v2", finalWindow, recreatedChromeGroups: true, recreatedGroupCount: groupSummary.groups.length, groupedTabCount: groupSummary.groupedTabCount, groups: groupSummary.groups });
-    setAdvancedStatus("Moved " + movedTabIds.length + " workspace tab(s) into a new Chrome window and recreated " + groupSummary.groups.length + " Chrome group(s).");
-    await renderWorkspace();
+    const sourceWindowIds = unique(sortedResults.map((result) => result.liveTab.windowId)).sort((left, right) => left - right);
+    const groupsByRole = groupBy(sortedResults.filter((result) => (result.workspaceTab.role || "unassigned") !== "unassigned"), (result) => result.workspaceTab.role);
+    const assignedRoleLabels = new Map(Array.from(groupsByRole.keys()).map((role) => [role, createChromeGroupTitle(workspace, getWorkspaceRoleLabel(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE, role))]));
+    const request = {
+      schema: MOVE_REQUEST_SCHEMA, operationId: "pending-manual-placement", workspaceId: workspace.workspaceId, mode: "create_dedicated_window",
+      sourceWindowIds, targetWindowId: null, requestedAt: new Date().toISOString(),
+      tabs: sortedResults.map((result, order) => { const role = result.workspaceTab.role || "unassigned"; return { workspaceTabId: result.workspaceTab.workspaceTabId, tabId: result.liveTab.id, sourceWindowId: result.liveTab.windowId, sourceGroupId: Number.isInteger(result.liveTab.groupId) ? result.liveTab.groupId : -1, role, roleLabel: role === "unassigned" ? "Unassigned" : assignedRoleLabels.get(role), order }; }),
+      groups: Array.from(groupsByRole.entries()).map(([role, results]) => ({ role, roleLabel: assignedRoleLabels.get(role), workspaceTabIds: results.map((result) => result.workspaceTab.workspaceTabId), collapsed: false }))
+    };
+    transactionAttempted = true;
+    result = await workspaceManualPlacementClient.submit({
+        workspaceId: workspace.workspaceId,
+        sourceContextId: activationState.result.sourceContextId,
+        sourceWindowId: activationState.result.sourceWindowId,
+        expectedWorkspaceRevision: revision.revision,
+        expectedRuntimeAssignmentId: activationState.result.currentRuntimeAssignmentId,
+        expectedAssignmentEpoch: activationState.result.currentAssignmentEpoch,
+        moveRequest: request
+      });
+    await refreshRuntimeAuthorityAfterVerifiedTransfer(result);
+    if (["committed", "replayed"].includes(result.status) && result.assignmentVerified && result.workspacePlacementVerified) {
+      setAdvancedStatus("Workspace placement, assignment, and tab metadata were verified in the dedicated Chrome window.");
+    } else {
+      setAdvancedStatus("Move Workspace Into New Window was not verified: " + result.status + " (" + result.reason + ").");
+    }
   } catch (error) {
-    await addTimelineEvent("workspace_tabs_new_window_failed", "Move Workspace Into New Window failed before Chrome Flow could complete the tab move.", { error: summarizeError(error), newWindowCreationMode: "primary_tab_new_window_focus_recovery_v2" });
+    if (transactionAttempted) await refreshRuntimeAuthorityAfterVerifiedTransfer(result || { status: "indeterminate" });
+    if (!transactionAttempted && sourceAuthorityVerified) {
+      const retainedAuthority = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
+      applyRuntimeWorkspaceAuthorityState(retainedAuthority);
+      if (retainedAuthority.status === "active") await addTimelineEvent("workspace_tabs_new_window_failed", "Move Workspace Into New Window failed before Chrome Flow could start the private placement transaction.", { error: summarizeError(error), newWindowCreationMode: "primary_tab_new_window_focus_recovery_v2" });
+    }
     setAdvancedStatus("Move Workspace Into New Window failed. Copy the diagnostic packet for review.");
   } finally {
     moveWorkspaceIntoNewWindowInProgress = false;
-    if (button) button.disabled = false;
+    setAuthoritySensitiveControlsDisabled(runtimeWorkspaceReadOnly);
   }
 }
 
@@ -620,6 +825,7 @@ async function copyWorkspaceUrlList() {
 }
 
 async function refreshWorkspaceTabMetadata(options = {}) {
+  if (!await requireRuntimeWorkspaceAuthority()) { setIntakeStatus("Workspace metadata refresh is disabled until active authority is verified."); return; }
   const workspace = await getWorkspace();
   const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
   let foundCount = 0;
@@ -702,6 +908,7 @@ async function handleRecoveryClick(event) {
 
 async function reopenUrlFromTimeline(eventId) {
   const workspace = await getWorkspace();
+  if (!await requireRuntimeWorkspaceAuthority(workspace)) { setIntakeStatus("Recovery intake is disabled until workspace authority is verified."); return; }
   const sourceEvent = workspace.timeline.find((event) => event.eventId === eventId);
   const snapshot = sourceEvent?.tabSnapshot;
   const url = snapshot?.url || sourceEvent?.url || "";
@@ -712,14 +919,28 @@ async function reopenUrlFromTimeline(eventId) {
 }
 
 async function readdWorkspaceTabFromTimeline(eventId) {
-  let workspace = await getWorkspace();
+  const workspaceRead = await readActiveWorkspaceReadonly();
+  if (!workspaceRead.ok) { setIntakeStatus("Recovery re-add was not started: " + workspaceRead.reason + "."); return; }
+  const workspace = workspaceRead.workspace;
+  if (!await requireRuntimeWorkspaceAuthority(workspace)) { setIntakeStatus("Recovery intake is disabled until workspace authority is verified."); return; }
   const sourceEvent = workspace.timeline.find((event) => event.eventId === eventId);
   const snapshot = sourceEvent?.tabSnapshot;
   if (!snapshot) { setIntakeStatus("No workspace tab snapshot available to re-add."); return; }
   let workspaceTab = workspace.tabs.find((tab) => tab.workspaceTabId === snapshot.workspaceTabId);
   const restoredExistingWorkspaceRecord = Boolean(workspaceTab);
   const liveTabs = await chrome.tabs.query({});
-  let liveTab = workspaceTab ? resolveLiveTabForWorkspaceTab(workspaceTab, liveTabs) : resolveLiveTabForSnapshot(snapshot, liveTabs);
+  const existingRecovery = classifyExistingRecoveryMembership(workspaceTab, liveTabs);
+  if (restoredExistingWorkspaceRecord && existingRecovery.decision !== "existing_exact_live") {
+    if (existingRecovery.decision === "existing_record_requires_refresh") {
+      setIntakeStatus("Recovery re-add stopped: this workspace record already exists, but its saved browser tab is missing and a different live tab matches the URL. Use Refresh Workspace Tab Metadata before retrying.");
+    } else if (existingRecovery.decision === "existing_record_ambiguous") {
+      setIntakeStatus("Recovery re-add stopped: this workspace record already exists, but its saved browser tab is missing and multiple live tabs match the URL. Resolve the missing-tab state before retrying.");
+    } else {
+      setIntakeStatus("Recovery re-add stopped: this workspace record already exists, but its saved browser tab is missing. Use the existing missing-tab recovery flow before retrying.");
+    }
+    return;
+  }
+  let liveTab = restoredExistingWorkspaceRecord ? existingRecovery.liveTab : resolveLiveTabForSnapshot(snapshot, liveTabs);
   let browserTabAlreadyOpen = Boolean(liveTab);
   let browserTabReopened = false;
   let browserTabReused = false;
@@ -729,14 +950,28 @@ async function readdWorkspaceTabFromTimeline(eventId) {
     if (reopenedTab) { liveTab = reopenedTab; browserTabReused = true; restoreMode = "readd_reused_reopened_url"; }
     else if (snapshot.url) { liveTab = await chrome.tabs.create({ url: snapshot.url, active: true }); browserTabReopened = true; restoreMode = "readd_reopened_url"; }
   }
-  if (!workspaceTab) { workspaceTab = createWorkspaceTabFromSnapshot(snapshot); workspace.tabs.push(workspaceTab); }
-  if (liveTab) updateWorkspaceTabFromLiveTab(workspaceTab, createBrowserTabSnapshot(liveTab), { isOpen: true, recoveredAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), lastMatchStatus: "exact_tab_id" });
-  workspace.updatedAt = new Date().toISOString();
-  await saveWorkspace(workspace);
+  if (!liveTab) { setIntakeStatus("Recovery could not resolve or reopen a browser tab, so workspace membership was not requested."); return; }
+  if (!workspaceTab) workspaceTab = createWorkspaceTabFromSnapshot(snapshot);
+  if (liveTab && !restoredExistingWorkspaceRecord) updateWorkspaceTabFromLiveTab(workspaceTab, createBrowserTabSnapshot(liveTab), { isOpen: true, recoveredAt: new Date().toISOString(), lastOpenedAt: new Date().toISOString(), lastMatchStatus: "exact_tab_id" });
   const message = browserTabReused ? "Re-added " + getTabName(workspaceTab) + " to workspace and reused the browser tab already reopened from Recovery View." : browserTabAlreadyOpen ? getTabName(workspaceTab) + " was already in the workspace and already open in the browser." : "Re-added " + getTabName(workspaceTab) + " to workspace from Recovery View.";
-  await addTimelineEvent("workspace_tab_readded", message, { recoverySourceEventId: eventId, workspaceTabId: workspaceTab.workspaceTabId, tabSnapshot: createTabSnapshot(workspaceTab, workspace), restoredExistingWorkspaceRecord, browserTabAlreadyOpen, browserTabReopened, browserTabReused, restoreMode });
-  await restoreRecoveredTabToRoleGroup(eventId, workspaceTab.workspaceTabId);
-  await renderWorkspace();
+  setAuthoritySensitiveControlsDisabled(true);
+  const sequence = await workspaceMembershipPromotionSequencer.sequenceWorkspaceMembershipPromotion({
+    mutationKind: "recovery_readd",
+    workspaceId: workspace.workspaceId,
+    workspace,
+    workspaceTabsToAdd: [workspaceTab],
+    afterMembership: async () => {
+      await restoreRecoveredTabToRoleGroup(eventId, workspaceTab.workspaceTabId);
+      const newestRead = await readActiveWorkspaceReadonly();
+      const newestTab = newestRead.ok ? newestRead.workspace.tabs.find((tab) => tab.workspaceTabId === workspaceTab.workspaceTabId) : workspaceTab;
+      await addTimelineEvent("workspace_tab_readded", message, { recoverySourceEventId: eventId, workspaceTabId: workspaceTab.workspaceTabId, tabSnapshot: createTabSnapshot(newestTab || workspaceTab, newestRead.ok ? newestRead.workspace : workspace), restoredExistingWorkspaceRecord, browserTabAlreadyOpen, browserTabReopened, browserTabReused, restoreMode });
+    }
+  });
+  if (!hasVerifiedMembership(sequence) && liveTab) {
+    if (await requireRuntimeWorkspaceAuthority()) await addTimelineEvent("workspace_tab_readd_membership_failed", "A browser tab was resolved for recovery, but workspace membership was not verified. The browser tab remains open.", createBrowserTabMembershipFailureEvidence({ recoverySourceEventId: eventId, workspaceTabId: workspaceTab.workspaceTabId, tabId: liveTab.id, url: liveTab.url || snapshot.url || "", reason: sequence.reason, browserTabReopened, browserTabReused }));
+  }
+  const mayRenderSourceWorkspace = await setMembershipSequenceIntakeStatus(sequence, "recovered tab");
+  if (mayRenderSourceWorkspace) await renderWorkspace();
 }
 
 async function restoreRecoveredTabToRoleGroup(recoverySourceEventId, workspaceTabId) {
@@ -783,14 +1018,13 @@ function findPreviouslyReopenedTabForRecovery(workspace, recoverySourceEventId, 
 async function saveJournalEntry() {
   const text = journalEntryInput?.value?.trim() || "";
   if (!text) return;
-  const workspace = await getWorkspace();
+  const read = await readActiveWorkspaceReadonly(); if(!read.ok){setIntakeStatus("Journal entry not saved: "+read.reason);return} const workspace=read.workspace;
   const relatedRoleId = journalRelatedRoleSelect?.value || "";
   const relatedRoleLabel = relatedRoleId ? getWorkspaceRoleLabel(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE, relatedRoleId) : "";
-  await addJournalEntry(text, { tag: journalTagInput?.value?.trim() || "", relatedRoleId, relatedRoleLabel });
-  if (journalEntryInput) journalEntryInput.value = "";
-  if (journalTagInput) journalTagInput.value = "";
-  await renderWorkspace();
+  await journalAppendClient.submit({ workspaceId: workspace.workspaceId, entry: { text, tag: journalTagInput?.value?.trim() || "", relatedRoleId, relatedRoleLabel, createdAt: new Date().toISOString() } });
 }
+
+async function refreshJournalReadonly(){const read=await readActiveWorkspaceReadonly();if(!read.ok){setIntakeStatus("Journal refresh failed: "+read.reason);return}populateJournalRoleSelect(read.workspace.workspaceType||DEFAULT_WORKSPACE_TYPE);renderJournal(read.workspace)}
 
 function renderWorkspaceTabs(workspace, resolutionResults) {
   if (!tabsList) return;
@@ -991,6 +1225,7 @@ function renderRecoveryJournal(workspace) {
       const reopenButton = document.createElement("button");
       reopenButton.type = "button";
       reopenButton.className = "secondary-button timeline-reopen-url-button";
+      reopenButton.disabled = runtimeWorkspaceReadOnly;
       reopenButton.dataset.eventId = event.eventId;
       reopenButton.textContent = "Reopen URL";
       actions.appendChild(reopenButton);
@@ -999,6 +1234,7 @@ function renderRecoveryJournal(workspace) {
       const readdButton = document.createElement("button");
       readdButton.type = "button";
       readdButton.className = "secondary-button timeline-readd-workspace-button";
+      readdButton.disabled = runtimeWorkspaceReadOnly;
       readdButton.dataset.eventId = event.eventId;
       readdButton.textContent = "Re-add to Workspace";
       actions.appendChild(readdButton);
@@ -1061,7 +1297,9 @@ function renderAdvancedTabControls() {
   actions.className = "advanced-tab-actions-grid";
   actions.appendChild(createButton("collapseWorkspaceGroupsButton", "Collapse Workspace Chrome Groups", "secondary-button"));
   actions.appendChild(createButton("expandWorkspaceGroupsButton", "Expand Workspace Chrome Groups", "secondary-button"));
-  actions.appendChild(createButton("moveWorkspaceTabsToNewWindowButton", "Move Workspace Into New Window", "secondary-button"));
+  const moveWorkspaceButton = createButton("moveWorkspaceTabsToNewWindowButton", "Move Workspace Into New Window", "secondary-button");
+  moveWorkspaceButton.disabled = true;
+  actions.appendChild(moveWorkspaceButton);
   actions.appendChild(createButton("arrangeWorkspaceTabsByRoleButton", "Arrange Tabs by Role Order", "secondary-button"));
   actions.appendChild(createButton("reopenMissingWorkspaceTabsButton", "Reopen All Missing Tabs", "secondary-button"));
   actions.appendChild(createButton("copyWorkspaceUrlListButton", "Copy Workspace URL List", "secondary-button"));
@@ -1096,7 +1334,9 @@ async function renderDuplicateUrlReview() {
   const list = document.getElementById("duplicateUrlReviewList");
   if (!list) return;
   clearElement(list);
-  const workspace = await getWorkspace();
+  const workspaceRead = await readActiveWorkspaceReadonly();
+  if (!workspaceRead.ok) { setAdvancedStatus("Duplicate URL review could not read compatible workspace state."); return; }
+  const workspace = workspaceRead.workspace;
   const duplicateGroups = getDuplicateUrlGroups(workspace);
   if (!duplicateGroups.length) {
     const empty = document.createElement("p");
@@ -1124,9 +1364,9 @@ async function renderDuplicateUrlReview() {
       row.appendChild(aliasInput);
       const actions = document.createElement("div");
       actions.className = "duplicate-url-actions";
-      actions.appendChild(createActionButton("Apply Alias", "secondary-button", async () => updateWorkspaceTabAlias(tab.workspaceTabId, aliasInput.value)));
-      actions.appendChild(createActionButton("Focus Tab", "secondary-button", async () => focusWorkspaceTab(tab.workspaceTabId)));
-      actions.appendChild(createActionButton("Remove + Close", "danger-button", async () => removeWorkspaceTabAndCloseBrowserTab(tab.workspaceTabId)));
+      actions.appendChild(createActionButton("Apply Alias", "secondary-button", guardRuntimeWorkspaceMutation(() => updateWorkspaceTabAlias(tab.workspaceTabId, aliasInput.value))));
+      actions.appendChild(createActionButton("Focus Tab", "secondary-button", guardRuntimeWorkspaceMutation(() => focusWorkspaceTab(tab.workspaceTabId))));
+      actions.appendChild(createActionButton("Remove + Close", "danger-button", guardRuntimeWorkspaceMutation(() => removeWorkspaceTabAndCloseBrowserTab(tab.workspaceTabId))));
       row.appendChild(actions);
       card.appendChild(row);
     });
@@ -1359,7 +1599,39 @@ function createActionButton(text, className, handler) {
 
 function clearElement(element) { if (!element) return; while (element.firstChild) element.removeChild(element.firstChild); }
 function setIntakeStatus(message) { if (intakeStatus) intakeStatus.textContent = message; }
+function hasVerifiedMembership(sequence) { return ["committed", "replayed", "no_change"].includes(sequence?.membershipResult?.status) && sequence.membershipResult.membershipVerified === true && sequence.membershipResult.compatiblePeersVerified === true; }
+async function setMembershipSequenceIntakeStatus(sequence, itemLabel) {
+  await refreshRuntimeAuthorityAfterVerifiedTransfer(sequence?.promotionResult);
+  workspacePromotionNoticeController.showSequence(sequence);
+  if (!hasVerifiedMembership(sequence)) setIntakeStatus("The " + itemLabel + " were not added or verified: " + (sequence?.reason || "unknown result") + ".");
+  else if (sequence.status === "promotion_verified") setIntakeStatus("Added and verified the " + itemLabel + "; dedicated-window placement was verified.");
+  else if (sequence.status === "membership_verified_below_threshold") setIntakeStatus("Added and verified the " + itemLabel + ".");
+  else setIntakeStatus("Added and verified the " + itemLabel + ", but dedicated-window placement was not verified.");
+  if (!sequence?.promotionResult) setAuthoritySensitiveControlsDisabled(runtimeWorkspaceReadOnly);
+  return sequence?.promotionResult == null;
+}
+async function refreshRuntimeAuthorityAfterVerifiedTransfer(result) {
+  if (!result) return null;
+  try {
+    const state = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
+    applyRuntimeWorkspaceAuthorityState(state);
+    return state;
+  } catch {
+    const blocked = { status: "blocked", reason: "post_transaction_authority_refresh_failed", result: null };
+    applyRuntimeWorkspaceAuthorityState(blocked);
+    return blocked;
+  }
+}
 function setAdvancedStatus(message) { const status = document.getElementById("advancedTabControlsStatus"); if (status) status.textContent = message; }
+function waitForPromotionNoticePaint() {
+  return new Promise((resolve) => {
+    if (typeof globalThis.requestAnimationFrame !== "function") {
+      window.setTimeout(resolve, 50);
+      return;
+    }
+    globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve));
+  });
+}
 function delay(milliseconds) { return new Promise((resolve) => window.setTimeout(resolve, milliseconds)); }
 
 function summarizeError(error) {

@@ -1,0 +1,33 @@
+name: Pure repository checks
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  pure-checks:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+      - name: Validate runtime inventory
+        run: npm run check:inventory
+      - name: Validate runtime contract purity
+        run: npm run check:runtime-contract-purity
+      - name: Run characterization tests
+        run: npm run test:characterization
+      - name: Run runtime contract tests
+        run: npm run test:runtime-contract
+      - name: Run runtime session authority tests
+        run: npm run test:runtime-session-authority
+      - name: Run journal coordination tests
+        run: npm run test:journal-coordination
+      - name: Run reconciliation coordination tests
+        run: npm run test:reconciliation-coordination
+      - name: Run aggregate pure check
+        run: npm run check

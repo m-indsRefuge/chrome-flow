@@ -1,8 +1,13 @@
-const WORKSPACE_KEY = "chromeFlowWorkspace";
+import { readCompatibleStorageValue } from "../core/constellation-storage-compatibility.js";
+import { EVENT_IDENTITIES, STORAGE_IDENTITIES } from "../core/constellation-identity-contract.js";
+import { getSidePanelRuntimeWorkspaceAuthority, RUNTIME_WORKSPACE_COMMIT_EVENT } from "../core/runtime-workspace-activation/side-panel-runtime.js";
+
 const WORKSPACE_ARCHIVE_KEY = "chromeFlowWorkspaceArchive";
 const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const MAX_ARCHIVED_WORKSPACES = 20;
 const MAX_DIAGNOSTICS = 200;
+const runtimeWorkspaceAuthority = getSidePanelRuntimeWorkspaceAuthority();
+let workspaceSessionSummaryRefreshPending = false;
 
 installWorkspaceSessionControl();
 
@@ -10,6 +15,7 @@ async function installWorkspaceSessionControl() {
   renderWorkspaceSessionControl();
   await refreshWorkspaceSessionSurface();
   attachWorkspaceSessionHandlers();
+  installWorkspaceSessionSummaryRefreshListeners();
 }
 
 function renderWorkspaceSessionControl() {
@@ -128,11 +134,36 @@ async function refreshWorkspaceSessionSummary() {
     return;
   }
 
-  const workspace = await getWorkspace();
-  const archives = await getArchivedWorkspaces();
-  const workspaceSummary = createWorkspaceSummary(workspace);
+  try {
+    const workspace = await getWorkspace();
+    const archives = await getArchivedWorkspaces();
+    const workspaceSummary = createWorkspaceSummary(workspace);
+    summary.textContent = "Current workspace runtime: " + (workspaceSummary.name || "Untitled Workspace") + " | Tabs: " + workspaceSummary.tabCount + " | User notes: " + workspaceSummary.journalCount + " | System events: " + workspaceSummary.timelineCount + " | Archived workspaces: " + archives.length + ".";
+  } catch (error) {
+    summary.textContent = "Active runtime unavailable: " + (error?.message || "compatible workspace state could not be verified") + ".";
+  }
+}
 
-  summary.textContent = "Active: " + (workspaceSummary.name || "Untitled Workspace") + " | Tabs: " + workspaceSummary.tabCount + " | User notes: " + workspaceSummary.journalCount + " | System events: " + workspaceSummary.timelineCount + " | Archived workspaces: " + archives.length + ".";
+function installWorkspaceSessionSummaryRefreshListeners() {
+  const refresh = () => queueWorkspaceSessionSummaryRefresh();
+  globalThis.addEventListener?.(RUNTIME_WORKSPACE_COMMIT_EVENT, refresh);
+  globalThis.addEventListener?.(EVENT_IDENTITIES.workspaceLibrarySaveCompleted.canonical, refresh);
+  globalThis.addEventListener?.(EVENT_IDENTITIES.workspaceLibrarySaveCompleted.legacy, refresh);
+  chrome.storage.onChanged?.addListener((changes, areaName) => {
+    if (areaName !== "local") return;
+    const active = STORAGE_IDENTITIES.activeWorkspace;
+    const archive = STORAGE_IDENTITIES.workspaceArchive;
+    if ([active.canonicalKey, active.legacyKey, archive.canonicalKey, archive.legacyKey].some((key) => key && Object.hasOwn(changes, key))) queueWorkspaceSessionSummaryRefresh();
+  });
+}
+
+function queueWorkspaceSessionSummaryRefresh() {
+  if (workspaceSessionSummaryRefreshPending) return;
+  workspaceSessionSummaryRefreshPending = true;
+  window.setTimeout(() => {
+    workspaceSessionSummaryRefreshPending = false;
+    void refreshWorkspaceSessionSummary();
+  }, 0);
 }
 
 async function refreshArchiveSelector() {
@@ -225,6 +256,11 @@ async function archiveCurrentWorkspaceOnly() {
 
 async function archiveCurrentAndStartFreshWorkspace() {
   const workspace = await getWorkspace();
+  const authorityState = await runtimeWorkspaceAuthority.bootstrapExisting({ workspace, force: true });
+  if (authorityState.status !== "active") {
+    setStatus("Start Fresh is disabled until this panel has verified workspace authority: " + (authorityState.reason || "unknown_reason") + ".");
+    return;
+  }
   const confirmed = window.confirm("Archive the current workspace, close its workspace tabs, and start a clean workspace? Chrome Flow will close only tabs that belong to this workspace. Unrelated tabs stay open.");
 
   if (!confirmed) {
@@ -235,13 +271,19 @@ async function archiveCurrentAndStartFreshWorkspace() {
   const archiveRecord = await archiveWorkspace(workspace, "archive_before_start_fresh");
   const closePlan = await buildWorkspaceBrowserClosePlan(workspace);
   const freshWorkspace = createFreshWorkspace();
-  await chrome.storage.local.set({ [WORKSPACE_KEY]: freshWorkspace });
+  const replacementState = await runtimeWorkspaceAuthority.replaceActive(freshWorkspace, authorityState.result.sourceWindowId);
+  if (replacementState.status !== "active" || replacementState.result?.activeWorkspaceId !== freshWorkspace.workspaceId) {
+    setStatus("The archive was preserved, but the fresh workspace did not become active because replacement authority was not verified.");
+    await recordDiagnostic("error", "workspace_start_fresh_activation_failed", "Fresh workspace replacement authority was not verified.", { archivedWorkspaceId: workspace.workspaceId || "", archiveId: archiveRecord.archiveId, activation: replacementState });
+    return;
+  }
   await recordDiagnostic("info", "workspace_started_fresh", "Archived current workspace, prepared browser projection close, and started a fresh active workspace.", {
     archivedWorkspaceId: workspace.workspaceId || "",
     archiveId: archiveRecord.archiveId,
     newWorkspaceId: freshWorkspace.workspaceId,
     archiveName: archiveRecord.archiveName,
-    closePlan: summarizeWorkspaceBrowserClosePlan(closePlan)
+    closePlan: summarizeWorkspaceBrowserClosePlan(closePlan),
+    activation: replacementState.result
   });
   await recordWorkspaceBrowserClosePlan(archiveRecord, closePlan, "archive_and_start_fresh_workspace");
   setStatus("Archived " + archiveRecord.archiveName + ", started a fresh workspace, and closing " + closePlan.liveTabCount + " workspace tab(s). Unrelated tabs stay open.");
@@ -567,8 +609,10 @@ function createFreshWorkspace() {
 }
 
 async function getWorkspace() {
-  const result = await chrome.storage.local.get(WORKSPACE_KEY);
-  const workspace = result[WORKSPACE_KEY] || createFreshWorkspace();
+  const compatibleRead = await readCompatibleStorageValue("activeWorkspace");
+  if (compatibleRead.conflict) throw new Error("canonical and legacy active-runtime peers conflict");
+  if (!compatibleRead.canonicalPresent || !compatibleRead.legacyPresent || !compatibleRead.equivalent || !compatibleRead.value) throw new Error("compatible active-runtime peers are incomplete");
+  const workspace = compatibleRead.value;
   return {
     ...workspace,
     tabs: Array.isArray(workspace.tabs) ? workspace.tabs : [],

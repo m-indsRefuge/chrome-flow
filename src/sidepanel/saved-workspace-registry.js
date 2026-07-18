@@ -111,7 +111,7 @@ async function refreshSavedWorkspaceRegistry() {
       option.textContent = "No saved Session DB workspaces yet";
       select.appendChild(option);
       select.disabled = true;
-      setSummary("Saved workspaces: 0 | Active DB workspace: none.");
+      setSummary("Saved workspaces: 0 | Last saved workspace: none.");
       setStatus("No saved Session DB workspaces available yet.");
       await recordDiagnostic("info", "saved_workspace_registry_empty", "Saved workspace registry is empty.", {});
       return;
@@ -136,7 +136,7 @@ async function refreshSavedWorkspaceRegistry() {
     const activeCount = workspaces.filter((workspace) => workspace.lifecycleState === "active").length;
     const archivedCount = workspaces.filter((workspace) => workspace.lifecycleState === "archived").length;
 
-    setSummary("Saved workspaces: " + workspaces.length + " | Paused: " + pausedCount + " | Active DB records: " + activeCount + " | Archived: " + archivedCount + " | Active DB workspace: " + (activeWorkspaceId || "none") + ".");
+    setSummary("Saved workspaces: " + workspaces.length + " | Paused: " + pausedCount + " | Saved records marked active: " + activeCount + " | Archived: " + archivedCount + " | Last saved workspace: " + (activeWorkspaceId || "none") + ".");
     setStatus("Saved workspace registry refreshed.");
     await recordDiagnostic("info", "saved_workspace_registry_refreshed", "Saved workspace registry refreshed.", {
       workspaceCount: workspaces.length,
@@ -400,7 +400,7 @@ function formatInspectionPacketForClipboard(packet) {
 }
 
 function createWorkspaceOptionLabel(workspace, activeWorkspaceId) {
-  const activeMarker = workspace.workspaceId === activeWorkspaceId ? " [active DB]" : "";
+  const activeMarker = workspace.workspaceId === activeWorkspaceId ? " [last saved]" : "";
   const name = workspace.name || "Untitled Workspace";
   const type = workspace.workspaceType || "unknown";
   const state = workspace.lifecycleState || "unknown";

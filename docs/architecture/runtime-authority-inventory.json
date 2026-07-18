@@ -1,0 +1,839 @@
+{
+  "schema": "constellation-runtime-authority-inventory-v0.1",
+  "generated": false,
+  "scope": "Static Layer 2.3B evidence. Dynamic references and live Chrome behavior are not claimed complete.",
+  "protectedIdentityRequirements": [
+    "chrome-flow-session-db",
+    "constellation-session-db",
+    "workspaces",
+    "workspaceTabs",
+    "sessions",
+    "projections",
+    "workspaceLinks",
+    "constellations",
+    "journalEntries",
+    "timelineEvents",
+    "summaryCards",
+    "settings",
+    "activeWorkspaceId",
+    "dedicatedWindowThreshold",
+    "chromeFlowWorkspace",
+    "constellationActiveWorkspace",
+    "chromeFlowDiagnostics",
+    "constellationDiagnostics",
+    "chromeFlowWorkspaceArchive",
+    "constellationWorkspaceArchive",
+    "chromeFlowWorkspaceLibrarySaveCoordinator",
+    "constellationWorkspaceLibrarySaveCoordinator",
+    "chromeFlowDiagnosticEvent:",
+    "constellationDiagnosticEvent:",
+    "constellation-workspace-library-save-completed",
+    "chrome-flow-workspace-library-save-completed",
+    "constellation-reconcile-workspace-projection",
+    "chrome-flow-reconcile-workspace-projection",
+    "constellationRuntimeSessionAuthority",
+    "constellation-runtime-session-authority-v0.1",
+    "constellation-runtime-workspace-activation",
+    "constellation-runtime-workspace-activation-request-v0.1",
+    "constellation-runtime-workspace-activation-pending-v0.1",
+    "constellation-runtime-workspace-activation-result-v0.1",
+    "constellation-workspace-manual-placement",
+    "constellation-workspace-manual-placement-request-v0.1",
+    "constellation-workspace-manual-placement-pending-v0.1",
+    "constellation-workspace-manual-placement-result-v0.1"
+  ],
+  "items": [
+    {"id":"journal-request-producer","path":"src/sidepanel/sidepanel.js","symbol":"journalAppendClient","context":"side_panel","responsibility":"journal request production","reads":["journal form","read-only compatible active workspace identity and type"],"writes":["runtime message","derived UI"],"storage":["chrome.storage.local"],"mutationType":"journal_append_request","writeScope":"message_only","lockName":null,"events":["button click"],"trigger":"Operator journal submission","browserMutation":false,"operatorConfirmation":true,"compatibilityIdentities":["chromeFlowWorkspace","constellationActiveWorkspace"],"confidence":"high","evidenceType":"direct_observation","notes":"Read-only compatibility access with no workspace write authority; message-only mutation request production and stable retry identity."},
+    {"id":"journal-service-coordinator","path":"src/core/journal-append-coordination/coordinator.js","symbol":"coordinateJournalAppend","context":"service_worker","responsibility":"journal mutation coordination","reads":["latest compatible active workspace","session operation ledger"],"writes":["compatible active workspace","session operation ledger"],"storage":["chrome.storage.local","chrome.storage.session"],"mutationType":"journal.append","writeScope":"named_domain_mutation","lockName":"constellation-runtime-state-v0.1","events":["runtime message"],"trigger":"authorized side-panel request","browserMutation":false,"operatorConfirmation":true,"compatibilityIdentities":["chromeFlowWorkspace","constellationActiveWorkspace","constellationRecentOperationLedger"],"confidence":"high","evidenceType":"direct_observation","notes":"Coordinates journal versus journal only; other whole-workspace writers remain outside this lock."},
+    {"id":"journal-session-ledger","path":"src/core/journal-append-coordination/chrome-adapter.js","symbol":"constellationRecentOperationLedger","context":"service_worker","responsibility":"shared runtime session replay ledger persistence","reads":["operation ledger"],"writes":["operation ledger"],"storage":["chrome.storage.session"],"mutationType":"bounded_ledger_replace","writeScope":"single_session_key","lockName":null,"events":[],"trigger":"journal, membership, automatic-promotion, activation, or manual-placement coordinator under runtime-state authority","browserMutation":false,"operatorConfirmation":false,"compatibilityIdentities":["constellationRecentOperationLedger","constellation-runtime-operation-ledger-v0.1"],"confidence":"high","evidenceType":"direct_observation","notes":"One shared session ledger records journal, membership, automatic-promotion, runtime-workspace-activation, and manual-placement replay or pending evidence. Guarded writes are reread verified; pending evidence survives service-worker restart for the Chrome session."},
+    {"id":"workspace-membership-private-route","path":"src/core/workspace-membership-mutation/service-worker-handler.js","symbol":"handleWorkspaceMembershipMessage","context":"service_worker","responsibility":"private workspace membership request routing","reads":["strict membership request","runtime sender identity","exact side-panel sender URL"],"writes":["strict membership result","non-authoritative diagnostic"],"storage":["chrome.storage.local"],"mutationType":"constellation-workspace-membership-add-request-v0.1","writeScope":"private_route_dispatch","lockName":null,"events":["constellation-workspace-membership-add-request-v0.1"],"trigger":"same-extension exact side-panel request only","browserMutation":false,"operatorConfirmation":false,"compatibilityIdentities":["constellation-workspace-membership-add-request-v0.1","constellation-workspace-membership-add-result-v0.1","constellation-workspace-membership-receipt-v0.1"],"confidence":"high","evidenceType":"direct_observation","notes":"The route terminally owns its schema, validates the sender and full request before adapters, totalizes failures, and exposes no workspace-write or receipt sub-route."},
+    {"id":"workspace-membership-service-coordinator","path":"src/core/workspace-membership-mutation/coordinator.js","symbol":"coordinateWorkspaceMembershipMutation","context":"service_worker","responsibility":"workspace membership mutation coordination and revision-bound receipt authority","reads":["compatible active workspace peers","constellationRecentOperationLedger","verified runtime side-panel context"],"writes":["compatible active workspace peers","constellationRecentOperationLedger"],"storage":["chrome.storage.local","chrome.storage.session"],"mutationType":"workspace.tab.add","writeScope":"named_membership_mutation","lockName":"constellation-runtime-state-v0.1","events":["constellation-workspace-membership-add-request-v0.1"],"trigger":"authorized side-panel membership request","browserMutation":false,"operatorConfirmation":true,"compatibilityIdentities":["constellationActiveWorkspace","chromeFlowWorkspace","constellationRecentOperationLedger","constellation-runtime-operation-ledger-v0.1"],"confidence":"high","evidenceType":"direct_observation","notes":"One runtime-state transaction verifies context, identity, revision, membership, canonical and legacy peers, and shared-ledger evidence. It releases the lock before any automatic-promotion request."},
+    {"id":"workspace-membership-request-producer","path":"src/sidepanel/workspace-membership-promotion-sequencer.js","symbol":"sequenceWorkspaceMembershipPromotion","context":"side_panel","responsibility":"workspace membership request production and automatic promotion sequencing","reads":["verified runtime side-panel context","read-only workspace baseline","verified membership receipt"],"writes":["private membership runtime message","private automatic-promotion runtime message","derived sequence result"],"storage":["chrome.storage.local"],"mutationType":"membership_then_promotion_requests","writeScope":"message_only","lockName":null,"events":["four Operator-authorized intake actions"],"trigger":"selected batch active tab search tab or recovery re-add","browserMutation":false,"operatorConfirmation":true,"compatibilityIdentities":["constellation-workspace-membership-add-request-v0.1","constellation-workspace-membership-receipt-v0.1","constellation-workspace-automatic-promotion-request-v0.1"],"confidence":"high","evidenceType":"direct_observation","notes":"One shared helper sequences membership, bounded post-membership finalization, promotion, and result convergence. It never holds the membership runtime-state lock while promotion acquires exclusive authority."},
+    {"id":"workspace-metadata-autosave-barrier","path":"src/sidepanel/workspace-metadata-autosave.js","symbol":"runWithWorkspaceMetadataBarrier","context":"side_panel","responsibility":"active_workspace metadata autosave race barrier","reads":["newest compatible active workspace peers","workspace metadata form snapshot"],"writes":["name aim workspaceType updatedAt on compatible active workspace peers","non-authoritative diagnostics"],"storage":["chrome.storage.local"],"mutationType":"workspace.metadata.patch","writeScope":"metadata_fields_on_latest_whole_object","lockName":"constellation-runtime-state-v0.1","events":["metadata input blur change pagehide","membership-promotion sequence"],"trigger":"Operator metadata input or authorized intake barrier","browserMutation":false,"operatorConfirmation":true,"compatibilityIdentities":["constellationActiveWorkspace","chromeFlowWorkspace"],"confidence":"high","evidenceType":"direct_observation","notes":"The barrier flushes current metadata, pauses persistence, queues typing, and rereads newest compatible state before merge so membership revision placement journal timeline and unknown fields cannot regress."},
+    {"id":"automatic-promotion-private-route","path":"src/core/workspace-automatic-promotion-integration/service-worker-handler.js","symbol":"handleAutomaticPromotionMessage","context":"service_worker","responsibility":"private automatic promotion request routing","reads":["strict promotion request","runtime sender identity","exact side-panel sender URL"],"writes":["stable promotion response","non-authoritative terminal diagnostic"],"storage":["chrome.storage.local"],"mutationType":"constellation-workspace-automatic-promotion-request-v0.1","writeScope":"private_route_dispatch","lockName":null,"events":["constellation-workspace-automatic-promotion-request-v0.1"],"trigger":"same-extension exact side-panel request only","browserMutation":false,"operatorConfirmation":false,"compatibilityIdentities":["constellation-workspace-automatic-promotion-request-v0.1","constellationDiagnosticEvent:","chromeFlowDiagnosticEvent:"],"confidence":"high","evidenceType":"direct_observation","notes":"The route validates sender and the complete accepted request before adapter creation, exposes no assignment or browser mutation sub-routes, and does not classify promotion."},
+    {"id":"automatic-promotion-production-adapters","path":"src/core/workspace-automatic-promotion-integration/chrome-adapter.js","symbol":"createAutomaticPromotionChromeAdapters","context":"service_worker","responsibility":"automatic promotion production authority integration and verified browser mutation","reads":["constellationRecentOperationLedger","constellationRuntimeSessionAuthority","compatible active workspace peers","current Chrome window tab and group projection"],"writes":["constellationRecentOperationLedger","constellationRuntimeSessionAuthority","compatible active workspace placement","existing diagnostic evidence","Chrome windows tabs groups and focus"],"storage":["chrome.storage.session","chrome.storage.local","browser projection"],"mutationType":"automatic_promotion_transaction_adapters","writeScope":"guarded_runtime_ledger_authority_placement_and_browser_projection","lockName":"constellation-runtime-exclusive-operation-v0.1","events":["constellation-workspace-automatic-promotion-request-v0.1"],"trigger":"accepted pure automatic-promotion transaction kernel","browserMutation":true,"operatorConfirmation":false,"compatibilityIdentities":["constellationRecentOperationLedger","constellation-runtime-operation-ledger-v0.1","constellationRuntimeSessionAuthority","constellation-runtime-session-authority-v0.1","constellationActiveWorkspace","chromeFlowWorkspace"],"confidence":"high","evidenceType":"direct_observation","notes":"Lock order is exclusive operation then runtime state. Pending and terminal records share the canonical runtime ledger; assignment and placement writes are revision guarded and reread verified; recovery reuses browser evidence without requiring a destination side-panel context."},
+    {"id":"runtime-workspace-activation-authority","path":"src/core/runtime-workspace-activation/chrome-adapter.js","symbol":"createRuntimeWorkspaceActivationChromeAdapters","context":"service_worker","responsibility":"active_workspace activation compatible-state and assignment authority","reads":["constellationRecentOperationLedger","constellationRuntimeSessionAuthority","constellationActiveWorkspace","chromeFlowWorkspace","corroborated live Chrome tab and window evidence"],"writes":["constellationRecentOperationLedger","constellationRuntimeSessionAuthority","constellationActiveWorkspace","chromeFlowWorkspace"],"storage":["chrome.storage.session","chrome.storage.local"],"mutationType":"bootstrap_existing replace_active transfer_active","writeScope":"verified_workspace_and_single_authority_root","lockName":"constellation-runtime-exclusive-operation-v0.1","events":["constellation-runtime-workspace-activation"],"trigger":"authorized exact side-panel activation request","browserMutation":false,"operatorConfirmation":"lifecycle_or_intake_specific","compatibilityIdentities":["constellation-runtime-workspace-activation","constellation-runtime-workspace-activation-request-v0.1","constellation-runtime-workspace-activation-pending-v0.1","constellation-runtime-workspace-activation-result-v0.1","constellationRecentOperationLedger","constellation-runtime-operation-ledger-v0.1","constellationRuntimeSessionAuthority","constellation-runtime-session-authority-v0.1","constellationActiveWorkspace","chromeFlowWorkspace"],"confidence":"high","evidenceType":"direct_observation","notes":"Service-worker-only writes use pre-mutation replacement intent, workspace-first replacement, atomic assignment registry transition, exact reread verification, durable workspace-only partial recovery, bounded replay, and no browser or automatic-promotion mutation."},
+    {"id":"manual-placement-authority","path":"src/core/workspace-manual-placement-transaction/chrome-adapter.js","symbol":"createWorkspaceManualPlacementChromeAdapters","context":"service_worker","responsibility":"browser_mutation manual dedicated-window placement coordination","reads":["constellationRecentOperationLedger","constellationRuntimeSessionAuthority","compatible active workspace peers","Chrome window tab and group projection"],"writes":["constellationRecentOperationLedger","constellationRuntimeSessionAuthority","compatible active workspace placement","Chrome windows tabs groups and focus"],"storage":["chrome.storage.session","chrome.storage.local","browser projection"],"mutationType":"manual_move_transfer_active_placement","writeScope":"guarded_browser_assignment_and_runtime_placement","lockName":"constellation-runtime-exclusive-operation-v0.1","events":["constellation-workspace-manual-placement"],"trigger":"Operator manual dedicated-window move","browserMutation":true,"operatorConfirmation":true,"compatibilityIdentities":["constellation-workspace-manual-placement","constellation-workspace-manual-placement-request-v0.1","constellation-workspace-manual-placement-pending-v0.1","constellation-workspace-manual-placement-result-v0.1","constellationRecentOperationLedger","constellation-runtime-operation-ledger-v0.1","constellationRuntimeSessionAuthority","constellationActiveWorkspace","chromeFlowWorkspace"],"confidence":"high","evidenceType":"direct_observation","notes":"One exclusive operation records pending evidence before the accepted move engine, invokes transfer_active, writes revision-guarded placement, and replays without a second destination or automatic threshold promotion."},
+    {
+      "id": "entry-service-worker",
+      "path": "src/background/service-worker.js",
+      "symbol": "chrome.runtime.onInstalled.addListener",
+      "context": "service_worker",
+      "responsibility": "reconciliation event entry point",
+      "reads": [
+        "Chrome tab/window/group events",
+        "runtime messages"
+      ],
+      "writes": [
+        "process-local reconciliation scheduler"
+      ],
+      "storage": [],
+      "mutationType": "schedule",
+      "writeScope": "process_local",
+      "lockName": null,
+      "events": [
+        "constellation-reconcile-workspace-projection",
+        "chrome-flow-reconcile-workspace-projection"
+      ],
+      "trigger": "Chrome listeners and runtime.onMessage",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "canonical and legacy reconcile events"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Listeners register at module evaluation; worker-local scheduling state is not durable."
+    },
+    {
+      "id": "entry-side-panel",
+      "path": "src/sidepanel/sidepanel.html",
+      "symbol": "constellation-compatibility-bootstrap.js",
+      "context": "side_panel",
+      "responsibility": "active_workspace UI and top-level side-effect module entry points",
+      "reads": [
+        "active workspace",
+        "Workspace Library",
+        "diagnostics"
+      ],
+      "writes": [
+        "operator-triggered runtime and browser operations"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session",
+        "IndexedDB via repositories"
+      ],
+      "mutationType": "multiple",
+      "writeScope": "mixed",
+      "lockName": null,
+      "events": [
+        "DOM events",
+        "storage changes",
+        "runtime messages"
+      ],
+      "trigger": "side-panel document load",
+      "browserMutation": true,
+      "operatorConfirmation": "operation_specific",
+      "compatibilityIdentities": [
+        "legacy and canonical storage/event peers"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Every panel document has independent module state and listener registrations."
+    },
+    {
+      "id": "entry-migration-page",
+      "path": "src/migration/migration.html",
+      "symbol": "migration.js",
+      "context": "migration_page",
+      "responsibility": "migration and import Operator surface",
+      "reads": [
+        "local migration package",
+        "destination state"
+      ],
+      "writes": [
+        "validated import artifacts"
+      ],
+      "storage": [
+        "IndexedDB",
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "create_only_import",
+      "writeScope": "multi_store_and_keys",
+      "lockName": null,
+      "events": [
+        "DOM events"
+      ],
+      "trigger": "options page load and Operator action",
+      "browserMutation": false,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "migration package and storage identity contracts"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Live execution is outside pure validation. The imported executor owns the import lock; this HTML entry point does not declare it."
+    },
+    {
+      "id": "runtime-active-workspace",
+      "path": "src/core/workspace-store.js",
+      "symbol": "saveWorkspace",
+      "context": "side_panel",
+      "responsibility": "active_workspace journal timeline metadata read and write",
+      "reads": [
+        "chromeFlowWorkspace through compatibility reader"
+      ],
+      "writes": [
+        "whole active workspace object"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "read_modify_write",
+      "writeScope": "whole_object",
+      "lockName": null,
+      "events": [],
+      "trigger": "core calls from UI modules",
+      "browserMutation": false,
+      "operatorConfirmation": "caller_specific",
+      "compatibilityIdentities": [
+        "chromeFlowWorkspace",
+        "constellationActiveWorkspace"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Journal and timeline append helpers persist the containing workspace object."
+    },
+    {
+      "id": "runtime-active-workspace-read-normalize-write",
+      "path": "src/core/workspace-store.js",
+      "symbol": "getWorkspace",
+      "conceptLabel": "apparent read with normalization write side effect",
+      "context": "side_panel",
+      "responsibility": "active_workspace compatible read normalization and full write",
+      "reads": [
+        "compatible active workspace object"
+      ],
+      "writes": [
+        "normalized whole active workspace object through saveWorkspace"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "read_normalize_write",
+      "writeScope": "whole_object",
+      "lockName": null,
+      "events": [],
+      "trigger": "callers expecting the current active workspace",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "chromeFlowWorkspace",
+        "constellationActiveWorkspace"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "getWorkspace reads through the compatibility layer, normalizes, then calls saveWorkspace; apparent reads can therefore produce a full compatible storage write and participate in cross-context races."
+    },
+    {
+      "id": "runtime-compatibility",
+      "path": "src/core/constellation-storage-compatibility.js",
+      "symbol": "writeCompatibleStorageValue",
+      "context": "side_panel",
+      "responsibility": "active_workspace diagnostics archive save coordinator compatibility reads and writes",
+      "reads": [
+        "canonical and legacy peers"
+      ],
+      "writes": [
+        "canonical and legacy peers"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "compatibility_mirror",
+      "writeScope": "identity_pair",
+      "lockName": null,
+      "events": [],
+      "trigger": "storage service calls",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "chromeFlowWorkspace",
+        "constellationActiveWorkspace",
+        "chromeFlowDiagnostics",
+        "constellationDiagnostics",
+        "chromeFlowWorkspaceArchive",
+        "constellationWorkspaceArchive",
+        "chromeFlowWorkspaceLibrarySaveCoordinator",
+        "constellationWorkspaceLibrarySaveCoordinator",
+        "chromeFlowDiagnosticEvent:",
+        "constellationDiagnosticEvent:"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Protected compatibility mechanism; not a retirement candidate."
+    },
+    {
+      "id": "runtime-diagnostics",
+      "path": "src/core/diagnostic-event-store.js",
+      "symbol": "appendDiagnosticEvent",
+      "context": "developer_validation",
+      "responsibility": "diagnostics append and shard persistence",
+      "reads": [
+        "diagnostic rings and shards"
+      ],
+      "writes": [
+        "diagnostic ring and event shard"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "append_read_modify_write",
+      "writeScope": "ring_and_shard",
+      "lockName": null,
+      "events": [],
+      "trigger": "runtime diagnostic writers",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "chromeFlowDiagnostics",
+        "constellationDiagnostics",
+        "chromeFlowDiagnosticEvent:",
+        "constellationDiagnosticEvent:"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Concurrent ring writers require live or adapter characterization beyond static evidence."
+    },
+    {
+      "id": "runtime-archive",
+      "path": "src/core/workspace-runtime-store.js",
+      "symbol": "saveLegacyRuntimeArchiveRecords",
+      "context": "side_panel",
+      "responsibility": "archive runtime records",
+      "reads": [
+        "workspace archive"
+      ],
+      "writes": [
+        "workspace archive array"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "replace",
+      "writeScope": "whole_archive",
+      "lockName": null,
+      "events": [],
+      "trigger": "archive/restore controls",
+      "browserMutation": false,
+      "operatorConfirmation": "caller_specific",
+      "compatibilityIdentities": [
+        "chromeFlowWorkspaceArchive",
+        "constellationWorkspaceArchive"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Archive browser closing is handled by separate controllers/engine."
+    },
+    {
+      "id": "durable-schema",
+      "path": "src/core/session-db.js",
+      "symbol": "chrome-flow-session-db",
+      "context": "indexeddb",
+      "responsibility": "durable Session DB schema and transaction primitive",
+      "reads": [
+        "IndexedDB stores"
+      ],
+      "writes": [
+        "IndexedDB stores"
+      ],
+      "storage": [
+        "workspaces",
+        "workspaceTabs",
+        "sessions",
+        "projections",
+        "workspaceLinks",
+        "constellations",
+        "journalEntries",
+        "timelineEvents",
+        "summaryCards",
+        "settings"
+      ],
+      "mutationType": "transactional",
+      "writeScope": "specified_stores",
+      "lockName": null,
+      "events": [
+        "IndexedDB lifecycle"
+      ],
+      "trigger": "repository calls",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "chrome-flow-session-db",
+        "constellation-session-db"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Physical DB name and all store names are protected."
+    },
+    {
+      "id": "durable-active-selection",
+      "path": "src/core/session-repository.js",
+      "symbol": "activeWorkspaceId",
+      "context": "indexeddb",
+      "responsibility": "active_selection setting read and write",
+      "reads": [
+        "settings.activeWorkspaceId"
+      ],
+      "writes": [
+        "settings.activeWorkspaceId"
+      ],
+      "storage": [
+        "settings"
+      ],
+      "mutationType": "put",
+      "writeScope": "single_global_setting",
+      "lockName": null,
+      "events": [],
+      "trigger": "save/import/selection repository calls",
+      "browserMutation": false,
+      "operatorConfirmation": "caller_specific",
+      "compatibilityIdentities": [
+        "activeWorkspaceId"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "One key cannot represent independent per-window assignments; future representation is undesigned."
+    },
+    {
+      "id": "durable-snapshot",
+      "path": "src/core/workspace-snapshot-repository.js",
+      "symbol": "saveRuntimeWorkspaceSnapshotToSessionDb",
+      "context": "indexeddb",
+      "responsibility": "save Workspace Library snapshot",
+      "reads": [
+        "active runtime workspace"
+      ],
+      "writes": [
+        "workspace and related durable records"
+      ],
+      "storage": [
+        "workspaces",
+        "workspaceTabs",
+        "sessions",
+        "projections",
+        "journalEntries",
+        "timelineEvents",
+        "summaryCards"
+      ],
+      "mutationType": "multi_store_put",
+      "writeScope": "snapshot_record_set",
+      "lockName": null,
+      "events": [],
+      "trigger": "production save bridge",
+      "browserMutation": false,
+      "operatorConfirmation": "manual_or_automatic",
+      "compatibilityIdentities": [],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Atomic seven-store Session DB transaction does not by itself serialize the source runtime read. The repository function may be reached through manual or automatic production-save triggers and does not write the activeWorkspaceId settings row."
+    },
+    {
+      "id": "durable-dedicated-window-threshold",
+      "path": "src/core/session-repository.js",
+      "symbol": "DEDICATED_WINDOW_THRESHOLD_SETTING_KEY",
+      "context": "indexeddb",
+      "responsibility": "browser_projection dedicated-window threshold setting read and write",
+      "reads": [
+        "settings.dedicatedWindowThreshold"
+      ],
+      "writes": [
+        "settings.dedicatedWindowThreshold"
+      ],
+      "storage": [
+        "settings"
+      ],
+      "mutationType": "get_and_put",
+      "writeScope": "single_global_setting",
+      "lockName": null,
+      "events": [],
+      "trigger": "getDedicatedWindowThreshold and setDedicatedWindowThreshold repository calls",
+      "browserMutation": false,
+      "operatorConfirmation": "caller_specific",
+      "compatibilityIdentities": [
+        "dedicatedWindowThreshold"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "The protected setting is declared and read/written in the Session DB repository. The current UI threshold policy uses its separately defined product threshold constant; this item does not claim that the policy surface reads the settings row.",
+      "conceptLabel": "protected dedicated-window threshold Session DB setting"
+    },
+    {
+      "id": "operation-save",
+      "path": "src/sidepanel/workspace-library-save-bridge.js",
+      "symbol": "CROSS_CONTEXT_SAVE_LOCK_NAME",
+      "context": "side_panel",
+      "responsibility": "save production snapshot and coordinator",
+      "reads": [
+        "active workspace",
+        "save coordinator"
+      ],
+      "writes": [
+        "Workspace Library snapshot",
+        "save coordinator",
+        "diagnostics"
+      ],
+      "storage": [
+        "IndexedDB",
+        "chrome.storage.session",
+        "chrome.storage.local"
+      ],
+      "mutationType": "snapshot",
+      "writeScope": "multiple_resources",
+      "lockName": "chrome-flow-workspace-library-save",
+      "events": [
+        "constellation-workspace-library-save-completed",
+        "chrome-flow-workspace-library-save-completed"
+      ],
+      "trigger": "manual save-button click or automatic storage-change-triggered save",
+      "browserMutation": false,
+      "operatorConfirmation": "manual_or_automatic",
+      "compatibilityIdentities": [
+        "chromeFlowWorkspaceLibrarySaveCoordinator",
+        "constellationWorkspaceLibrarySaveCoordinator"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Lock excludes same-name saves only."
+    },
+    {
+      "id": "operation-resume",
+      "path": "src/core/workspace-resume-transaction-engine.js",
+      "symbol": "RESUME_LOCK_NAME",
+      "context": "side_panel",
+      "responsibility": "resume browser_mutation transaction and rollback",
+      "reads": [
+        "durable workspace",
+        "current browser projection",
+        "active workspace"
+      ],
+      "writes": [
+        "tabs/windows/groups",
+        "active workspace",
+        "operation evidence"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "IndexedDB read"
+      ],
+      "mutationType": "checked_transaction",
+      "writeScope": "browser_and_runtime",
+      "lockName": "chrome-flow-workspace-resume-transaction",
+      "events": [],
+      "trigger": "Operator-authorized resume",
+      "browserMutation": true,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "resume and rollback packet contracts"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Operation-specific lock does not exclude save/import/reconciliation by name."
+    },
+    {
+      "id": "operation-import",
+      "path": "src/core/constellation-data-import-executor.js",
+      "symbol": "IMPORT_LOCK_NAME",
+      "context": "migration_page",
+      "responsibility": "import create-only transaction verification and rollback",
+      "reads": [
+        "validated package",
+        "fresh destination state"
+      ],
+      "writes": [
+        "absent IndexedDB records",
+        "absent storage identities"
+      ],
+      "storage": [
+        "IndexedDB",
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "create_or_identical",
+      "writeScope": "multi_store_and_keys",
+      "lockName": "constellation-data-import-execution-v0.1",
+      "events": [],
+      "trigger": "exact Operator authorization",
+      "browserMutation": false,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "migration schemas",
+        "package digests",
+        "canonical and legacy storage peers"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Uses add for DB creation and tracks artifacts for rollback."
+    },
+    {
+      "id": "operation-reconciliation",
+      "path": "src/core/workspace-projection-reconciliation/coordinator.js",
+      "symbol": "coordinateWorkspaceProjectionReconciliation",
+      "context": "service_worker",
+      "responsibility": "reconciliation of browser projection into active workspace",
+      "reads": [
+        "compatible active-workspace peers under shared authority",
+        "captured projection baselines",
+        "all browser tabs"
+      ],
+      "writes": [
+        "bounded browser projection fields",
+        "reconciliation-derived timeline events",
+        "canonical and legacy active-workspace peers",
+        "diagnostics"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "workspace.projection.reconcile",
+      "writeScope": "named_domain_mutation",
+      "lockName": "constellation-runtime-state-v0.1",
+      "events": [
+        "chrome-flow-workspace-projection-reconciled"
+      ],
+      "trigger": "process-local debounce from service worker",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "constellationActiveWorkspace",
+        "chromeFlowWorkspace"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Browser observation occurs before the shared lock. Latest compatible state, projection baselines, one revision transition, peer write-through and fresh complete verification are coordinated under the journal-shared runtime-state lock; diagnostics and notification occur after lock release."
+    },
+    {
+      "id": "operation-archive-browser",
+      "path": "src/core/workspace-archive-close-engine.js",
+      "symbol": "closeVerifiedWorkspaceBrowserProjection",
+      "context": "side_panel",
+      "responsibility": "archive browser_mutation close ownership",
+      "reads": [
+        "saved workspace tabs",
+        "live browser tabs"
+      ],
+      "writes": [
+        "browser tabs",
+        "close evidence"
+      ],
+      "storage": [],
+      "mutationType": "validated_browser_close",
+      "writeScope": "owned_projection",
+      "lockName": null,
+      "events": [],
+      "trigger": "Operator archive action",
+      "browserMutation": true,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "archive and recovery evidence"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Browser identifiers are revalidated; no common cross-operation lock observed."
+    },
+    {
+      "id": "operation-browser-controls",
+      "path": "src/sidepanel/sidepanel.js",
+      "symbol": "moveWorkspaceTabsIntoNewWindow",
+      "context": "browser_projection",
+      "responsibility": "browser_mutation tab group window controls and workspace metadata",
+      "reads": [
+        "active workspace",
+        "Chrome tabs/windows/groups"
+      ],
+      "writes": [
+        "Chrome tabs/windows/groups",
+        "active workspace",
+        "timeline"
+      ],
+      "storage": [
+        "chrome.storage.local"
+      ],
+      "mutationType": "operator_browser_control",
+      "writeScope": "browser_and_whole_runtime",
+      "lockName": null,
+      "events": [
+        "DOM events"
+      ],
+      "trigger": "Operator controls",
+      "browserMutation": true,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "chromeFlowWorkspace"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Large UI entry module; live semantics not executed by this phase."
+    },
+    {
+      "id": "listener-storage-bootstrap",
+      "path": "src/sidepanel/constellation-compatibility-bootstrap.js",
+      "symbol": "chrome.storage.onChanged.addListener",
+      "context": "side_panel",
+      "responsibility": "migration compatibility storage listener and event bridge",
+      "reads": [
+        "storage changes"
+      ],
+      "writes": [
+        "compatibility peers and UI events"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "compatibility_reconcile",
+      "writeScope": "identity_pair",
+      "lockName": null,
+      "events": [
+        "legacy and canonical DOM events"
+      ],
+      "trigger": "storage.onChanged and window events",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "legacy and canonical storage/event identities"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Each side-panel document registers its own listener."
+    },
+    {
+      "id": "listener-library-refresh",
+      "path": "src/sidepanel/workspace-library-auto-refresh.js",
+      "symbol": "chrome.storage.onChanged.addListener",
+      "context": "side_panel",
+      "responsibility": "save Workspace Library refresh listener",
+      "reads": [
+        "storage changes and saved workspaces"
+      ],
+      "writes": [
+        "derived UI"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session",
+        "IndexedDB read"
+      ],
+      "mutationType": "derived_refresh",
+      "writeScope": "dom",
+      "lockName": null,
+      "events": [
+        "workspace library save completion"
+      ],
+      "trigger": "storage and custom events",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": [
+        "save coordinator event identities"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Duplicate work across documents is possible; durable mutation is not asserted."
+    },
+    {
+      "id": "storage-migration",
+      "path": "src/core/constellation-storage-migration-engine.js",
+      "symbol": "runStorageMigrationPass",
+      "context": "migration_page",
+      "responsibility": "migration canonical and legacy identity evidence",
+      "reads": [
+        "legacy and canonical storage identities"
+      ],
+      "writes": [
+        "missing peers and migration marker"
+      ],
+      "storage": [
+        "chrome.storage.local",
+        "chrome.storage.session"
+      ],
+      "mutationType": "compatibility_migration",
+      "writeScope": "protected_identity_pairs",
+      "lockName": null,
+      "events": [],
+      "trigger": "compatibility bootstrap or controlled validation",
+      "browserMutation": false,
+      "operatorConfirmation": "phase_specific",
+      "compatibilityIdentities": [
+        "constellationStorageIdentityMigration",
+        "legacy and canonical peers"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Protected migration mechanism; not exercised in pure tests."
+    },
+    {
+      "id": "runtime-session-authority",
+      "path": "src/core/runtime-session-authority/coordinator.js",
+      "symbol": "coordinateContextRegistration",
+      "context": "service_worker",
+      "responsibility": "runtime session assignment and window-context authority",
+      "reads": ["constellationRuntimeSessionAuthority", "verified Chrome window identity"],
+      "writes": ["constellationRuntimeSessionAuthority", "existing diagnostic evidence"],
+      "storage": ["chrome.storage.session"],
+      "mutationType": "serialized_single_key_transition",
+      "writeScope": "session_authority_root",
+      "lockName": "constellation-runtime-state-v0.1",
+      "events": ["constellation-runtime-context-register", "chrome.windows.onRemoved"],
+      "trigger": "authorized side-panel context registration or exact window removal",
+      "browserMutation": false,
+      "operatorConfirmation": false,
+      "compatibilityIdentities": ["constellationRuntimeSessionAuthority", "constellation-runtime-session-authority-v0.1"],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "D1 stores assignments and active side-panel contexts only. It contains no workspace state and exposes no raw public assignment create, transfer, or release route; the later R1 private activation family owns exact semantic activation requests."
+    },
+    {
+      "id": "developer-validation-entry",
+      "path": "src/sidepanel/developer-mode.js",
+      "symbol": "registerDeveloperSurface",
+      "context": "developer_validation",
+      "responsibility": "developer_validation surface gating",
+      "reads": [
+        "developer-mode UI state"
+      ],
+      "writes": [
+        "derived DOM visibility"
+      ],
+      "storage": [],
+      "mutationType": "ui_gate",
+      "writeScope": "dom",
+      "lockName": null,
+      "events": [
+        "DOM events"
+      ],
+      "trigger": "side-panel load and Operator toggle",
+      "browserMutation": false,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "historical validation surfaces"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Some registered validation actions mutate state when run; this phase does not run them."
+    },
+    {
+      "id": "automatic-promotion-live-validation-surface",
+      "path": "src/sidepanel/workspace-automatic-promotion-validation-surface.js",
+      "symbol": "installAutomaticPromotionValidationSurface",
+      "context": "developer_validation",
+      "responsibility": "developer_validation manual automatic-promotion scenario and evidence preparation",
+      "reads": [
+        "static manual scenario matrix",
+        "Operator-entered evidence after separately authorized validation"
+      ],
+      "writes": [
+        "derived DOM output",
+        "Operator clipboard on explicit click"
+      ],
+      "storage": [],
+      "mutationType": "manual_evidence_template",
+      "writeScope": "derived_ui_and_clipboard",
+      "lockName": null,
+      "events": [
+        "Operator button clicks"
+      ],
+      "trigger": "Developer Mode and Validation Surfaces gate plus explicit Operator action",
+      "browserMutation": false,
+      "operatorConfirmation": true,
+      "compatibilityIdentities": [
+        "historical validation surfaces"
+      ],
+      "confidence": "high",
+      "evidenceType": "direct_observation",
+      "notes": "Prepares checklist and empty packets only. It invokes no Chrome mutation or runtime message API and makes no live-validation claim."
+    }
+  ]
+}
