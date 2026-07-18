@@ -1,12 +1,14 @@
 # Constellation Agent Instructions
 
-## Purpose
+## 1. Purpose
 
 This file is the repository-level operating contract for coding agents working on Constellation.
 
-Constellation is a local-first browser cognitive workspace implemented as a Chrome extension. Its deterministic core owns workspace identity, active runtime state, durable memory, browser projection, recovery, permissions, and recall. Algorithms may infer and future AI providers may interpret, but neither may silently replace deterministic authority or Operator control.
+Constellation is a local-first browser cognitive workspace implemented as a Chrome extension. Its deterministic core owns workspace identity, active runtime state, durable memory, browser projection, recovery, permissions, and recall.
 
-Read these linked contracts before modifying the repository:
+Algorithms may infer and future AI providers may interpret, but neither may silently replace deterministic authority or Operator control.
+
+Before modifying the repository, read the relevant authoritative contracts:
 
 - `docs/architecture/CONSTELLATION-AUTHORITY-CONTRACT.md`
 - `docs/architecture/PROTECTED-IDENTITIES.md`
@@ -14,22 +16,48 @@ Read these linked contracts before modifying the repository:
 - `docs/development/DEFINITION-OF-DONE.md`
 - `docs/development/CODEX-WORKFLOW.md`
 
-When a task prompt conflicts with these repository contracts, stop and report the conflict. Do not silently choose the more permissive interpretation.
+When a current task appears to conflict with an authoritative repository contract, stop and report the exact conflict. Do not silently choose the more permissive interpretation.
 
-## Authority
+---
+
+## 2. Authority and task boundary
+
+The global Nolan–Byte authority model applies.
+
+For Constellation specifically:
 
 - Nolan is the Operator and final authority for product intent, consent, release, and meaningful mutation.
-- Byte and Nolan own architecture, phase boundaries, compatibility doctrine, acceptance criteria, and final review.
+- Byte and Nolan own architecture, compatibility doctrine, phase boundaries, acceptance criteria, and final review.
 - A coding agent may investigate, plan, implement, and validate only inside the explicitly authorized task boundary.
 - Repository evidence outranks assumptions.
 - Inference must be labelled as inference.
-- Recommendations are advisory until accepted.
+- Recommendations remain advisory until accepted.
 
-Do not redesign product doctrine, retire compatibility mechanisms, or broaden scope merely because a different design appears cleaner.
+Do not redesign product doctrine, retire compatibility mechanisms, broaden scope, or alter persistence semantics merely because a different design appears cleaner.
 
-## Core state doctrine
+### Current task and phase
 
-Treat these boundaries as architectural invariants:
+The current task prompt or approved Byte–Nolan implementation contract defines:
+
+- the active layer, phase, slice, or workstream;
+- the expected branch, worktree, and `HEAD`;
+- allowed and prohibited scope;
+- required invariants;
+- required implementation;
+- required tests and evidence;
+- live-validation boundaries;
+- stop conditions;
+- completion criteria.
+
+Do not infer the active phase from historical documentation, previous sessions, branch names, or this file.
+
+When the current task conflicts with an authoritative repository contract, stop and report the conflict rather than silently overriding either source.
+
+---
+
+## 3. Core state doctrine
+
+Treat the following as architectural invariants:
 
 ```text
 Browser tabs, windows, and groups are live projections.
@@ -42,80 +70,92 @@ IndexedDB / Session DB is durable workspace memory.
 The Operator authorizes meaningful mutations.
 ```
 
-The current runtime may contain transitional or legacy-compatible identities. Their presence is not evidence of dead code or stale branding.
+The runtime may contain transitional, compatibility, historical, or legacy identities. Their presence is not evidence of dead code, stale branding, or safe removal.
 
-## Current phase
+Do not move authority from the deterministic substrate into UI state, browser objects, algorithms, model output, or inferred context without explicit architectural authorization.
 
-The active phase is:
+---
 
-```text
-Layer 2.3B — Concurrency Characterization and Engineering Foundation
-```
+## 4. Required repository gate
 
-The objective is to establish the documentation, tooling, pure tests, writer inventories, and controlled evidence needed before concurrent multi-window runtime implementation.
-
-Unless a later task explicitly authorizes production runtime changes, do not:
-
-- implement multi-window product behavior;
-- change active workspace semantics;
-- change persistence semantics;
-- change resume, archive, recovery, import, migration, or rollback behavior;
-- introduce new production mutation paths;
-- rename protected identities;
-- delete historical or validation artifacts.
-
-Characterization tests may demonstrate current hazards. A failing characterization test is evidence, not permission to redesign production behavior.
-
-## Required starting gate
-
-Before work, report:
+Before work, establish and report:
 
 ```text
+git rev-parse --show-toplevel
 git status --short
 git status -sb
 git branch --show-current
 git rev-parse HEAD
+```
+
+Report the upstream with:
+
+```text
 git rev-parse '@{u}'
 ```
 
-Stop if:
+when an upstream exists. If no upstream exists, report that fact rather than treating it automatically as failure unless the current task requires an upstream.
 
-- the working tree is not in the expected state;
-- the branch differs from the task prompt;
-- HEAD or upstream identity differs from the task prompt;
-- the task would require changing a protected contract without explicit authorization.
+Also identify:
 
-Do not switch branches, reset, rebase, merge, pull, push, force-push, or rewrite history unless the task explicitly authorizes that exact operation.
+- the active worktree, if worktrees are in use;
+- applicable repository instructions;
+- relevant package and runtime versions;
+- required validation commands;
+- pre-existing staged, unstaged, and untracked changes.
 
-## Modification rules
+Stop when:
+
+- the repository or worktree is not the expected target;
+- the branch differs from the current task;
+- `HEAD` differs from the current task expectation;
+- an upstream mismatch matters to the task;
+- pre-existing changes cannot be safely separated;
+- the task would require changing a protected contract without explicit authority.
+
+Do not switch branches, reset, rebase, merge, pull, push, force-push, rewrite history, stash, clean, or replace the working tree unless the task explicitly authorizes the exact operation.
+
+Treat all pre-existing changes as Operator-owned work.
+
+---
+
+## 5. Investigation and modification rules
 
 Before editing:
 
-1. Inspect the relevant entry points, imports, readers, writers, listeners, storage keys, event names, tests, and documentation.
+1. Inspect the relevant entry points, imports, readers, writers, listeners, storage keys, event names, tests, documentation, manifests, and runtime messages.
 2. State the intended change map.
-3. Identify production files, test files, documentation files, and generated files separately.
+3. Identify production, test, documentation, generated, migration, and validation files separately.
 4. Identify protected contracts touched directly or indirectly.
-5. Prefer the smallest coherent change that satisfies the approved objective.
+5. Trace authority ownership and side effects.
+6. Prefer the smallest coherent change that satisfies the approved objective.
 
 During implementation:
 
 - preserve observable behavior unless behavior change is explicitly authorized;
-- avoid broad formatting or unrelated cleanup;
-- avoid opportunistic renames;
+- avoid broad formatting, cleanup, or opportunistic renames;
 - avoid dependency additions unless justified and authorized;
 - keep deterministic logic explicit and testable;
-- preserve rollback and evidence paths;
+- separate pure decision logic from side effects where practical;
+- preserve rollback, recovery, and evidence paths;
 - use semantic operation boundaries rather than generic object replacement where architecture requires meaning;
 - keep browser-derived identifiers subject to revalidation;
+- preserve ordering, exclusivity, idempotency, and retry safety;
 - do not treat module count or file size alone as defects.
 
-A suspicious file is not dead until static imports, dynamic imports, manifest references, HTML references, event registration, runtime messaging, documentation, validation, migration, recovery, and compatibility roles have been traced.
+A suspicious file or identity is not dead until its static imports, dynamic imports, manifest references, HTML references, event registration, runtime messaging, persistence roles, migration paths, validation surfaces, recovery paths, and compatibility obligations have been traced.
 
-## Protected contracts
+When additional defects are found, fix them only if they block the authorized objective and remain inside scope. Otherwise report them separately.
 
-The authoritative register is `docs/architecture/PROTECTED-IDENTITIES.md`.
+---
 
-At minimum, preserve:
+## 6. Protected contracts and identities
+
+The authoritative register is:
+
+- `docs/architecture/PROTECTED-IDENTITIES.md`
+
+At minimum, preserve unless the current task explicitly authorizes a compatible migration:
 
 - physical IndexedDB name `chrome-flow-session-db`;
 - logical canonical identity `constellation-session-db`;
@@ -127,27 +167,68 @@ At minimum, preserve:
 - import, export, recovery, and rollback evidence;
 - historical validation documents.
 
-Do not globally rename `chromeFlow*` identities. Do not rename a published schema in place. Do not change the physical database name as housekeeping.
+Do not globally rename `chromeFlow*` identities.
 
-## Safety and privacy
+Do not rename a published schema in place.
+
+Do not change the physical database name as housekeeping.
+
+Do not delete compatibility readers, migration paths, rollback paths, or historical validation artifacts until reader/writer coverage and migration obligations are proven complete and removal is explicitly authorized.
+
+---
+
+## 7. Browser, persistence, privacy, and live-data safety
 
 Constellation handles sensitive local browsing context, including URLs, titles, aliases, notes, journal entries, timelines, diagnostic evidence, and exported packets.
 
-Do not:
+Do not, without explicit authorization:
 
-- add network access, telemetry, external services, host permissions, content scripts, or secret handling without explicit authorization;
+- add network access, telemetry, analytics, external services, host permissions, content scripts, or secret handling;
 - send repository, browser, workspace, or user data to external services;
-- load or operate the live extension unless explicitly authorized;
-- mutate live Chrome storage, IndexedDB, tabs, groups, or windows unless explicitly authorized;
-- run import, migration, resume, archive, recovery, rollback, production-save, or projection actions against live data unless explicitly authorized.
+- load or operate the live extension;
+- mutate live Chrome storage, IndexedDB, tabs, groups, or windows;
+- execute import, migration, resume, archive, recovery, rollback, production-save, or projection actions against live data;
+- use real user data as a test fixture;
+- bypass extension permissions or browser safety controls.
+
+Use disposable fixtures, synthetic data, mocks, and isolated test surfaces for automated validation.
 
 Trace untrusted input to a sensitive sink before reporting a security vulnerability. A risky API name alone is not proof of exploitability.
 
-## Validation
+Live extension validation remains Operator-controlled unless the current task explicitly authorizes it.
 
-Follow `docs/development/VALIDATION-PROTOCOL.md`.
+---
 
-Use only commands whose effects are understood. When uncertain whether a command writes files, caches, snapshots, browser state, storage, or generated output, do not run it. Report the limitation.
+## 8. Validation
+
+Follow:
+
+- `docs/development/VALIDATION-PROTOCOL.md`
+- `docs/development/DEFINITION-OF-DONE.md`
+
+Use only commands whose side effects are understood.
+
+When uncertain whether a command writes files, caches, snapshots, browser state, durable storage, generated output, or lockfiles, stop and report the limitation before running it.
+
+Run the task-specific checks named in the current contract.
+
+Add or update tests when behavior changes.
+
+Validation should cover the meaningful contract, including relevant:
+
+- success;
+- invalid or malformed input;
+- denied preconditions;
+- stale authority or revision;
+- retries;
+- duplicate requests;
+- replay and idempotency;
+- ordering and exclusivity;
+- partial failure;
+- interruption and cleanup;
+- recovery;
+- compatibility;
+- browser-derived identifier revalidation.
 
 Every task must end with:
 
@@ -158,40 +239,61 @@ git diff --stat
 git diff --name-status
 ```
 
-Run the task-specific automated checks named in the prompt. Do not invent a passing result. Do not conceal skipped checks.
+Also report the final branch and `HEAD`.
 
-Live extension validation remains Operator-controlled unless a prompt explicitly authorizes it.
+Do not invent a passing result, conceal skipped checks, or label an unrun validation as passed.
 
-## Definition of done
+Separate focused tests, full-suite tests, build checks, static checks, CI, manual validation, and live extension validation.
 
-Follow `docs/development/DEFINITION-OF-DONE.md`.
+---
 
-Completion requires more than code generation. The final report must identify:
+## 9. Completion standard
 
-- files created, modified, deleted, or intentionally untouched;
+Completion requires more than code generation.
+
+The final report must identify:
+
+- outcome;
+- starting repository, branch, `HEAD`, upstream status, and dirty state;
+- files created, modified, deleted, and intentionally untouched;
 - production behavior changed or preserved;
-- commands run;
-- tests and outcomes;
+- architecture and protected identities checked;
+- exact commands run and results;
+- tests, counts, warnings, and failures;
 - skipped validation and why;
-- protected identities checked;
-- architectural choices and alternatives;
+- final diff and Git state;
+- important implementation decisions and rejected alternatives;
 - known risks and unproven assumptions;
-- rollback path;
-- any deviation from the authorized scope.
+- rollback or recovery path;
+- any deviation from authorized scope;
+- ordered Operator validation steps when live validation is required.
 
-Do not commit, push, open a pull request, or merge unless the task explicitly authorizes those actions.
+Do not commit, push, open a pull request, merge, release, or clean up unless the current task explicitly authorizes the exact action.
 
-## Stop conditions
+---
+
+## 10. Constellation-specific stop conditions
 
 Stop and request Byte–Nolan review when:
 
-- the approved architecture is ambiguous;
-- two protected contracts appear to conflict;
-- a safe solution requires a production behavior change outside scope;
+- the approved architecture or task boundary is ambiguous;
+- two authoritative contracts appear to conflict;
+- a safe solution requires production behavior outside scope;
 - a migration or persisted identity appears removable but reader/writer coverage is incomplete;
-- a test requires live browser or durable-state mutation not authorized by the prompt;
-- the repository state changes unexpectedly;
-- the task would benefit from broad cleanup rather than the bounded objective;
-- a failure could strand data or weaken rollback without an approved recovery plan.
+- a compatibility mechanism appears obsolete but its persistence, recovery, or rollback role is not proven;
+- a test requires unauthorized live-browser or durable-state mutation;
+- repository state changes unexpectedly;
+- a failure could strand data, duplicate authority, or weaken rollback without an approved recovery plan;
+- the task would benefit primarily from broad cleanup rather than the bounded objective;
+- required evidence cannot be produced honestly.
 
 Do not hide uncertainty by making a plausible architectural decision on behalf of the Operator.
+
+A stop report must state:
+
+- what was inspected;
+- what was discovered;
+- the exact contract, identity, or state boundary involved;
+- why proceeding would be unsafe or invalid;
+- the smallest decision or authority needed;
+- any safe partial work completed.
