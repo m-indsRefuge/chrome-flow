@@ -3,7 +3,7 @@ import {
   listRecentResumableWorkspaceMemoryRecords
 } from "../core/workspace-memory-store.js";
 
-import { hydrateWorkspaceMemoryRecordToRuntime } from "../core/workspace-hydration-engine.js";
+import { resumeWorkspaceMemoryRecordSafely } from "../core/workspace-resume-transaction-engine.js";
 
 import { registerDeveloperSurface } from "./developer-mode.js";
 import {
@@ -354,7 +354,7 @@ async function resumeSelectedWorkspaceFromLibrary() {
     }
 
     setLibraryActionStatus("Resuming workspace. Chrome Flow is reopening tabs and recreating groups...");
-    const result = await hydrateWorkspaceMemoryRecordToRuntime(record, { source: "workspace_library_resume_button" });
+    const result = await resumeWorkspaceMemoryRecordSafely(record, { source: "workspace_library_resume_button_fallback" });
 
     setLibraryActionStatus(
       "Workspace resumed: " + result.hydratedWorkspace.name + ". Reopened " + result.restoreResult.openedTabs.length + " tab(s), recreated " + result.groupResult.recreatedGroupCount + " group(s), target: " + result.restoreTargetMode + "."
@@ -524,8 +524,6 @@ function rewriteSummaryText() {
   if (!summary) return;
 
   summary.textContent = summary.textContent
-    .replaceAll("Active DB records", "Active records")
-    .replaceAll("Active DB workspace", "Active saved workspace")
     .replaceAll("Session DB", "saved");
 }
 
@@ -546,7 +544,6 @@ function rewriteWorkspaceOptionLabels() {
 
   for (const option of Array.from(select.options)) {
     option.textContent = option.textContent
-      .replaceAll(" [active DB]", " [active saved]")
       .replaceAll("Session DB", "saved");
   }
 }

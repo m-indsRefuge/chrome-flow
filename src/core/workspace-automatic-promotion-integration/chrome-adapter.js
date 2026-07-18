@@ -6,7 +6,7 @@ import { resolveAssignmentByWorkspace, validateAssignmentRegistry } from "../run
 import { LOCK_NAMES } from "../runtime-contract/constants.js";
 import { createOperationLedger } from "../runtime-contract/ledger.js";
 import { normalizeWorkspaceRevision } from "../runtime-contract/revision.js";
-import { nonEmptyString } from "../runtime-contract/value-utils.js";
+import { nonEmptyString, validDateTime } from "../runtime-contract/value-utils.js";
 import {
   RUNTIME_SESSION_AUTHORITY_KEY,
   rootsEqual,
@@ -212,6 +212,8 @@ export function createAutomaticPromotionChromeAdapters(chromeApi, dependencyInpu
         if (eligibleIds.some((tabId) => browserTabById.get(tabId)?.windowId !== request.dedicatedWindowId)) {
           return placementWriteResult("failed", workspaceRead.revision, "workspace_tabs_not_verified_in_target");
         }
+        const timelineUpdate = prepareTimelineEvidence(workspace, request);
+        if (!timelineUpdate.valid) return placementWriteResult("conflict", workspaceRead.revision, timelineUpdate.error);
 
         const next = {
           ...workspace,
@@ -232,6 +234,7 @@ export function createAutomaticPromotionChromeAdapters(chromeApi, dependencyInpu
             };
           })
         };
+        if (timelineUpdate.timeline !== null) next.timeline = timelineUpdate.timeline;
         const nextSnapshot = snapshotSerializable(next);
         if (!nextSnapshot.ok) return placementWriteResult("failed", workspaceRead.revision, "workspace_placement_not_serializable");
 
@@ -618,7 +621,41 @@ function validPlacementWriteRequest(value) {
     value.placementMode === "dedicated_window" &&
     Number.isSafeInteger(value.dedicatedWindowId) && value.dedicatedWindowId >= 0 &&
     value.moveResult && typeof value.moveResult === "object" &&
-    Array.isArray(value.moveResult.movedTabIds) && Array.isArray(value.moveResult.alreadyInTargetTabIds);
+    Array.isArray(value.moveResult.movedTabIds) && Array.isArray(value.moveResult.alreadyInTargetTabIds) &&
+    (!Object.hasOwn(value, "timelineEvent") || validManualPlacementTimelineEvent(value.timelineEvent, value));
+}
+
+function prepareTimelineEvidence(workspace, request) {
+  if (!Object.hasOwn(request, "timelineEvent")) return { valid: true, timeline: null, error: "" };
+  if (!Array.isArray(workspace.timeline)) return { valid: false, timeline: null, error: "workspace_timeline_state_invalid" };
+  const matches = workspace.timeline.filter((event) => event?.eventId === request.timelineEvent.eventId);
+  if (matches.length > 1) return { valid: false, timeline: null, error: "manual_placement_timeline_evidence_conflict" };
+  if (matches.length === 1) {
+    return stableStringify(matches[0]) === stableStringify(request.timelineEvent)
+      ? { valid: true, timeline: [...workspace.timeline], error: "" }
+      : { valid: false, timeline: null, error: "manual_placement_timeline_evidence_conflict" };
+  }
+  return { valid: true, timeline: [...workspace.timeline, request.timelineEvent], error: "" };
+}
+
+function validManualPlacementTimelineEvent(value, request) {
+  const fields = [
+    "eventId", "type", "message", "createdAt", "evidenceOwner", "manualPlacementOperationId",
+    "moveOperationId", "transferOperationId", "workspaceId", "sourceContextId", "sourceWindowId",
+    "targetWindowId", "currentRuntimeAssignmentId", "currentAssignmentEpoch", "browserMutationVerified",
+    "assignmentVerified", "resolutionMode", "newWindowCreationMode"
+  ];
+  return value && typeof value === "object" && !Array.isArray(value) &&
+    stableStringify(Object.keys(value).sort()) === stableStringify([...fields].sort()) &&
+    nonEmptyString(value.manualPlacementOperationId) && value.eventId === value.manualPlacementOperationId + ":manual-placement-committed" &&
+    value.type === "workspace_tabs_moved_to_new_window" && nonEmptyString(value.message) && validDateTime(value.createdAt) &&
+    value.evidenceOwner === "service_worker_manual_placement_transaction" && nonEmptyString(value.moveOperationId) &&
+    nonEmptyString(value.transferOperationId) && value.workspaceId === request.workspaceId && nonEmptyString(value.sourceContextId) &&
+    Number.isSafeInteger(value.sourceWindowId) && value.sourceWindowId >= 0 && Number.isSafeInteger(value.targetWindowId) &&
+    value.targetWindowId === request.dedicatedWindowId && value.targetWindowId !== value.sourceWindowId && nonEmptyString(value.currentRuntimeAssignmentId) &&
+    Number.isSafeInteger(value.currentAssignmentEpoch) && value.currentAssignmentEpoch > 0 && value.browserMutationVerified === true &&
+    value.assignmentVerified === true && value.resolutionMode === "stable_one_to_one" &&
+    value.newWindowCreationMode === "manual_placement_transaction_v0.1";
 }
 
 function validatePersistedPlacementForWrite(workspace, targetWindowId) {

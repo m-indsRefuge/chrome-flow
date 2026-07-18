@@ -90,6 +90,27 @@ button {
   min-height: 18px;
 }
 
+.workspace-promotion-notice {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid #9fc5d8;
+  border-radius: 6px;
+  background: #eef8fc;
+  color: #183b4a;
+  line-height: 1.4;
+}
+
+.historical-validation-banner {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 10px;
+  padding: 10px 12px;
+  border-left: 4px solid #8a6d1d;
+  background: #fff8df;
+  color: #54430f;
+  font-size: 12px;
+}
+
 .workspace-type-description {
   margin-bottom: 10px;
 }
@@ -513,4 +534,47 @@ button {
   border-color: #e4d59a;
   background: #fffdf3;
   color: #6a5314;
+}
+html[data-runtime-workspace-authority="read_only"] .status-message,
+html[data-runtime-workspace-authority="blocked"] .status-message {
+  overflow-wrap: anywhere;
+}
+
+.workspace-start-fresh-dialog {
+  width: min(520px, calc(100vw - 32px));
+  max-width: 100%;
+  border: 1px solid var(--border-color, #4a4a4a);
+  border-radius: 12px;
+  padding: 0;
+  background: var(--panel-background, #171717);
+  color: inherit;
+}
+
+.workspace-start-fresh-dialog::backdrop {
+  background: rgb(0 0 0 / 68%);
+}
+
+.workspace-start-fresh-dialog form {
+  display: grid;
+  gap: 12px;
+  padding: 18px;
+}
+
+.workspace-start-fresh-dialog h2,
+.workspace-start-fresh-dialog p {
+  margin: 0;
+}
+
+.workspace-start-fresh-safety-note {
+  font-size: 0.88rem;
+  opacity: 0.78;
+}
+
+.workspace-start-fresh-actions {
+  display: grid;
+  gap: 8px;
+}
+
+.workspace-promotion-notice[data-notice-kind="promotion_pending"] {
+  border-style: dashed;
 }

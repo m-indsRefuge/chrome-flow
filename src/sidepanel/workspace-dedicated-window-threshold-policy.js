@@ -1,16 +1,4 @@
-import "./workspace-dedicated-window-threshold-validation-suite.js";
-import "./workspace-dedicated-window-threshold-preflight.js";
-import "./workspace-dedicated-window-threshold-preflight-validation-suite.js";
-import "./workspace-dedicated-window-threshold-review.js";
-import "./workspace-dedicated-window-threshold-review-validation-suite.js";
-import "./workspace-dedicated-window-threshold-execution.js";
-import "./workspace-dedicated-window-threshold-execution-validation-suite.js";
-import "./workspace-control-internal-gate-consolidation-validation-suite.js";
-import "./workspace-control-policy-migration-validation-suite.js";
-import "./workspace-control-preflight-migration-validation-suite.js";
-import "./workspace-control-review-migration-validation-suite.js";
-import "./workspace-control-execution-gate-validation-suite.js";
-import { getWorkspace } from "../core/workspace-store.js";
+import { readActiveWorkspaceReadonly } from "../core/journal-append-coordination/readonly-workspace.js";
 import {
   DEDICATED_WINDOW_THRESHOLD,
   buildWorkspaceTabStatus,
@@ -36,8 +24,14 @@ function installDedicatedWindowThresholdPolicy() {
   section.id = "dedicatedWindowThresholdPolicySection";
   section.className = "dedicated-window-threshold-policy-section";
   section.innerHTML = `
-    <h2>Dedicated Window Threshold Policy</h2>
-    <p class="section-help">Classifies whether the active runtime workspace can remain in the current window or should move toward a dedicated/new-window projection. This policy surface does not execute browser actions.</p>
+    <h2>Historical Dedicated Window Threshold Validation</h2>
+    <div class="historical-validation-banner" role="note">
+      <strong>Historical validation artifact.</strong>
+      <span>This surface records the earlier policy-only threshold phase.</span>
+      <span>It is not current runtime authority.</span>
+      <span>Current automatic dedicated-window execution is owned by the verified automatic-promotion transaction.</span>
+    </div>
+    <p class="section-help">Preserves the earlier read-only threshold policy packet for evidence and regression comparison. This historical surface performs no workspace membership or automatic-promotion action.</p>
     <div id="dedicatedWindowThresholdPolicySummary" class="workspace-session-summary">Threshold policy surface loaded.</div>
     <div class="workspace-session-actions">
       <button id="prepareDedicatedWindowThresholdPolicyButton" type="button" class="secondary-button">Prepare Threshold Policy Packet</button>
@@ -52,7 +46,6 @@ function installDedicatedWindowThresholdPolicy() {
   document.getElementById("prepareDedicatedWindowThresholdPolicyButton")?.addEventListener("click", preparePolicyPacket);
   document.getElementById("copyDedicatedWindowThresholdPolicyPacketButton")?.addEventListener("click", copyPolicyPacket);
 
-  preparePolicyPacket();
 }
 
 async function preparePolicyPacket() {
@@ -61,7 +54,7 @@ async function preparePolicyPacket() {
     lastPolicyPacket = packet;
     setSummary(createSummary(packet));
     setOutput(packet);
-    setStatus("Threshold policy packet prepared: " + packet.policy.status + ".");
+    setStatus("Historical threshold policy packet prepared: " + packet.policy.status + ".");
   } catch (error) {
     setError("Could not prepare threshold policy packet.", error);
   }
@@ -73,14 +66,16 @@ async function copyPolicyPacket() {
     await navigator.clipboard.writeText(formatPacket(packet));
     setSummary(createSummary(packet));
     setOutput(packet);
-    setStatus("Threshold policy packet copied: " + packet.policy.status + ".");
+    setStatus("Historical threshold policy packet copied: " + packet.policy.status + ".");
   } catch (error) {
     setError("Could not copy threshold policy packet.", error);
   }
 }
 
 async function buildPolicyPacket() {
-  const workspace = await getWorkspace();
+  const read = await readActiveWorkspaceReadonly();
+  if (!read.ok) throw new Error("Historical threshold policy workspace read failed: " + read.reason);
+  const workspace = read.workspace;
   const tabs = Array.isArray(workspace?.tabs) ? workspace.tabs : [];
   return buildDedicatedWindowThresholdPolicyPacketForValidation({ workspace, tabs });
 }

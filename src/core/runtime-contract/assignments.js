@@ -66,7 +66,108 @@ export function transferRuntime(registry, details) {
   const epoch = next.nextEpoch++;
   const assignment = { runtimeAssignmentId: generatedId, workspaceId: details.workspaceId, windowId: details.windowId, assignmentEpoch: epoch, state: "active", createdAt: details.now, updatedAt: details.now, lastVerifiedAt: details.now, sourceContextId: details.sourceContextId };
   next.assignments.push(assignment);
-  return { status: "assigned", registry: next, assignment: clone(assignment) };
+  return { status: "assigned", registry: next, assignment: clone(assignment), releasedAssignment: clone(stored) };
+}
+export function replaceRuntimeAssignment(registry, details) {
+  const invalid = validateBindingDetails({
+    workspaceId: details?.candidateWorkspaceId,
+    windowId: details?.windowId,
+    sourceContextId: details?.sourceContextId,
+    now: details?.now
+  });
+  if (invalid || !nonEmptyString(details?.expectedWorkspaceId)) {
+    return { status: "rejected", reason: invalid || "invalid_expected_workspace_id", registry: clone(registry) };
+  }
+
+  const hasExpectedAssignment = details.expectedRuntimeAssignmentId !== null || details.expectedAssignmentEpoch !== null;
+  if (hasExpectedAssignment && (
+    !nonEmptyString(details.expectedRuntimeAssignmentId) ||
+    !Number.isInteger(details.expectedAssignmentEpoch) ||
+    details.expectedAssignmentEpoch <= 0 ||
+    !Number.isInteger(details.expectedWindowId) ||
+    details.expectedWindowId < 0
+  )) {
+    return { status: "rejected", reason: "invalid_expected_assignment", registry: clone(registry) };
+  }
+
+  const candidate = resolveAssignmentByWorkspace(registry, details.candidateWorkspaceId);
+  if (candidate) {
+    if (candidate.windowId !== details.windowId) {
+      return { status: "workspace_conflict", reason: "candidate_active_elsewhere", registry: clone(registry), assignment: candidate };
+    }
+    let generatedId = "";
+    try { generatedId = typeof details.id === "function" ? details.id() : ""; } catch { /* Invalid replay identity is rejected below. */ }
+    const releasedPrior = details.expectedRuntimeAssignmentId === null
+      ? null
+      : registry.assignments.find((item) => item.runtimeAssignmentId === details.expectedRuntimeAssignmentId) || null;
+    const candidateIsExactReplay = nonEmptyString(generatedId) &&
+      candidate.runtimeAssignmentId === generatedId &&
+      candidate.sourceContextId === details.sourceContextId &&
+      candidate.createdAt === details.now &&
+      candidate.updatedAt === details.now &&
+      candidate.lastVerifiedAt === details.now;
+    const priorIsExactReplay = details.expectedRuntimeAssignmentId === null
+      ? details.expectedAssignmentEpoch === null
+      : releasedPrior?.state === "released" &&
+        releasedPrior.workspaceId === details.expectedWorkspaceId &&
+        releasedPrior.windowId === details.expectedWindowId &&
+        releasedPrior.assignmentEpoch === details.expectedAssignmentEpoch &&
+        releasedPrior.updatedAt === details.now;
+    return candidateIsExactReplay && priorIsExactReplay
+      ? { status: "no_change", registry: clone(registry), assignment: candidate, releasedAssignment: clone(releasedPrior) }
+      : { status: "assignment_conflict", reason: "candidate_assignment_mismatch", registry: clone(registry), assignment: candidate };
+  }
+
+  const prior = resolveAssignmentByWorkspace(registry, details.expectedWorkspaceId);
+  const destination = resolveAssignmentByWindow(registry, details.windowId);
+  if (!hasExpectedAssignment) {
+    if (prior) return { status: "assignment_conflict", reason: "prior_assignment_evidence_required", registry: clone(registry), assignment: prior };
+    if (destination) return { status: "assignment_conflict", reason: "target_window_occupied", registry: clone(registry), assignment: destination };
+    return bind(registry, {
+      workspaceId: details.candidateWorkspaceId,
+      windowId: details.windowId,
+      sourceContextId: details.sourceContextId,
+      now: details.now,
+      id: details.id
+    });
+  }
+
+  if (
+    !prior ||
+    prior.runtimeAssignmentId !== details.expectedRuntimeAssignmentId ||
+    prior.assignmentEpoch !== details.expectedAssignmentEpoch ||
+    prior.windowId !== details.expectedWindowId
+  ) {
+    return { status: "assignment_conflict", reason: "stale_or_missing_prior_assignment", registry: clone(registry) };
+  }
+  if (destination && destination.runtimeAssignmentId !== prior.runtimeAssignmentId) {
+    return { status: "assignment_conflict", reason: "target_window_occupied", registry: clone(registry), assignment: destination || prior };
+  }
+
+  const generatedId = typeof details.id === "function" ? details.id() : "";
+  if (!nonEmptyString(generatedId)) return { status: "rejected", reason: "invalid_runtime_assignment_id", registry: clone(registry) };
+  if (registry.assignments.some((item) => item.runtimeAssignmentId === generatedId)) {
+    return { status: "assignment_conflict", reason: "duplicate_runtime_assignment_id", registry: clone(registry) };
+  }
+
+  const next = clone(registry);
+  const storedPrior = next.assignments.find((item) => item.runtimeAssignmentId === prior.runtimeAssignmentId);
+  storedPrior.state = "released";
+  storedPrior.updatedAt = details.now;
+  const epoch = next.nextEpoch++;
+  const assignment = {
+    runtimeAssignmentId: generatedId,
+    workspaceId: details.candidateWorkspaceId,
+    windowId: details.windowId,
+    assignmentEpoch: epoch,
+    state: "active",
+    createdAt: details.now,
+    updatedAt: details.now,
+    lastVerifiedAt: details.now,
+    sourceContextId: details.sourceContextId
+  };
+  next.assignments.push(assignment);
+  return { status: "assigned", registry: next, assignment: clone(assignment), releasedAssignment: clone(storedPrior) };
 }
 export function releaseRuntime(registry, details) {
   if (!nonEmptyString(details?.runtimeAssignmentId) || !Number.isInteger(details?.assignmentEpoch) || details.assignmentEpoch <= 0 || !validDateTime(details?.now)) return { status: "rejected", reason: "invalid_release_details", registry: clone(registry) };

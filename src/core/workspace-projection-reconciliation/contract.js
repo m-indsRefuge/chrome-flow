@@ -3,8 +3,11 @@ import { isPlainObject, nonEmptyString, serializableErrors, validDateTime } from
 
 export const RECONCILIATION_REQUEST_SCHEMA = SCHEMAS.projectionReconciliation;
 export const RECONCILIATION_RESULT_SCHEMA = SCHEMAS.projectionReconciliationResult;
+export const PROJECTION_RECONCILIATION_HOLD_KEY = "constellationWorkspaceProjectionReconciliationHold";
+export const PROJECTION_RECONCILIATION_HOLD_SCHEMA = "constellation-workspace-projection-reconciliation-hold-v0.1";
 const REQUEST_FIELDS = ["schema", "operationId", "contextId", "workspaceId", "requestedAt", "payload"];
 const RESULT_FIELDS = ["schema", "operationId", "workspaceId", "status", "reason", "previousRevision", "committedRevision", "workspaceCommitted", "workspaceVerified", "ledgerRecorded", "retrySafe", "phase", "authorityPhase", "recordsExamined", "recordsChanged", "transitionCount", "triggers", "diagnosticRecorded", "notificationSent", "warnings", "errors"];
+const HOLD_FIELDS = ["schema", "operationId", "workspaceIds", "sourceWindowId", "startedAt", "expiresAt"];
 const STATUSES = ["committed", "no_change", "workspace_conflict", "revision_conflict", "assignment_conflict", "rejected", "failed"];
 
 export function validateReconciliationRequest(request) {
@@ -17,6 +20,24 @@ export function validateReconciliationRequest(request) {
   if (!validDateTime(request.requestedAt)) errors.push("requestedAt must be a valid date-time string");
   validatePayload(request.payload, request, errors);
   return { valid: errors.length === 0, errors };
+}
+
+export function snapshotAndValidateProjectionReconciliationHold(input) {
+  let value;
+  try { value = structuredClone(input); }
+  catch { return { valid: false, errors: ["hold must be serializable"], value: null }; }
+  const errors = [];
+  if (!isPlainObject(value)) return { valid: false, errors: ["hold must be a plain object"], value: null };
+  errors.push(...serializableErrors(value, "hold"));
+  if (!hasExactFields(value, HOLD_FIELDS)) errors.push("hold fields must match the reconciliation hold contract");
+  if (value.schema !== PROJECTION_RECONCILIATION_HOLD_SCHEMA) errors.push("hold schema is invalid");
+  if (!nonEmptyString(value.operationId)) errors.push("hold operationId must be a non-empty string");
+  if (!uniqueNonEmptyStrings(value.workspaceIds)) errors.push("hold workspaceIds must be unique non-empty strings");
+  if (!(value.sourceWindowId === null || (Number.isSafeInteger(value.sourceWindowId) && value.sourceWindowId >= 0))) errors.push("hold sourceWindowId must be null or a non-negative safe integer");
+  if (!validDateTime(value.startedAt)) errors.push("hold startedAt must be a valid date-time string");
+  if (!validDateTime(value.expiresAt)) errors.push("hold expiresAt must be a valid date-time string");
+  if (validDateTime(value.startedAt) && validDateTime(value.expiresAt) && Date.parse(value.expiresAt) <= Date.parse(value.startedAt)) errors.push("hold expiresAt must be later than startedAt");
+  return { valid: errors.length === 0, errors, value: errors.length === 0 ? value : null };
 }
 
 function validatePayload(payload, request, errors) {
@@ -89,4 +110,5 @@ export function validateReconciliationResult(value, request) {
 
 function hasExactFields(value, fields) { if(!isPlainObject(value))return false;const actual=Object.keys(value).sort(),expected=[...fields].sort();return actual.length===expected.length&&actual.every((key,index)=>key===expected[index]); }
 function uniqueStrings(values) { return Array.isArray(values)&&values.every(nonEmptyString)&&new Set(values).size===values.length; }
+function uniqueNonEmptyStrings(values) { return uniqueStrings(values)&&values.length>0; }
 function uniqueSortedStrings(values) { return uniqueStrings(values)&&values.every((value,index)=>index===0||values[index-1].localeCompare(value)<0); }

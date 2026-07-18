@@ -642,24 +642,31 @@ test("every terminal status uses the exact stable result shape", async () => {
   for (const result of [completed, invalid, conflict, indeterminate, failed, noChange]) checkResultShape(result);
 });
 
-test("manual function delegates without direct create or move", async () => {
+test("manual function delegates through the manual-placement transaction without direct browser mutation", async () => {
   const source = await readFile(new URL("../../src/sidepanel/sidepanel.js", import.meta.url), "utf8");
   const body = source.slice(
     source.indexOf("async function moveWorkspaceTabsIntoNewWindow"),
     source.indexOf("async function arrangeWorkspaceTabsByRoleOrder")
   );
-  assert.match(body, /moveExistingWorkspaceTabs/);
+  assert.match(body, /runtimeWorkspaceAuthority\.bootstrapExisting/);
+  assert.match(body, /workspaceManualPlacementClient\.submit/);
+  assert.doesNotMatch(body, /moveExistingWorkspaceTabs|createExistingTabMoveChromeAdapters/);
   assert.doesNotMatch(body, /chrome\.windows\.create|chrome\.tabs\.move/);
 });
 
-test("manual move adapter does not swallow focus failure", async () => {
-  const source = await readFile(new URL("../../src/sidepanel/sidepanel.js", import.meta.url), "utf8");
-  const body = source.slice(
-    source.indexOf("function createExistingTabMoveChromeAdapters"),
-    source.indexOf("async function refreshJournalReadonly")
+test("manual transaction retains the shared move adapter whose focus failure cannot be swallowed", async () => {
+  const [manualAdapterSource, sharedAdapterSource] = await Promise.all([
+    readFile(new URL("../../src/core/workspace-manual-placement-transaction/chrome-adapter.js", import.meta.url), "utf8"),
+    readFile(new URL("../../src/core/workspace-automatic-promotion-integration/chrome-adapter.js", import.meta.url), "utf8")
+  ]);
+  const body = sharedAdapterSource.slice(
+    sharedAdapterSource.indexOf("export function createExistingTabMoveChromeAdapters"),
+    sharedAdapterSource.indexOf("export async function recordAutomaticPromotionDiagnostic")
   );
+  assert.match(manualAdapterSource, /createAutomaticPromotionChromeAdapters/);
   assert.doesNotMatch(body, /focusNormalWindow/);
-  assert.match(body, /chrome\.windows\.update/);
+  assert.match(body, /chromeApi\.windows\.update\(windowId, \{ state: "normal" \}\)/);
+  assert.match(body, /chromeApi\.windows\.update\(windowId, \{ focused: true \}\)/);
 });
 
 test("purity checker accepts engine", async () => {

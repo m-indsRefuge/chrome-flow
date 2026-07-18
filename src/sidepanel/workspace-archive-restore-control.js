@@ -1,9 +1,11 @@
-const WORKSPACE_KEY = "chromeFlowWorkspace";
+import { getSidePanelRuntimeWorkspaceAuthority } from "../core/runtime-workspace-activation/side-panel-runtime.js";
+
 const WORKSPACE_ARCHIVE_KEY = "chromeFlowWorkspaceArchive";
 const DIAGNOSTICS_KEY = "chromeFlowDiagnostics";
 const MAX_DIAGNOSTICS = 200;
 const DEDICATED_WINDOW_THRESHOLD_TAB_COUNT = 4;
 const WINDOW_SETTLE_DELAY_MS = 350;
+const runtimeWorkspaceAuthority = getSidePanelRuntimeWorkspaceAuthority();
 
 installWorkspaceArchiveRestoreControl();
 
@@ -23,6 +25,13 @@ async function restoreSelectedArchive() {
   if (!selectedArchive) {
     setWorkspaceSessionStatus("No archived workspace selected.");
     await recordDiagnostic("warn", "archive_restore_skipped", "No archived workspace was selected for restore.", {});
+    return;
+  }
+
+  const authorityState = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
+  if (authorityState.status !== "active") {
+    setWorkspaceSessionStatus("Archive restore is disabled until this panel has verified workspace authority: " + (authorityState.reason || "unknown_reason") + ".");
+    await recordDiagnostic("warn", "archive_restore_authority_blocked", "Archive restore was blocked before browser mutation because runtime workspace authority was not verified.", { archiveId: selectedArchive.archiveId, reason: authorityState.reason || "runtime_workspace_activation_not_verified" });
     return;
   }
 
@@ -56,7 +65,17 @@ async function restoreSelectedArchive() {
     const focusRequested = await refocusRestoredWindow(restoreResult.windowId, restoreResult.openedTabs[0]?.tabId || null);
     const restoredWorkspace = buildRestoredWorkspace(archivedWorkspace, selectedArchive, restoreResult.openedTabs, groupResult, restoreTargetMode);
 
-    await chrome.storage.local.set({ [WORKSPACE_KEY]: restoredWorkspace });
+    const targetWindowId = Number.isInteger(restoreResult.windowId) ? restoreResult.windowId : authorityState.result.sourceWindowId;
+    const replacementState = await runtimeWorkspaceAuthority.replaceActive(restoredWorkspace, targetWindowId);
+    const replacementVerified = ["active", "read_only"].includes(replacementState.status) &&
+      ["committed", "no_change", "replayed"].includes(replacementState.result?.status) &&
+      replacementState.result?.activeWorkspaceId === restoredWorkspace.workspaceId &&
+      replacementState.result?.targetWindowId === targetWindowId &&
+      replacementState.result?.workspaceVerified === true &&
+      replacementState.result?.assignmentVerified === true;
+    if (!replacementVerified) {
+      throw new Error("Archive restore runtime replacement or assignment was not verified: " + (replacementState.reason || "unknown_reason"));
+    }
     await recordDiagnostic("info", "archive_restored", "Archived workspace restored as active workspace.", {
       archiveId: selectedArchive.archiveId,
       archiveName: selectedArchive.archiveName,
@@ -72,7 +91,8 @@ async function restoreSelectedArchive() {
       recreatedGroupCount: groupResult.recreatedGroupCount,
       skippedGroupCount: groupResult.skippedGroupCount,
       focusRequested,
-      archiveRecordKept: true
+      archiveRecordKept: true,
+      activation: replacementState.result
     });
 
     setWorkspaceSessionStatus("Restored archive: " + selectedArchive.archiveName + ". Reopened " + restoreResult.openedTabs.length + " tab(s) and recreated " + groupResult.recreatedGroupCount + " group(s) " + buildRestoreTargetMessage(restoreTargetMode) + ".");

@@ -7,7 +7,10 @@ import { JOURNAL_APPEND_REQUEST_SCHEMA, response as journalResponse } from "../c
 import { coordinateContextRegistration, coordinateWindowCloseCleanup } from "../core/runtime-session-authority/coordinator.js";
 import { createChromeRuntimeSessionAuthorityAdapters } from "../core/runtime-session-authority/chrome-adapter.js";
 import { createContextResultFromRequest, isContextRegisterMessage, validateContextRegisterRequest, validateSidePanelSender } from "../core/runtime-session-authority/contract.js";
+import { handleRuntimeWorkspaceActivationMessage, isRuntimeWorkspaceActivationMessage } from "../core/runtime-workspace-activation/service-worker-handler.js";
+import { handleWorkspaceManualPlacementMessage, isWorkspaceManualPlacementMessage } from "../core/workspace-manual-placement-transaction/service-worker-handler.js";
 import { handleAutomaticPromotionMessage, isAutomaticPromotionMessage } from "../core/workspace-automatic-promotion-integration/service-worker-handler.js";
+import { classifyWorkspaceMembershipMessage, handleWorkspaceMembershipMessage } from "../core/workspace-membership-mutation/service-worker-handler.js";
 
 chrome.runtime.onInstalled.addListener(() => {
   console.log(CONSTELLATION_PRODUCT_NAME + " installed.");
@@ -86,9 +89,36 @@ chrome.tabs.onReplaced.addListener((addedTabId, removedTabId) => {
 });
 
 chrome.windows.onRemoved.addListener((windowId) => {
-  scheduleWorkspaceProjectionReconciliation("window_removed", { windowId });
-  coordinateWindowCloseCleanup(windowId, createChromeRuntimeSessionAuthorityAdapters(chrome)).catch(() => undefined);
+  void cleanupRemovedWindowAuthorityThenReconcile(windowId);
 });
+
+async function cleanupRemovedWindowAuthorityThenReconcile(windowId) {
+  let cleanupResult;
+
+  try {
+    cleanupResult = await coordinateWindowCloseCleanup(
+      windowId,
+      createChromeRuntimeSessionAuthorityAdapters(chrome)
+    );
+  } catch (error) {
+    cleanupResult = {
+      status: "failed",
+      reason: "window_authority_cleanup_failed",
+      authorityCommitted: false,
+      authorityVerified: false,
+      error: String(error?.message || error || "unknown_error")
+    };
+  }
+
+  scheduleWorkspaceProjectionReconciliation("window_removed", {
+    windowId,
+    authorityCleanupStatus: cleanupResult?.status || "failed",
+    authorityCleanupVerified: cleanupResult?.authorityVerified === true,
+    authorityCleanupReason: cleanupResult?.reason || ""
+  });
+
+  return cleanupResult;
+}
 
 if (chrome.tabGroups?.onCreated) {
   chrome.tabGroups.onCreated.addListener((group) => {
@@ -119,6 +149,29 @@ if (chrome.tabGroups?.onRemoved) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const sidePanelUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
+  if (isWorkspaceManualPlacementMessage(message)) {
+    return handleWorkspaceManualPlacementMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl
+    });
+  }
+  if (isRuntimeWorkspaceActivationMessage(message)) {
+    return handleRuntimeWorkspaceActivationMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl
+    });
+  }
+  const membershipClassification = classifyWorkspaceMembershipMessage(message);
+  if (membershipClassification.isMembership) {
+    return handleWorkspaceMembershipMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl,
+      membershipClassification
+    });
+  }
   if (isAutomaticPromotionMessage(message)) {
     return handleAutomaticPromotionMessage(message, sender, sendResponse, {
       chromeApi: chrome,

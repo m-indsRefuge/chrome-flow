@@ -370,6 +370,20 @@ test("workspace placement preserves unrelated and user-authored fields", async (
   assert.equal(fixture.workspace.workspaceRevision, 6);
 });
 
+test("workspace placement atomically appends exact service-worker manual-placement timeline evidence", async () => {
+  const fixture = environment({ allTabsInTarget: true });
+  const adapters = fixture.adapters();
+  await adapters.readPromotionState({ workspaceId: "workspace-1" });
+  const timelineEvent = manualPlacementTimelineEvent();
+  const output = await adapters.runExclusiveOperation(() => adapters.writeWorkspacePlacement(placementInput({ timelineEvent })));
+  assert.equal(output.status, "written");
+  assert.equal(fixture.counts.writeWorkspace, 1);
+  assert.equal(fixture.workspace.workspaceRevision, 6);
+  assert.equal(fixture.workspace.timeline.filter((event) => event.eventId === timelineEvent.eventId).length, 1);
+  assert.deepEqual(fixture.workspace.timeline.at(-1), timelineEvent);
+  assert.deepEqual(fixture.canonicalWorkspace, fixture.legacyWorkspace);
+});
+
 test("canonical and legacy workspace peers remain compatible", async () => {
   const fixture = environment({ allTabsInTarget: true });
   const adapters = fixture.adapters();
@@ -508,10 +522,11 @@ test("diagnostic failure cannot change a verified result", async () => {
   assert.equal(result.workspacePlacementVerified, true);
 });
 
-test("existing manual move path remains present and uses the shared move engine", async () => {
+test("existing manual move path remains present and uses the manual-placement transaction", async () => {
   const source = await readFile(new URL("../../src/sidepanel/sidepanel.js", import.meta.url), "utf8");
   assert.match(source, /async function moveWorkspaceTabsIntoNewWindow\(\)/);
-  assert.match(source, /moveExistingWorkspaceTabs\(request, createExistingTabMoveChromeAdapters\(\)\)/);
+  assert.match(source, /workspaceManualPlacementClient\.submit/);
+  assert.doesNotMatch(source, /moveExistingWorkspaceTabs\(request, createExistingTabMoveChromeAdapters\(\)\)/);
   assert.match(source, /moveWorkspaceTabsToNewWindowButton/);
 });
 
@@ -649,6 +664,29 @@ function placementInput(patch = {}) {
       alreadyInTargetTabIds: []
     },
     ...patch
+  };
+}
+
+function manualPlacementTimelineEvent() {
+  return {
+    eventId: "manual-op:manual-placement-committed",
+    type: "workspace_tabs_moved_to_new_window",
+    message: "Moved workspace tabs into dedicated-window placement with verified browser, assignment, compatible-runtime, and transaction-owned timeline evidence.",
+    createdAt: NOW,
+    evidenceOwner: "service_worker_manual_placement_transaction",
+    manualPlacementOperationId: "manual-op",
+    moveOperationId: "manual-move-op",
+    transferOperationId: "manual-transfer-op",
+    workspaceId: "workspace-1",
+    sourceContextId: "context-1",
+    sourceWindowId: 10,
+    targetWindowId: 20,
+    currentRuntimeAssignmentId: "assignment-2",
+    currentAssignmentEpoch: 2,
+    browserMutationVerified: true,
+    assignmentVerified: true,
+    resolutionMode: "stable_one_to_one",
+    newWindowCreationMode: "manual_placement_transaction_v0.1"
   };
 }
 
