@@ -121,10 +121,16 @@ async function initializeSidePanel() {
   renderAdvancedTabControls();
   setAuthoritySensitiveControlsDisabled(true);
   attachEventHandlers();
-  await renderWorkspace();
   const activationState = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
   applyRuntimeWorkspaceAuthorityState(activationState);
-  if (activationState.status === "active" && await migrateWorkspaceTabIds()) await renderWorkspace();
+  if (activationState.status === "active") {
+    await renderWorkspace(activationState.result?.workspace);
+    if (await migrateWorkspaceTabIds()) {
+      const refreshedState = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
+      applyRuntimeWorkspaceAuthorityState(refreshedState);
+      if (refreshedState.status === "active") await renderWorkspace(refreshedState.result?.workspace);
+    }
+  }
 }
 
 async function requireRuntimeWorkspaceAuthority(workspace = null) {
@@ -138,6 +144,7 @@ function applyRuntimeWorkspaceAuthorityState(state) {
   document.documentElement.dataset.runtimeWorkspaceAuthority = state?.status || "blocked";
   setAuthoritySensitiveControlsDisabled(runtimeWorkspaceReadOnly);
   if (state?.status === "read_only") setIntakeStatus("This workspace is active in another Chrome window. This panel is read-only; open the panel in the assigned window to make changes.");
+  else if (state?.status === "unbound") setIntakeStatus("This Chrome window is not bound to a workspace. Workspace reads and authority-sensitive actions remain disabled.");
   else if (state?.status === "blocked") setIntakeStatus("Workspace authority is not verified. Authority-sensitive actions remain disabled: " + (state.reason || "unknown_reason") + ".");
 }
 
@@ -149,7 +156,6 @@ function installRuntimeWorkspaceAuthorityRefreshListener() {
       areaName !== "session"
       || !changes
       || !Object.hasOwn(changes, RUNTIME_SESSION_AUTHORITY_KEY)
-      || !runtimeWorkspaceReadOnly
     ) return;
 
     queueRuntimeWorkspaceAuthorityRefresh();
@@ -165,7 +171,7 @@ function queueRuntimeWorkspaceAuthorityRefresh() {
     try {
       const state = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
       applyRuntimeWorkspaceAuthorityState(state);
-      if (["active", "read_only"].includes(state.status)) await renderWorkspace();
+      if (state.status === "active") await renderWorkspace();
     } catch (_error) {
       applyRuntimeWorkspaceAuthorityState({
         status: "blocked",
@@ -267,10 +273,13 @@ async function migrateWorkspaceTabIds() {
   return true;
 }
 
-async function renderWorkspace() {
-  const workspaceRead = await readActiveWorkspaceReadonly();
-  if (!workspaceRead.ok) { setIntakeStatus("Workspace display refresh failed: " + workspaceRead.reason + "."); return; }
-  const workspace = workspaceRead.workspace;
+async function renderWorkspace(explicitAssignedWorkspace = null) {
+  // Layer 2.3C readActiveWorkspaceReadonly remains available to old routes; assigned rendering intentionally does not call it.
+  const workspace = explicitAssignedWorkspace || runtimeWorkspaceAuthority.assignedWorkspace;
+  if (!workspace || typeof workspace !== "object" || Array.isArray(workspace) || !Array.isArray(workspace.tabs)) {
+    setIntakeStatus("Workspace display is unavailable until this panel has exact verified assigned scoped state.");
+    return;
+  }
   if (workspaceNameInput) workspaceNameInput.value = workspace.name || "";
   if (workspaceAimInput) workspaceAimInput.value = workspace.aim || "";
   if (workspaceTypeSelect) workspaceTypeSelect.value = workspace.workspaceType || DEFAULT_WORKSPACE_TYPE;

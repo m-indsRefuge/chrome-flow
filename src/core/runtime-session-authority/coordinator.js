@@ -6,7 +6,7 @@ import { createContextResultFromRequest, createSessionAuthority, registerContext
 export async function coordinateContextRegistration(request, senderEvidence, adapters) {
   const validation = validateContextRegisterRequest(request);
   if (!validation.valid) return createContextResultFromRequest(request, { status: "rejected", reason: "invalid_request", errors: validation.errors });
-  return coordinateWithDiagnostic(adapters, async () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
+  return coordinateWithDiagnostic(adapters, async () => withOptionalWindowLock(adapters, request.windowId, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
     const verifiedWindow = await verifyWindow(adapters, request.windowId);
     if (!verifiedWindow.valid) return createContextResultFromRequest(request, { status: "rejected", reason: "window_not_verified", retrySafe: true, errors: verifiedWindow.errors });
     const current = await adapters.readAuthority();
@@ -23,7 +23,7 @@ export async function coordinateContextRegistration(request, senderEvidence, ada
       return result;
     }
     return writeAndVerify(adapters, request, transitioned.root, transitioned, genesis ? "runtime_session_authority_genesis_registered" : "runtime_session_context_replaced_or_registered");
-  }), (error) => {
+  })), (error) => {
     const result = createContextResultFromRequest(request, { status: "failed", reason: "coordination_failure", retrySafe: true, errors: [String(error?.message || error)] });
     result.diagnosticAction = "runtime_session_authority_coordination_failed";
     return result;
@@ -31,51 +31,51 @@ export async function coordinateContextRegistration(request, senderEvidence, ada
 }
 
 export async function resolveAssignmentForWindow(windowId, adapters) {
-  return adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
+  return withOptionalWindowLock(adapters, windowId, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
     const loaded = await loadValid(adapters);
     if (!loaded.valid) return loaded.result;
     return { status: "resolved", assignment: resolveAssignmentByWindow(loaded.root.assignmentRegistry, windowId), authorityRevision: loaded.root.authorityRevision, runtimeSessionId: loaded.root.runtimeSessionId };
-  });
+  }));
 }
 
 export async function resolveAssignmentForWorkspace(workspaceId, adapters) {
-  return adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
+  return withOptionalWorkspaceBindingLock(adapters, workspaceId, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
     const loaded = await loadValid(adapters);
     if (!loaded.valid) return loaded.result;
     return { status: "resolved", assignment: resolveAssignmentByWorkspace(loaded.root.assignmentRegistry, workspaceId), authorityRevision: loaded.root.authorityRevision, runtimeSessionId: loaded.root.runtimeSessionId };
-  });
+  }));
 }
 
 export async function coordinateAssignmentCreate(details, adapters) {
-  return coordinateWithDiagnostic(adapters, () => adapters.withExclusiveOperationLock(LOCK_NAMES.exclusiveOperation, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
+  return coordinateWithDiagnostic(adapters, () => adapters.withExclusiveOperationLock(LOCK_NAMES.exclusiveOperation, () => withOptionalSessionMutationLocks(adapters, details, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
     const loaded = await loadValid(adapters); if (!loaded.valid) return loaded.result;
     const verifiedWindow = await verifyWindow(adapters, details.windowId); if (!verifiedWindow.valid) return internalResult(details, "rejected", "window_not_verified", loaded.root);
     const context = validateActiveContext(loaded.root, details.sourceContextId, details.windowId); if (!context.valid) return internalResult(details, "rejected", context.reason, loaded.root);
     const transitioned = assignRuntime(loaded.root.assignmentRegistry, { ...details, id: adapters.createId, now: adapters.now() });
     return commitAssignmentTransition(adapters, details, loaded.root, transitioned, "runtime_session_assignment_created");
-  })));
+  }))));
 }
 
 export async function coordinateAssignmentTransfer(details, adapters) {
-  return coordinateWithDiagnostic(adapters, () => adapters.withExclusiveOperationLock(LOCK_NAMES.exclusiveOperation, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
+  return coordinateWithDiagnostic(adapters, () => adapters.withExclusiveOperationLock(LOCK_NAMES.exclusiveOperation, () => withOptionalSessionMutationLocks(adapters, details, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
     const loaded = await loadValid(adapters); if (!loaded.valid) return loaded.result;
     const verifiedWindow = await verifyWindow(adapters, details.windowId); if (!verifiedWindow.valid) return internalResult(details, "rejected", "window_not_verified", loaded.root);
     const context = validateActiveContext(loaded.root, details.sourceContextId, details.windowId); if (!context.valid) return internalResult(details, "rejected", context.reason, loaded.root);
     const transitioned = transferRuntime(loaded.root.assignmentRegistry, { ...details, id: adapters.createId, now: adapters.now() });
     return commitAssignmentTransition(adapters, details, loaded.root, transitioned, "runtime_session_assignment_transferred");
-  })));
+  }))));
 }
 
 export async function coordinateAssignmentRelease(details, adapters) {
-  return coordinateWithDiagnostic(adapters, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
+  return coordinateWithDiagnostic(adapters, () => withOptionalSessionMutationLocks(adapters, details, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
     const loaded = await loadValid(adapters); if (!loaded.valid) return loaded.result;
     const transitioned = releaseRuntime(loaded.root.assignmentRegistry, { ...details, now: adapters.now() });
     return commitAssignmentTransition(adapters, details, loaded.root, transitioned, "runtime_session_assignment_released");
-  }));
+  })));
 }
 
 export async function coordinateWindowCloseCleanup(windowId, adapters) {
-  return coordinateWithDiagnostic(adapters, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
+  return coordinateWithDiagnostic(adapters, () => withOptionalWindowLock(adapters, windowId, () => adapters.withRuntimeStateLock(LOCK_NAMES.runtimeState, async () => {
     const root = await adapters.readAuthority();
     if (root === undefined) return { status: "no_change", reason: "authority_absent", authorityCommitted: false, authorityVerified: false };
     const validation = validateSessionAuthority(root);
@@ -97,7 +97,7 @@ export async function coordinateWindowCloseCleanup(windowId, adapters) {
       ? verification.fresh.assignmentRegistry.assignments.find((assignment) => assignment.runtimeAssignmentId === matchingAssignment.runtimeAssignmentId) || null
       : null;
     return { status: verification.verified ? committedStatus : "failed", reason: verification.reason, windowId, assignment: verifiedAssignment, authorityRevision: next.authorityRevision, runtimeSessionId: next.runtimeSessionId, authorityCommitted: verification.committed, authorityVerified: verification.verified, retrySafe: verification.retrySafe, diagnosticAction: verification.verified ? "runtime_session_window_authority_cleaned" : "runtime_session_authority_verification_failed" };
-  }));
+  })));
 }
 
 async function commitAssignmentTransition(adapters, details, root, transitioned, action) {
@@ -159,4 +159,20 @@ async function coordinateWithDiagnostic(adapters, operation, failureFactory) {
   }
   if (Object.hasOwn(result, "diagnosticAction")) { result = { ...result }; delete result.diagnosticAction; }
   return result;
+}
+
+function withOptionalSessionMutationLocks(adapters, details, callback) {
+  return withOptionalWindowLock(adapters, details?.windowId, () => withOptionalWorkspaceBindingLock(adapters, details?.workspaceId, callback));
+}
+
+function withOptionalWindowLock(adapters, windowId, callback) {
+  return typeof adapters.withWindowLock === "function" && Number.isSafeInteger(windowId) && windowId >= 0
+    ? adapters.withWindowLock(windowId, callback)
+    : callback();
+}
+
+function withOptionalWorkspaceBindingLock(adapters, workspaceId, callback) {
+  return typeof adapters.withWorkspaceBindingLock === "function" && typeof workspaceId === "string" && workspaceId.length > 0
+    ? adapters.withWorkspaceBindingLock(workspaceId, callback)
+    : callback();
 }

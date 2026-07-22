@@ -1,6 +1,6 @@
 import { readCompatibleStorageValue } from "../constellation-storage-compatibility.js";
 import { normalizeWorkspaceRevision } from "../runtime-contract/revision.js";
-import { createRuntimeSessionContextClient } from "../runtime-session-authority/client.js";
+import { getSidePanelAssignedWorkspaceAuthority, getSidePanelRuntimeSessionContextClient } from "../runtime-window-binding/side-panel-authority.js";
 import { createRuntimeWorkspaceActivationClient } from "./client.js";
 
 export const RUNTIME_WORKSPACE_COMMIT_EVENT = "constellation-runtime-workspace-commit-verified";
@@ -10,12 +10,8 @@ let singleton = null;
 export function getSidePanelRuntimeWorkspaceAuthority() {
   if (singleton) return singleton;
   singleton = createSidePanelRuntimeWorkspaceAuthority({
-    contextClient: createRuntimeSessionContextClient({
-      createId: () => crypto.randomUUID(),
-      now: () => new Date().toISOString(),
-      getCurrentWindow: () => chrome.windows.getCurrent(),
-      send: (request) => chrome.runtime.sendMessage(request)
-    }),
+    contextClient: getSidePanelRuntimeSessionContextClient(),
+    bindingAuthority: getSidePanelAssignedWorkspaceAuthority(),
     activationClient: createRuntimeWorkspaceActivationClient({
       createId: () => crypto.randomUUID(),
       now: () => new Date().toISOString(),
@@ -27,7 +23,7 @@ export function getSidePanelRuntimeWorkspaceAuthority() {
   return singleton;
 }
 
-export function createSidePanelRuntimeWorkspaceAuthority({ contextClient, activationClient, readCompatibleWorkspace, dispatchCommit = () => undefined }) {
+export function createSidePanelRuntimeWorkspaceAuthority({ contextClient, activationClient, readCompatibleWorkspace, bindingAuthority = null, dispatchCommit = () => undefined }) {
   let latestState = { status: "idle", reason: "", result: null };
   let inFlight = null;
   let lastReplacementInput = null;
@@ -40,6 +36,7 @@ export function createSidePanelRuntimeWorkspaceAuthority({ contextClient, activa
   }
 
   async function executeBootstrap(providedWorkspace) {
+    if (bindingAuthority) return acceptBindingState(await bindingAuthority.resolve());
     const context = await contextClient.register();
     if (!verifiedContext(context)) return update("blocked", context?.reason || "runtime_context_not_verified", null);
     const workspaceRead = providedWorkspace ? normalizeProvidedWorkspace(providedWorkspace) : normalizeCompatibleRead(await readCompatibleWorkspace());
@@ -141,6 +138,37 @@ export function createSidePanelRuntimeWorkspaceAuthority({ contextClient, activa
     return state;
   }
 
+  function acceptBindingState(state) {
+    const result = state?.result;
+    if (state?.status === "assigned" && state.authority && result?.authorityVerified === true && result?.workspaceVerified === true) {
+      return update("active", "", {
+        status: "no_change",
+        reason: "",
+        operation: "resolve_binding",
+        operationId: result.operationId,
+        sourceContextId: result.sourceContextId,
+        sourceWindowId: result.sourceWindowId,
+        expectedWorkspaceId: result.workspaceId,
+        expectedWorkspaceRevision: result.workspaceRevision,
+        activeWorkspaceId: result.workspaceId,
+        activeWorkspaceRevision: result.workspaceRevision,
+        targetWindowId: result.sourceWindowId,
+        currentRuntimeAssignmentId: result.runtimeAssignmentId,
+        currentAssignmentEpoch: result.assignmentEpoch,
+        runtimeSessionId: result.runtimeSessionId,
+        authorityRevisionAfter: result.authorityRevision,
+        workspaceVerified: true,
+        assignmentVerified: true,
+        readOnly: false,
+        workspace: structuredClone(result.workspace),
+        bindingResultSchema: result.schema
+      });
+    }
+    if (state?.status === "active_elsewhere") return update("read_only", result?.reason || "workspace_assigned_to_another_window", result || null);
+    if (state?.status === "unbound") return update("unbound", "", result || null);
+    return update("blocked", state?.reason || result?.reason || "window_binding_not_verified", result || null);
+  }
+
   function update(status, reason, result) {
     latestState = { status, reason, result: result ? structuredClone(result) : null };
     for (const listener of listeners) {
@@ -157,6 +185,8 @@ export function createSidePanelRuntimeWorkspaceAuthority({ contextClient, activa
     transferActive,
     get latestState() { return structuredClone(latestState); },
     get verifiedEvidence() { return latestState.status === "active" && latestState.result ? structuredClone(latestState.result) : null; },
+    get assignedAuthority() { return bindingAuthority?.assignedAuthority || null; },
+    get assignedWorkspace() { return bindingAuthority?.assignedAuthority?.workspace || null; },
     subscribe(listener) { if (typeof listener !== "function") throw new TypeError("activation listener is required"); listeners.add(listener); return () => listeners.delete(listener); }
   };
 }

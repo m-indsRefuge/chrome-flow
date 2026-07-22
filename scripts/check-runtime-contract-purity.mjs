@@ -229,6 +229,56 @@ export async function checkRuntimeWorkspaceActivationPurity(root = new URL("../s
   });
 }
 
+export async function checkRuntimeWorkspaceRecordPurity(root = new URL("../src/core/runtime-workspace-record/", import.meta.url)) {
+  return checkBoundedPureFamily({
+    root,
+    family: "runtime-workspace-record",
+    excluded: new Set(["chrome-adapter.js"]),
+    allowed: new Set(["contract.js"]),
+    external: new Set(["../runtime-contract/value-utils.js", "../runtime-contract/revision.js"])
+  });
+}
+
+export async function checkRuntimeWorkspaceOperationLedgerPurity(root = new URL("../src/core/runtime-workspace-operation-ledger/", import.meta.url)) {
+  return checkBoundedPureFamily({
+    root,
+    family: "runtime-workspace-operation-ledger",
+    excluded: new Set(["chrome-adapter.js"]),
+    allowed: new Set(["contract.js", "ledger.js", "recovery-discovery.js"]),
+    external: new Set([
+      "../runtime-contract/value-utils.js",
+      "../runtime-contract/ledger.js",
+      "../runtime-workspace-record/contract.js"
+    ])
+  });
+}
+
+export async function checkRuntimeScopedLocksPurity(root = new URL("../src/core/runtime-scoped-locks/", import.meta.url)) {
+  return checkBoundedPureFamily({
+    root,
+    family: "runtime-scoped-locks",
+    excluded: new Set(["chrome-adapter.js"]),
+    allowed: new Set(["contract.js", "ordering.js"]),
+    external: new Set(["../runtime-contract/constants.js", "../runtime-workspace-record/contract.js"])
+  });
+}
+
+export async function checkRuntimeWindowBindingPurity(root = new URL("../src/core/runtime-window-binding/", import.meta.url)) {
+  return checkBoundedPureFamily({
+    root,
+    family: "runtime-window-binding",
+    excluded: new Set(["chrome-adapter.js", "service-worker-handler.js", "side-panel-authority.js"]),
+    allowed: new Set(["contract.js", "coordinator.js", "client.js"]),
+    external: new Set([
+      "../runtime-contract/assignments.js",
+      "../runtime-contract/revision.js",
+      "../runtime-contract/value-utils.js",
+      "../runtime-session-authority/contract.js",
+      "../runtime-workspace-record/contract.js"
+    ])
+  });
+}
+
 export async function checkWorkspaceManualPlacementTransactionPurity(root = new URL("../src/core/workspace-manual-placement-transaction/", import.meta.url)) {
   return checkBoundedPureFamily({
     root,
@@ -327,6 +377,10 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
   const workspaceAutomaticPromotionTransactionCount = await checkWorkspaceAutomaticPromotionTransactionPurity();
   const workspaceMembershipMutationCount = await checkWorkspaceMembershipMutationPurity();
   const runtimeWorkspaceActivationCount = await checkRuntimeWorkspaceActivationPurity();
+  const runtimeWorkspaceRecordCount = await checkRuntimeWorkspaceRecordPurity();
+  const runtimeWorkspaceOperationLedgerCount = await checkRuntimeWorkspaceOperationLedgerPurity();
+  const runtimeScopedLocksCount = await checkRuntimeScopedLocksPurity();
+  const runtimeWindowBindingCount = await checkRuntimeWindowBindingPurity();
   const workspaceManualPlacementTransactionCount = await checkWorkspaceManualPlacementTransactionPurity();
-  console.log("Runtime contract purity valid: " + count + " runtime modules, " + reconciliationCount + " reconciliation modules, " + sessionAuthorityCount + " runtime session authority modules, " + workspaceResolutionCount + " workspace resolution modules, " + workspaceResolutionCoordinationCount + " workspace resolution coordination modules, " + workspaceCreationAssignmentTransactionCount + " workspace creation assignment transaction modules, " + workspaceExistingTabMoveEngineCount + " workspace existing-tab move engine modules, " + workspaceAutomaticPromotionTransactionCount + " workspace automatic promotion transaction modules, " + workspaceMembershipMutationCount + " workspace membership mutation modules, " + runtimeWorkspaceActivationCount + " runtime workspace activation modules, and " + workspaceManualPlacementTransactionCount + " workspace manual placement transaction modules.");
+  console.log("Runtime contract purity valid: " + count + " runtime modules, " + reconciliationCount + " reconciliation modules, " + sessionAuthorityCount + " runtime session authority modules, " + workspaceResolutionCount + " workspace resolution modules, " + workspaceResolutionCoordinationCount + " workspace resolution coordination modules, " + workspaceCreationAssignmentTransactionCount + " workspace creation assignment transaction modules, " + workspaceExistingTabMoveEngineCount + " workspace existing-tab move engine modules, " + workspaceAutomaticPromotionTransactionCount + " workspace automatic promotion transaction modules, " + workspaceMembershipMutationCount + " workspace membership mutation modules, " + runtimeWorkspaceActivationCount + " runtime workspace activation modules, " + runtimeWorkspaceRecordCount + " runtime workspace record modules, " + runtimeWorkspaceOperationLedgerCount + " runtime workspace operation ledger modules, " + runtimeScopedLocksCount + " runtime scoped lock modules, " + runtimeWindowBindingCount + " runtime window binding modules, and " + workspaceManualPlacementTransactionCount + " workspace manual placement transaction modules.");
 }

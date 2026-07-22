@@ -20,7 +20,22 @@ export function createRuntimeSessionContextClient({ createId, now, getCurrentWin
     if (result.authorityVerified) latestVerifiedResult = result;
     return result;
   }
-  return { get contextId() { return contextId; }, get pendingRequest() { return pendingRequest ? structuredClone(pendingRequest) : null; }, get latestVerifiedResult() { return latestVerifiedResult ? structuredClone(latestVerifiedResult) : null; }, register };
+  return {
+    get contextId() { return contextId; },
+    get pendingRequest() { return pendingRequest ? structuredClone(pendingRequest) : null; },
+    get latestVerifiedResult() { return latestVerifiedResult ? structuredClone(latestVerifiedResult) : null; },
+    get verifiedContextEvidence() {
+      return latestVerifiedResult?.authorityVerified === true && latestVerifiedResult.context
+        ? structuredClone({
+          runtimeSessionId: latestVerifiedResult.runtimeSessionId,
+          authorityRevision: latestVerifiedResult.authorityRevision,
+          contextId: latestVerifiedResult.context.contextId,
+          windowId: latestVerifiedResult.context.windowId
+        })
+        : null;
+    },
+    register
+  };
 }
 
 export function startRuntimeSessionContextRegistration(client, recordEvidence) {

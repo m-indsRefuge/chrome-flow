@@ -7,6 +7,7 @@ import { JOURNAL_APPEND_REQUEST_SCHEMA, response as journalResponse } from "../c
 import { coordinateContextRegistration, coordinateWindowCloseCleanup } from "../core/runtime-session-authority/coordinator.js";
 import { createChromeRuntimeSessionAuthorityAdapters } from "../core/runtime-session-authority/chrome-adapter.js";
 import { createContextResultFromRequest, isContextRegisterMessage, validateContextRegisterRequest, validateSidePanelSender } from "../core/runtime-session-authority/contract.js";
+import { handleRuntimeWindowBindingMessage, isRuntimeWindowBindingResolveMessage } from "../core/runtime-window-binding/service-worker-handler.js";
 import { handleRuntimeWorkspaceActivationMessage, isRuntimeWorkspaceActivationMessage } from "../core/runtime-workspace-activation/service-worker-handler.js";
 import { handleWorkspaceManualPlacementMessage, isWorkspaceManualPlacementMessage } from "../core/workspace-manual-placement-transaction/service-worker-handler.js";
 import { handleAutomaticPromotionMessage, isAutomaticPromotionMessage } from "../core/workspace-automatic-promotion-integration/service-worker-handler.js";
@@ -149,6 +150,13 @@ if (chrome.tabGroups?.onRemoved) {
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   const sidePanelUrl = chrome.runtime.getURL("src/sidepanel/sidepanel.html");
+  if (isRuntimeWindowBindingResolveMessage(message)) {
+    return handleRuntimeWindowBindingMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl
+    });
+  }
   if (isWorkspaceManualPlacementMessage(message)) {
     return handleWorkspaceManualPlacementMessage(message, sender, sendResponse, {
       chromeApi: chrome,
