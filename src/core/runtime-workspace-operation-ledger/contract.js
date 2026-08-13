@@ -19,7 +19,8 @@ export const WORKSPACE_OPERATION_COMMAND_SCHEMAS = Object.freeze({
   release: "constellation-runtime-workspace-release-command-v0.1",
   archive_and_release: "constellation-runtime-workspace-archive-release-command-v0.1",
   replacement: "constellation-runtime-workspace-replace-command-v0.1",
-  trusted_window_close: "constellation-runtime-window-close-lifecycle-command-v0.1"
+  trusted_window_close: "constellation-runtime-window-close-lifecycle-command-v0.1",
+  ordinary_mutation: "constellation-runtime-workspace-mutation-command-v0.1"
 });
 
 const LEDGER_FIELDS = Object.freeze(["schema", "workspaceId", "terminalRetentionLimit", "nextSequence", "entries"]);

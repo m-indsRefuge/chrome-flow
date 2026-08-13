@@ -3,12 +3,19 @@ import {
   saveWorkspace,
   addTimelineEvent
 } from "../core/workspace-store.js";
+import {
+  ASSIGNED_WORKSPACE_REFRESH_EVENT,
+  createAssignedWorkspaceRuntimeMutationGateway,
+  readAssignedWorkspaceRuntime
+} from "../core/workspace-runtime-store.js";
 import { createJournalAppendClient } from "../core/journal-append-coordination/client.js";
 import { readActiveWorkspaceReadonly } from "../core/journal-append-coordination/readonly-workspace.js";
 import { readCompatibleStorageValue, writeCompatibleStorageValue } from "../core/constellation-storage-compatibility.js";
 import { LOCK_NAMES } from "../core/runtime-contract/constants.js";
 import { normalizeWorkspaceRevision } from "../core/runtime-contract/revision.js";
 import { getSidePanelRuntimeWorkspaceAuthority } from "../core/runtime-workspace-activation/side-panel-runtime.js";
+import { getSidePanelAssignedWorkspaceAuthority } from "../core/runtime-window-binding/side-panel-authority.js";
+import { createRuntimeWorkspaceMutationClient } from "../core/runtime-workspace-mutation/client.js";
 import { RUNTIME_SESSION_AUTHORITY_KEY } from "../core/runtime-session-authority/contract.js";
 import { createWorkspaceManualPlacementClient } from "../core/workspace-manual-placement-transaction/client.js";
 import {
@@ -18,8 +25,11 @@ import {
   findExactBrowserMembership,
   planSelectedMembershipBatch
 } from "./workspace-membership-promotion-sequencer.js";
-import { runWithWorkspaceMetadataBarrier, runWithWorkspaceMetadataWriter } from "./workspace-metadata-autosave.js";
-import { saveWorkspaceDetailsAgainstLatest, updateWorkspaceTypeAgainstLatest } from "./workspace-metadata-barrier.js";
+import {
+  getAssignedWorkspaceMetadataMutationGateway,
+  runWithWorkspaceMetadataBarrier,
+  runWithWorkspaceMetadataWriter
+} from "./workspace-metadata-autosave.js";
 import { createWorkspacePromotionNoticeController } from "./workspace-promotion-notice.js";
 import { MOVE_REQUEST_SCHEMA } from "../core/workspace-existing-tab-move-engine/contract.js";
 
@@ -90,8 +100,18 @@ const runtimeAuthorityIndependentControlIds = new Set([
   "copyAutomaticPromotionEvidencePacketButton"
 ]);
 const runtimeAuthorityEnableWhenActiveControlIds = new Set(["addSelectedTabsButton", "addActiveTabButton", "openSearchTabButton", "moveWorkspaceTabsToNewWindowButton"]);
+const assignedWorkspaceAuthority = getSidePanelAssignedWorkspaceAuthority();
+const assignedOrdinaryMutationGateway = createAssignedWorkspaceRuntimeMutationGateway({
+  resolveAuthority: () => assignedWorkspaceAuthority.resolve(),
+  mutationClient: createRuntimeWorkspaceMutationClient({
+    createId: () => crypto.randomUUID(),
+    now: () => new Date().toISOString(),
+    send: (command) => chrome.runtime.sendMessage(command)
+  })
+});
 const journalAppendClient = createJournalAppendClient({ createId: () => crypto.randomUUID(), now: () => new Date().toISOString(), send: (request) => chrome.runtime.sendMessage(request), refresh: refreshJournalReadonly, clear: () => { if (journalEntryInput) journalEntryInput.value = ""; if (journalTagInput) journalTagInput.value = ""; }, status: (result) => { const success=["committed","replayed","no_change"].includes(result.status)&&result.workspaceVerified===true; setIntakeStatus(success ? "Journal entry saved and verified." : "Journal entry not saved or verified: " + (result.reason || result.status || "unknown_result")); } });
 const runtimeWorkspaceAuthority = getSidePanelRuntimeWorkspaceAuthority();
+const assignedWorkspaceMetadataMutationGateway = getAssignedWorkspaceMetadataMutationGateway();
 const workspaceManualPlacementClient = createWorkspaceManualPlacementClient({ createId: () => crypto.randomUUID(), now: () => new Date().toISOString(), send: (request) => chrome.runtime.sendMessage(request) });
 const workspaceMembershipPromotionSequencer = createWorkspaceMembershipPromotionSequencer({
   createId: () => crypto.randomUUID(),
@@ -107,6 +127,7 @@ const workspaceMembershipPromotionSequencer = createWorkspaceMembershipPromotion
   }
 });
 let runtimeWorkspaceReadOnly = true;
+let runtimeWorkspaceIdentityValidated = false;
 runtimeWorkspaceAuthority.subscribe(applyRuntimeWorkspaceAuthorityState);
 new MutationObserver(() => {
   if (runtimeWorkspaceReadOnly) setAuthoritySensitiveControlsDisabled(true);
@@ -114,6 +135,9 @@ new MutationObserver(() => {
 
 await initializeSidePanel();
 installRuntimeWorkspaceAuthorityRefreshListener();
+window.addEventListener(ASSIGNED_WORKSPACE_REFRESH_EVENT, () => {
+  void refreshAssignedWorkspaceAfterVerifiedMutation();
+});
 
 async function initializeSidePanel() {
   setAuthoritySensitiveControlsDisabled(true);
@@ -122,27 +146,37 @@ async function initializeSidePanel() {
   setAuthoritySensitiveControlsDisabled(true);
   attachEventHandlers();
   const activationState = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
-  applyRuntimeWorkspaceAuthorityState(activationState);
   if (activationState.status === "active") {
-    await renderWorkspace(activationState.result?.workspace);
-    if (await migrateWorkspaceTabIds()) {
-      const refreshedState = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
-      applyRuntimeWorkspaceAuthorityState(refreshedState);
-      if (refreshedState.status === "active") await renderWorkspace(refreshedState.result?.workspace);
-    }
+    const assignedRead = await migrateWorkspaceTabIds();
+    if (!assignedRead.ok) return;
+    runtimeWorkspaceIdentityValidated = true;
+    applyRuntimeWorkspaceAuthorityState(activationState);
+    await renderWorkspace(assignedRead.workspace);
+    return;
   }
+  applyRuntimeWorkspaceAuthorityState(activationState);
 }
 
 async function requireRuntimeWorkspaceAuthority(workspace = null) {
+  runtimeWorkspaceIdentityValidated = false;
   const activationState = await runtimeWorkspaceAuthority.bootstrapExisting({ workspace, force: true });
+  if (activationState.status !== "active") {
+    applyRuntimeWorkspaceAuthorityState(activationState);
+    return false;
+  }
+  const assignedRead = await migrateWorkspaceTabIds();
+  if (!assignedRead.ok) return false;
+  runtimeWorkspaceIdentityValidated = true;
   applyRuntimeWorkspaceAuthorityState(activationState);
-  return activationState.status === "active";
+  return true;
 }
 
 function applyRuntimeWorkspaceAuthorityState(state) {
-  runtimeWorkspaceReadOnly = state?.status !== "active";
-  document.documentElement.dataset.runtimeWorkspaceAuthority = state?.status || "blocked";
+  const active = state?.status === "active" && runtimeWorkspaceIdentityValidated;
+  runtimeWorkspaceReadOnly = !active;
+  document.documentElement.dataset.runtimeWorkspaceAuthority = active ? "active" : state?.status || "blocked";
   setAuthoritySensitiveControlsDisabled(runtimeWorkspaceReadOnly);
+  if (state?.status === "active" && !runtimeWorkspaceIdentityValidated) return;
   if (state?.status === "read_only") setIntakeStatus("This workspace is active in another Chrome window. This panel is read-only; open the panel in the assigned window to make changes.");
   else if (state?.status === "unbound") setIntakeStatus("This Chrome window is not bound to a workspace. Workspace reads and authority-sensitive actions remain disabled.");
   else if (state?.status === "blocked") setIntakeStatus("Workspace authority is not verified. Authority-sensitive actions remain disabled: " + (state.reason || "unknown_reason") + ".");
@@ -166,13 +200,22 @@ function queueRuntimeWorkspaceAuthorityRefresh() {
   if (runtimeWorkspaceAuthorityRefreshTimer !== null) return;
 
   runtimeWorkspaceAuthorityRefreshTimer = window.setTimeout(async () => {
-    runtimeWorkspaceAuthorityRefreshTimer = null;
+      runtimeWorkspaceAuthorityRefreshTimer = null;
 
-    try {
-      const state = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
-      applyRuntimeWorkspaceAuthorityState(state);
-      if (state.status === "active") await renderWorkspace();
-    } catch (_error) {
+      try {
+        runtimeWorkspaceIdentityValidated = false;
+        const state = await runtimeWorkspaceAuthority.bootstrapExisting({ force: true });
+        if (state.status === "active") {
+          const assignedRead = await migrateWorkspaceTabIds();
+          if (!assignedRead.ok) return;
+          runtimeWorkspaceIdentityValidated = true;
+          applyRuntimeWorkspaceAuthorityState(state);
+          // The direct validator has refreshed the shared assigned-authority snapshot.
+          await renderWorkspace();
+          return;
+        }
+        applyRuntimeWorkspaceAuthorityState(state);
+      } catch (_error) {
       applyRuntimeWorkspaceAuthorityState({
         status: "blocked",
         reason: "runtime_authority_change_refresh_failed",
@@ -256,7 +299,11 @@ function populateWorkspaceTypeSelect() {
   });
 }
 
-async function migrateWorkspaceTabIds() {
+async function migrateWorkspaceTabIds({ legacyCompatibilityRoute = false } = {}) {
+  if (!legacyCompatibilityRoute) return validateAssignedWorkspaceTabIdsForStartup();
+
+  // Retained only for an explicit legacy compatibility route. D3D-05 assigned
+  // startup always takes the no-write validator above.
   if (!await requireRuntimeWorkspaceAuthority()) return false;
   const workspace = await getWorkspace();
   let changed = false;
@@ -271,6 +318,21 @@ async function migrateWorkspaceTabIds() {
   workspace.updatedAt = new Date().toISOString();
   await saveWorkspace(workspace);
   return true;
+}
+
+async function validateAssignedWorkspaceTabIdsForStartup() {
+  const assignedRead = await assignedOrdinaryMutationGateway.resolveAssignedWorkspace();
+  if (assignedRead.ok) return assignedRead;
+  runtimeWorkspaceIdentityValidated = false;
+  document.documentElement.dataset.runtimeWorkspaceAuthority = "blocked";
+  document.documentElement.dataset.runtimeWorkspaceAuthorityReason = assignedRead.reason || "assigned_authority_unavailable";
+  setAuthoritySensitiveControlsDisabled(true);
+  if (assignedRead.reason === "runtime_workspace_identity_migration_required") {
+    setIntakeStatus("Workspace authority is not verified. Authority-sensitive actions remain disabled: runtime_workspace_identity_migration_required.");
+  } else {
+    setIntakeStatus("Workspace authority is not verified. Authority-sensitive actions remain disabled: " + (assignedRead.reason || "assigned_authority_unavailable") + ".");
+  }
+  return assignedRead;
 }
 
 async function renderWorkspace(explicitAssignedWorkspace = null) {
@@ -291,7 +353,7 @@ async function renderWorkspace(explicitAssignedWorkspace = null) {
   renderJournal(workspace);
   renderRecoveryJournal(workspace);
   renderSystemTimeline(workspace);
-  await renderDuplicateUrlReview();
+  await renderDuplicateUrlReview(workspace);
 }
 
 function populateJournalRoleSelect(workspaceType) {
@@ -312,59 +374,158 @@ function populateJournalRoleSelect(workspaceType) {
 }
 
 async function saveWorkspaceDetails() {
-  let saved = false;
+  let submission = null;
   try {
-    await runWithWorkspaceMetadataWriter((snapshot) => saveWorkspaceDetailsAgainstLatest({
-      ...snapshot,
-      eventId: crypto.randomUUID(),
-      updatedAt: new Date().toISOString()
-    }, createWorkspaceMetadataWriterAdapters()));
-    saved = true;
+    submission = await runWithWorkspaceMetadataWriter((snapshot) =>
+      assignedWorkspaceMetadataMutationGateway.submitCommit({
+        mode: "save",
+        name: snapshot.name,
+        aim: snapshot.aim,
+        workspaceType: snapshot.workspaceType,
+        eventId: crypto.randomUUID()
+      })
+    );
+    if (!submission?.ok) {
+      applyAssignedMetadataAuthorityState(submission?.authorityState);
+      throw new Error(submission?.reason || submission?.status || "assigned metadata mutation failed");
+    }
     setIntakeStatus("Workspace saved.");
   } catch (error) {
     setIntakeStatus("Workspace was not saved or verified: " + (error?.message || "metadata writer failed") + ".");
   }
-  if (saved) await renderWorkspace();
+  if (submission?.ok) await renderAssignedMetadataWorkspace(submission.authorityState);
 }
 
 async function updateWorkspaceType() {
-  let updated = false;
+  let submission = null;
   try {
-    await runWithWorkspaceMetadataWriter((snapshot) => updateWorkspaceTypeAgainstLatest({
-      ...snapshot,
-      eventId: crypto.randomUUID(),
-      updatedAt: new Date().toISOString()
-    }, createWorkspaceMetadataWriterAdapters()));
-    updated = true;
+    submission = await runWithWorkspaceMetadataWriter((snapshot) =>
+      assignedWorkspaceMetadataMutationGateway.submitCommit({
+        mode: "type_change",
+        name: snapshot.name,
+        aim: snapshot.aim,
+        workspaceType: snapshot.workspaceType,
+        eventId: crypto.randomUUID()
+      })
+    );
+    if (!submission?.ok) {
+      applyAssignedMetadataAuthorityState(submission?.authorityState);
+      throw new Error(submission?.reason || submission?.status || "assigned metadata mutation failed");
+    }
+    setIntakeStatus(
+      submission.result.status === "no_change"
+        ? "Workspace metadata is already current."
+        : "Workspace type changed."
+    );
   } catch (error) {
     setIntakeStatus("Workspace type was not changed or verified: " + (error?.message || "metadata writer failed") + ".");
   }
-  if (updated) await renderWorkspace();
+  if (submission?.ok) await renderAssignedMetadataWorkspace(submission.authorityState);
 }
 
-function createWorkspaceMetadataWriterAdapters() {
-  return {
-    withRuntimeStateLock: (callback) => navigator.locks.request(LOCK_NAMES.runtimeState, callback),
-    readCompatibleWorkspace: () => readCompatibleStorageValue("activeWorkspace"),
-    writeCompatibleWorkspace: (workspace) => writeCompatibleStorageValue("activeWorkspace", workspace),
-    isValidWorkspaceRole,
-    getWorkspaceTypeLabel
-  };
+async function renderAssignedMetadataWorkspace(authorityState) {
+  const read = applyAssignedMetadataAuthorityState(authorityState);
+  if (!read) return;
+  await renderWorkspace(read.workspace);
+}
+
+function applyAssignedMetadataAuthorityState(authorityState) {
+  const status = authorityState?.status || "blocked";
+  document.documentElement.dataset.assignedWorkspaceMetadataAuthority = status;
+  if (
+    status !== "assigned" ||
+    authorityState?.authority?.lifecycleState !== "available"
+  ) {
+    setAuthoritySensitiveControlsDisabled(true);
+    setIntakeStatus(
+      "Assigned workspace metadata is unavailable: " +
+      (authorityState?.reason || status) + "."
+    );
+    return null;
+  }
+
+  const read = readAssignedWorkspaceRuntime(authorityState.authority);
+  if (!read.ok) {
+    setAuthoritySensitiveControlsDisabled(true);
+    setIntakeStatus("Assigned workspace metadata is unavailable: invalid_assigned_authority.");
+    return null;
+  }
+
+  return read;
+}
+
+async function appendAssignedOrdinaryTimelineEvent(type, message, details = {}) {
+  const submission = await assignedOrdinaryMutationGateway.appendTimeline(type, message, details);
+  if (!submission.ok) {
+    applyAssignedOrdinaryMutationFailure(submission, "Timeline evidence was not saved or verified");
+    return submission;
+  }
+  await renderAssignedOrdinaryMutationResult(submission);
+  return submission;
+}
+
+async function readAssignedWorkspaceForOrdinaryAction() {
+  const assignedRead = await assignedOrdinaryMutationGateway.resolveAssignedWorkspace();
+  if (!assignedRead.ok) {
+    applyAssignedOrdinaryMutationFailure(assignedRead, "Assigned workspace is unavailable");
+    return null;
+  }
+  return assignedRead;
+}
+
+async function renderAssignedOrdinaryMutationResult(submission) {
+  if (!submission?.ok) {
+    applyAssignedOrdinaryMutationFailure(submission, "Assigned workspace mutation was not verified");
+    return false;
+  }
+  if (!submission.refreshed || !submission.workspace) {
+    runtimeWorkspaceIdentityValidated = false;
+    setAuthoritySensitiveControlsDisabled(true);
+    setIntakeStatus("Workspace mutation is verified, but refreshed assigned workspace state is unavailable: " + (submission.refreshReason || "assigned_workspace_refresh_failed") + ".");
+    return true;
+  }
+  runtimeWorkspaceIdentityValidated = true;
+  await renderWorkspace(submission.workspace);
+  return true;
+}
+
+function applyAssignedOrdinaryMutationFailure(submission, prefix) {
+  runtimeWorkspaceIdentityValidated = false;
+  runtimeWorkspaceReadOnly = true;
+  document.documentElement.dataset.runtimeWorkspaceAuthority = submission?.status || "blocked";
+  document.documentElement.dataset.runtimeWorkspaceAuthorityReason = submission?.reason || "assigned_authority_unavailable";
+  setAuthoritySensitiveControlsDisabled(true);
+  setIntakeStatus(prefix + ": " + (submission?.reason || submission?.status || "assigned_authority_unavailable") + ".");
+}
+
+async function refreshAssignedWorkspaceAfterVerifiedMutation() {
+  const assignedRead = await assignedOrdinaryMutationGateway.resolveAssignedWorkspace();
+  if (!assignedRead.ok) {
+    applyAssignedOrdinaryMutationFailure(assignedRead, "Assigned workspace refresh is unavailable");
+    return;
+  }
+  runtimeWorkspaceIdentityValidated = true;
+  await renderWorkspace(assignedRead.workspace);
 }
 
 async function scanCurrentWindowTabs() {
   availableTabs = await getCurrentWindowTabs();
-  await addTimelineEvent("tabs_scanned", "Scanned " + availableTabs.length + " tabs from current window.");
+  const submission = await appendAssignedOrdinaryTimelineEvent("tabs_scanned", "Scanned " + availableTabs.length + " tabs from current window.");
+  if (!submission.ok) return;
+  if (!submission.workspace) return;
   setIntakeStatus("Scanned " + availableTabs.length + " tabs from the current window.");
-  await renderAvailableTabs();
+  await renderAvailableTabs(submission.workspace);
 }
 
-async function renderAvailableTabs() {
+async function renderAvailableTabs(explicitAssignedWorkspace = null) {
   if (!availableTabsList) return;
   clearElement(availableTabsList);
-  const workspaceRead = await readActiveWorkspaceReadonly();
-  if (!workspaceRead.ok) { setIntakeStatus("Scanned-tab display refresh failed: " + workspaceRead.reason + "."); return; }
-  const workspace = workspaceRead.workspace;
+  let workspace = explicitAssignedWorkspace;
+  if (!workspace) {
+    const workspaceRead = await readActiveWorkspaceReadonly();
+    if (!workspaceRead.ok) { setIntakeStatus("Scanned-tab display refresh failed: " + workspaceRead.reason + "."); return; }
+    workspace = workspaceRead.workspace;
+  }
   if (!availableTabs.length) {
     const empty = document.createElement("p");
     empty.className = "empty-state";
@@ -541,26 +702,45 @@ async function handleTabsListChange(event) {
 }
 
 async function updateWorkspaceTabAlias(workspaceTabId, alias) {
-  const workspace = await getWorkspace();
-  const tab = workspace.tabs.find((item) => item.workspaceTabId === workspaceTabId);
-  if (!tab) return;
-  tab.alias = alias.trim();
-  workspace.updatedAt = new Date().toISOString();
-  await saveWorkspace(workspace);
-  await addTimelineEvent("tab_alias_updated", "Updated alias for " + (tab.originalTitle || tab.displayUrl || "tab") + ".", { workspaceTabId, tabId: tab.tabId, alias: tab.alias });
-  await renderWorkspace();
+  if (typeof workspaceTabId !== "string" || !workspaceTabId.trim()) {
+    setIntakeStatus("Tab alias was not saved: runtime_workspace_identity_migration_required.");
+    return;
+  }
+  const submission = await assignedOrdinaryMutationGateway.submit({
+    mutationKind: "workspace.tab.metadata.commit",
+    payload: {
+      workspaceTabId,
+      field: "alias",
+      value: alias.trim(),
+      eventId: crypto.randomUUID()
+    }
+  });
+  if (!submission.ok) {
+    applyAssignedOrdinaryMutationFailure(submission, "Tab alias was not saved or verified");
+    return;
+  }
+  await renderAssignedOrdinaryMutationResult(submission);
 }
 
 async function updateWorkspaceTabRole(workspaceTabId, role) {
-  const workspace = await getWorkspace();
-  const tab = workspace.tabs.find((item) => item.workspaceTabId === workspaceTabId);
-  if (!tab) return;
-  const previousRole = tab.role || "unassigned";
-  tab.role = role || "unassigned";
-  workspace.updatedAt = new Date().toISOString();
-  await saveWorkspace(workspace);
-  await addTimelineEvent("tab_role_updated", "Assigned " + getTabName(tab) + " to " + getWorkspaceRoleLabel(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE, tab.role) + " subgroup.", { workspaceTabId, tabId: tab.tabId, url: tab.url, previousRole, role: tab.role });
-  await renderWorkspace();
+  if (typeof workspaceTabId !== "string" || !workspaceTabId.trim()) {
+    setIntakeStatus("Tab role was not saved: runtime_workspace_identity_migration_required.");
+    return;
+  }
+  const submission = await assignedOrdinaryMutationGateway.submit({
+    mutationKind: "workspace.tab.metadata.commit",
+    payload: {
+      workspaceTabId,
+      field: "role",
+      value: role,
+      eventId: crypto.randomUUID()
+    }
+  });
+  if (!submission.ok) {
+    applyAssignedOrdinaryMutationFailure(submission, "Tab role was not saved or verified");
+    return;
+  }
+  await renderAssignedOrdinaryMutationResult(submission);
 }
 
 async function focusWorkspaceTab(workspaceTabId) {
@@ -826,10 +1006,12 @@ async function reopenAllMissingWorkspaceTabs() {
 }
 
 async function copyWorkspaceUrlList() {
-  const workspace = await getWorkspace();
-  const markdown = buildWorkspaceUrlListMarkdown(workspace);
+  const assignedRead = await readAssignedWorkspaceForOrdinaryAction();
+  if (!assignedRead) return;
+  const markdown = buildWorkspaceUrlListMarkdown(assignedRead.workspace);
   await navigator.clipboard.writeText(markdown);
-  await addTimelineEvent("workspace_url_list_copied", "Copied workspace URL list grouped by role.", { tabCount: workspace.tabs.length, format: "markdown" });
+  const submission = await appendAssignedOrdinaryTimelineEvent("workspace_url_list_copied", "Copied workspace URL list grouped by role.", { tabCount: assignedRead.workspace.tabs.length, format: "markdown" });
+  if (!submission.ok) return;
   setAdvancedStatus("Workspace URL list copied as Markdown.");
 }
 
@@ -862,11 +1044,11 @@ async function refreshWorkspaceTabMetadata(options = {}) {
 }
 
 async function refreshTabStatus() {
-  const workspace = await getWorkspace();
-  const resolution = await resolveWorkspaceTabsToLiveTabs(workspace);
-  const status = calculateTabStatus(workspace, resolution.results);
-  await addTimelineEvent("workspace_tab_status_refreshed", "Tab status refreshed: " + status.openTabs + " open, " + status.missingTabs + " missing or ambiguous, " + status.groupedTabs + " grouped, " + status.ungroupedTabs + " ungrouped, " + status.unassignedTabs + " unassigned.", { ...status, resolutionMode: "stable_one_to_one" });
-  renderWorkspaceTabStatus(workspace, resolution.results);
+  const assignedRead = await readAssignedWorkspaceForOrdinaryAction();
+  if (!assignedRead) return;
+  const resolution = await resolveWorkspaceTabsToLiveTabs(assignedRead.workspace);
+  const status = calculateTabStatus(assignedRead.workspace, resolution.results);
+  await appendAssignedOrdinaryTimelineEvent("workspace_tab_status_refreshed", "Tab status refreshed: " + status.openTabs + " open, " + status.missingTabs + " missing or ambiguous, " + status.groupedTabs + " grouped, " + status.ungroupedTabs + " ungrouped, " + status.unassignedTabs + " unassigned.", { ...status, resolutionMode: "stable_one_to_one" });
 }
 
 async function clearWorkspaceTabs() {
@@ -1027,13 +1209,15 @@ function findPreviouslyReopenedTabForRecovery(workspace, recoverySourceEventId, 
 async function saveJournalEntry() {
   const text = journalEntryInput?.value?.trim() || "";
   if (!text) return;
-  const read = await readActiveWorkspaceReadonly(); if(!read.ok){setIntakeStatus("Journal entry not saved: "+read.reason);return} const workspace=read.workspace;
+  const assignedRead = await readAssignedWorkspaceForOrdinaryAction();
+  if (!assignedRead) return;
+  const workspace = assignedRead.workspace;
   const relatedRoleId = journalRelatedRoleSelect?.value || "";
   const relatedRoleLabel = relatedRoleId ? getWorkspaceRoleLabel(workspace.workspaceType || DEFAULT_WORKSPACE_TYPE, relatedRoleId) : "";
-  await journalAppendClient.submit({ workspaceId: workspace.workspaceId, entry: { text, tag: journalTagInput?.value?.trim() || "", relatedRoleId, relatedRoleLabel, createdAt: new Date().toISOString() } });
+  await journalAppendClient.submit({ authority: assignedRead.authority, entry: { text, tag: journalTagInput?.value?.trim() || "", relatedRoleId, relatedRoleLabel, createdAt: new Date().toISOString() } });
 }
 
-async function refreshJournalReadonly(){const read=await readActiveWorkspaceReadonly();if(!read.ok){setIntakeStatus("Journal refresh failed: "+read.reason);return}populateJournalRoleSelect(read.workspace.workspaceType||DEFAULT_WORKSPACE_TYPE);renderJournal(read.workspace)}
+async function refreshJournalReadonly(){const assignedRead=await readAssignedWorkspaceForOrdinaryAction();if(!assignedRead)return;populateJournalRoleSelect(assignedRead.workspace.workspaceType||DEFAULT_WORKSPACE_TYPE);await renderWorkspace(assignedRead.workspace)}
 
 function renderWorkspaceTabs(workspace, resolutionResults) {
   if (!tabsList) return;
@@ -1339,13 +1523,16 @@ function renderAdvancedTabControls() {
   tabsSection.insertAdjacentElement("afterend", section);
 }
 
-async function renderDuplicateUrlReview() {
+async function renderDuplicateUrlReview(explicitAssignedWorkspace = null) {
   const list = document.getElementById("duplicateUrlReviewList");
   if (!list) return;
   clearElement(list);
-  const workspaceRead = await readActiveWorkspaceReadonly();
-  if (!workspaceRead.ok) { setAdvancedStatus("Duplicate URL review could not read compatible workspace state."); return; }
-  const workspace = workspaceRead.workspace;
+  let workspace = explicitAssignedWorkspace;
+  if (!workspace) {
+    const assignedRead = await readAssignedWorkspaceForOrdinaryAction();
+    if (!assignedRead) { setAdvancedStatus("Duplicate URL review could not read assigned workspace state."); return; }
+    workspace = assignedRead.workspace;
+  }
   const duplicateGroups = getDuplicateUrlGroups(workspace);
   if (!duplicateGroups.length) {
     const empty = document.createElement("p");
@@ -1411,7 +1598,6 @@ async function resolveWorkspaceTabsToLiveTabs(workspace) {
   const consumedLiveTabIds = new Set();
   const results = [];
   workspace.tabs.forEach((workspaceTab) => {
-    if (!workspaceTab.workspaceTabId) workspaceTab.workspaceTabId = crypto.randomUUID();
     const result = resolveWorkspaceTabAgainstBrowserTabs(workspaceTab, browserTabs, consumedLiveTabIds);
     if (result.liveTab) consumedLiveTabIds.add(result.liveTab.id);
     results.push(result);

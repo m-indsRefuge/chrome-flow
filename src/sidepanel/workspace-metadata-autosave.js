@@ -2,13 +2,12 @@ import {
   appendRuntimeDiagnostic
 } from "../core/workspace-runtime-store.js";
 import {
-  readCompatibleStorageValue,
-  stableStringify,
-  writeCompatibleStorageValue
-} from "../core/constellation-storage-compatibility.js";
-import { LOCK_NAMES } from "../core/runtime-contract/constants.js";
+  getSidePanelAssignedWorkspaceAuthority
+} from "../core/runtime-window-binding/side-panel-authority.js";
 import {
-  applyWorkspaceMetadataAutosaveSnapshot,
+  createRuntimeWorkspaceMutationClient
+} from "../core/runtime-workspace-mutation/client.js";
+import {
   createWorkspaceMetadataBarrier,
   runWorkspaceMetadataWriterWithLatestSnapshot
 } from "./workspace-metadata-barrier.js";
@@ -22,6 +21,14 @@ const workspaceTypeSelect = document.getElementById("workspaceType");
 let autosaveTimer = null;
 let pendingReason = "";
 let latestRequestedSnapshot = null;
+const assignedMetadataMutationGateway = createAssignedWorkspaceMetadataMutationGateway({
+  resolveAuthority: () => getSidePanelAssignedWorkspaceAuthority().resolve(),
+  mutationClient: createRuntimeWorkspaceMutationClient({
+    createId: () => crypto.randomUUID(),
+    now: () => new Date().toISOString(),
+    send: (command) => chrome.runtime.sendMessage(command)
+  })
+});
 const metadataBarrier = createWorkspaceMetadataBarrier({
   commitSnapshot: commitMetadataSnapshotAgainstLatest,
   recordFailure: recordMetadataFailure
@@ -90,52 +97,39 @@ function captureMetadataSnapshot({ includeWorkspaceType = false } = {}) {
 
 async function commitMetadataSnapshotAgainstLatest(snapshot, reason) {
   if (!snapshot) return { ok: true, changed: false };
-  return navigator.locks.request(LOCK_NAMES.runtimeState, async () => {
-    const compatibleRead = await readCompatibleStorageValue("activeWorkspace");
-    if (
-      compatibleRead.conflict ||
-      !compatibleRead.canonicalPresent ||
-      !compatibleRead.legacyPresent ||
-      !compatibleRead.equivalent ||
-      !isWorkspaceObject(compatibleRead.value)
-    ) throw new Error("Compatible active workspace is unavailable for metadata persistence");
-    const workspace = compatibleRead.value;
-    const changedFields = getChangedFields(workspace, snapshot);
-    if (!changedFields.length) return { ok: true, changed: false };
-    const nextWorkspace = applyWorkspaceMetadataAutosaveSnapshot(workspace, snapshot, new Date().toISOString());
-    await writeCompatibleStorageValue("activeWorkspace", nextWorkspace);
-    const verified = await readCompatibleStorageValue("activeWorkspace");
-    if (
-      verified.conflict ||
-      !verified.canonicalPresent ||
-      !verified.legacyPresent ||
-      !verified.equivalent ||
-      stableStringify(verified.value) !== stableStringify(nextWorkspace)
-    ) throw new Error("Metadata persistence verification failed");
+  const submission = await assignedMetadataMutationGateway.submitAutosave(snapshot);
+  if (!submission.ok) throw new Error(metadataMutationFailureMessage(submission));
+  try {
     await appendRuntimeDiagnostic(
       "info",
       "workspace_metadata_autosaved",
-      "Active workspace metadata autosaved to compatible chrome.storage.local peers.",
+      "Assigned workspace metadata autosaved through the scoped runtime mutation route.",
       {
-        workspaceId: nextWorkspace.workspaceId || "",
+        workspaceId: submission.result.workspaceId,
         reason,
-        changedFields,
-        workspaceType: nextWorkspace.workspaceType || "",
-        workspaceRevision: Number.isSafeInteger(nextWorkspace.workspaceRevision) ? nextWorkspace.workspaceRevision : 0,
-        placementMode: nextWorkspace.placementMode || "",
-        activeRuntimeAuthority: "chrome.storage.local",
+        mutationKind: "workspace.metadata.autosave",
+        mutationStatus: submission.result.status,
+        workspaceRevision: submission.result.committedRevision,
+        activeRuntimeAuthority: "assigned_scoped_runtime_record",
         workspaceLibraryChanged: false
       }
     );
-    return { ok: true, changed: true };
-  });
+  } catch {
+    // Diagnostic evidence is non-authoritative after verified business success.
+  }
+  return {
+    ok: true,
+    changed: submission.result.status === "committed",
+    result: submission.result,
+    authorityState: submission.authorityState
+  };
 }
 
 async function recordMetadataFailure(error, reason) {
   await appendRuntimeDiagnostic(
     "error",
     "workspace_metadata_autosave_failed",
-    "Active workspace metadata autosave failed without changing membership or promotion authority.",
+    "Assigned workspace metadata autosave failed without changing membership or promotion authority.",
     { reason, error: error?.message || String(error) }
   );
 }
@@ -166,17 +160,144 @@ async function runWithWorkspaceMetadataWriter(work) {
   );
 }
 
-function getChangedFields(workspace, snapshot) {
-  const changedFields = [];
-
-  if ((workspace.name || "") !== snapshot.name) changedFields.push("name");
-  if ((workspace.aim || "") !== snapshot.aim) changedFields.push("aim");
-
-  return changedFields;
+function getAssignedWorkspaceMetadataMutationGateway() {
+  return assignedMetadataMutationGateway;
 }
 
-function isWorkspaceObject(value) {
-  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+function createAssignedWorkspaceMetadataMutationGateway({ resolveAuthority, mutationClient }) {
+  if (typeof resolveAuthority !== "function" || !mutationClient || typeof mutationClient.submit !== "function") {
+    throw new TypeError("Assigned workspace metadata mutation dependencies are invalid");
+  }
+
+  return Object.freeze({
+    submitAutosave,
+    submitCommit
+  });
+
+  function submitAutosave(input = {}) {
+    return submit("workspace.metadata.autosave", {
+      name: input?.name,
+      aim: input?.aim
+    });
+  }
+
+  function submitCommit(input = {}) {
+    return submit("workspace.metadata.commit", {
+      mode: input?.mode,
+      name: input?.name,
+      aim: input?.aim,
+      workspaceType: input?.workspaceType,
+      eventId: input?.eventId
+    });
+  }
+
+  async function submit(mutationKind, payload) {
+    const authorityState = await resolveFreshAuthority(resolveAuthority);
+    if (!isAssignedWritableAuthorityState(authorityState)) {
+      return unavailableAuthorityResult(authorityState);
+    }
+
+    let result;
+    try {
+      result = await mutationClient.submit({
+        authority: authorityState.authority,
+        mutationKind,
+        payload
+      });
+    } catch (error) {
+      return {
+        ok: false,
+        status: "failed",
+        reason: "metadata_mutation_client_failed",
+        result: null,
+        authorityState: null,
+        errors: [safeError(error)]
+      };
+    }
+
+    if (!isVerifiedMetadataMutationResult(result)) {
+      return {
+        ok: false,
+        status: typeof result?.status === "string" ? result.status : "failed",
+        reason: typeof result?.reason === "string" && result.reason
+          ? result.reason
+          : "metadata_mutation_not_verified",
+        result: result || null,
+        authorityState: null,
+        errors: Array.isArray(result?.errors) ? [...result.errors] : []
+      };
+    }
+
+    return {
+      ok: true,
+      status: result.status,
+      reason: result.reason || "",
+      result,
+      authorityState: await resolveFreshAuthority(resolveAuthority),
+      errors: []
+    };
+  }
 }
 
-export { runWithWorkspaceMetadataBarrier, runWithWorkspaceMetadataWriter };
+async function resolveFreshAuthority(resolveAuthority) {
+  try {
+    const state = await resolveAuthority();
+    if (!state || typeof state !== "object" || Array.isArray(state)) {
+      return {
+        status: "failed",
+        reason: "assigned_authority_state_invalid",
+        authority: null
+      };
+    }
+    return state;
+  } catch (error) {
+    return {
+      status: "failed",
+      reason: "assigned_authority_resolve_failed",
+      authority: null,
+      errors: [safeError(error)]
+    };
+  }
+}
+
+function isAssignedWritableAuthorityState(state) {
+  return state?.status === "assigned" &&
+    state.authority !== null &&
+    typeof state.authority === "object" &&
+    state.authority.lifecycleState === "available";
+}
+
+function isVerifiedMetadataMutationResult(result) {
+  return result &&
+    ["committed", "no_change", "replayed"].includes(result.status) &&
+    result.authorityVerified === true &&
+    result.workspaceVerified === true;
+}
+
+function unavailableAuthorityResult(state) {
+  return {
+    ok: false,
+    status: typeof state?.status === "string" ? state.status : "blocked",
+    reason: typeof state?.reason === "string" && state.reason
+      ? state.reason
+      : "assigned_authority_unavailable",
+    result: null,
+    authorityState: state || null,
+    errors: Array.isArray(state?.errors) ? [...state.errors] : []
+  };
+}
+
+function metadataMutationFailureMessage(submission) {
+  return submission?.reason || submission?.status || "assigned_metadata_mutation_failed";
+}
+
+function safeError(error) {
+  return String(error?.message || error || "unknown_error");
+}
+
+export {
+  createAssignedWorkspaceMetadataMutationGateway,
+  getAssignedWorkspaceMetadataMutationGateway,
+  runWithWorkspaceMetadataBarrier,
+  runWithWorkspaceMetadataWriter
+};

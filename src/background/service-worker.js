@@ -1,13 +1,14 @@
 import { scheduleWorkspaceProjectionReconciliation } from "../core/automatic-workspace-projection-reconciler.js";
 import { CONSTELLATION_PRODUCT_NAME } from "../core/product-identity.js";
 import { EVENT_IDENTITIES } from "../core/constellation-identity-contract.js";
-import { coordinateJournalAppend } from "../core/journal-append-coordination/coordinator.js";
-import { createChromeJournalAdapters } from "../core/journal-append-coordination/chrome-adapter.js";
-import { JOURNAL_APPEND_REQUEST_SCHEMA, response as journalResponse } from "../core/journal-append-coordination/contract.js";
+import { coordinateAssignedJournalAppend, coordinateJournalAppend } from "../core/journal-append-coordination/coordinator.js";
+import { createChromeAssignedJournalAdapters, createChromeJournalAdapters } from "../core/journal-append-coordination/chrome-adapter.js";
+import { JOURNAL_APPEND_ASSIGNED_REQUEST_SCHEMA, JOURNAL_APPEND_REQUEST_SCHEMA, assignedResponse as assignedJournalResponse, response as journalResponse } from "../core/journal-append-coordination/contract.js";
 import { coordinateContextRegistration, coordinateWindowCloseCleanup } from "../core/runtime-session-authority/coordinator.js";
 import { createChromeRuntimeSessionAuthorityAdapters } from "../core/runtime-session-authority/chrome-adapter.js";
 import { createContextResultFromRequest, isContextRegisterMessage, validateContextRegisterRequest, validateSidePanelSender } from "../core/runtime-session-authority/contract.js";
 import { handleRuntimeWindowBindingMessage, isRuntimeWindowBindingResolveMessage } from "../core/runtime-window-binding/service-worker-handler.js";
+import { handleRuntimeWorkspaceMutationMessage, isRuntimeWorkspaceMutationMessage } from "../core/runtime-workspace-mutation/service-worker-handler.js";
 import { handleRuntimeWorkspaceActivationMessage, isRuntimeWorkspaceActivationMessage } from "../core/runtime-workspace-activation/service-worker-handler.js";
 import { handleWorkspaceManualPlacementMessage, isWorkspaceManualPlacementMessage } from "../core/workspace-manual-placement-transaction/service-worker-handler.js";
 import { handleAutomaticPromotionMessage, isAutomaticPromotionMessage } from "../core/workspace-automatic-promotion-integration/service-worker-handler.js";
@@ -195,6 +196,18 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       return false;
     }
     coordinateContextRegistration(message, { sourceUrl: sender.url }, createChromeRuntimeSessionAuthorityAdapters(chrome)).then(sendResponse, () => sendResponse(createContextResultFromRequest(message, { status: "failed", reason: "unhandled_coordination_failure", retrySafe: true })));
+    return true;
+  }
+  if (isRuntimeWorkspaceMutationMessage(message)) {
+    return handleRuntimeWorkspaceMutationMessage(message, sender, sendResponse, {
+      chromeApi: chrome,
+      runtimeId: chrome.runtime.id,
+      sidePanelUrl
+    });
+  }
+  if (message?.schema === JOURNAL_APPEND_ASSIGNED_REQUEST_SCHEMA) {
+    if (sender?.id !== chrome.runtime.id || sender?.url !== sidePanelUrl) { sendResponse(assignedJournalResponse(message, { status: "rejected", reason: "sender_not_authorized", phase: "route_validation" })); return false; }
+    coordinateAssignedJournalAppend(message, createChromeAssignedJournalAdapters(chrome)).then(sendResponse, () => sendResponse(assignedJournalResponse(message, { status: "failed", reason: "unhandled_coordination_failure", phase: "route_coordination", retrySafe: true })));
     return true;
   }
   if (message?.schema === JOURNAL_APPEND_REQUEST_SCHEMA) {

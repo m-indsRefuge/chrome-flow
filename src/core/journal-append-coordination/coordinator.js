@@ -2,8 +2,21 @@ import { LOCK_NAMES, SCHEMAS } from "../runtime-contract/constants.js";
 import { createAssignmentRegistry } from "../runtime-contract/assignments.js";
 import { evaluateRuntimeMutation } from "../runtime-contract/mutation-engine.js";
 import { normalizeWorkspaceRevision } from "../runtime-contract/revision.js";
-import { validateJournalAppendRequest, response } from "./contract.js";
+import {
+  assignedResponse,
+  response,
+  validateAssignedJournalAppendRequest,
+  validateJournalAppendRequest
+} from "./contract.js";
 import { validateOperationLedger } from "./ledger-validation.js";
+import {
+  coordinateRuntimeWorkspaceMutation
+} from "../runtime-workspace-mutation/coordinator.js";
+import {
+  RUNTIME_WORKSPACE_MUTATION_COMMAND_SCHEMA,
+  RUNTIME_WORKSPACE_MUTATION_TYPE,
+  validateRuntimeWorkspaceMutationResult
+} from "../runtime-workspace-mutation/contract.js";
 const RUNTIME_STATE_LOCK_NAME = "constellation-runtime-state-v0.1";
 export async function coordinateJournalAppend(request, adapters) {
   const validation = validateJournalAppendRequest(request);
@@ -28,4 +41,61 @@ export async function coordinateJournalAppend(request, adapters) {
     try { await adapters.writeOperationLedger(evaluated.operationLedger); } catch { return response(request, "failed", { reason: workspaceCommitted ? "operation_ledger_write_failed_after_workspace_commit" : "operation_ledger_write_failed_after_verified_state", previousRevision: evaluated.result.previousRevision, committedRevision: evaluated.result.committedRevision, workspaceCommitted, workspaceVerified: verified, retrySafe: true }); }
     return response(request, evaluated.result.status, { previousRevision: evaluated.result.previousRevision, committedRevision: evaluated.result.committedRevision, workspaceCommitted, workspaceVerified: verified, ledgerRecorded: true, retrySafe: false, reason: evaluated.result.reason });
   } catch { return response(request,"failed",{reason:"journal_coordination_internal_failure",retrySafe:true}); }}); } catch { return response(request, "failed", { reason: callbackBegan ? "journal_coordination_internal_failure" : "runtime_state_lock_unavailable", retrySafe: true }); }
+}
+
+export async function coordinateAssignedJournalAppend(request, adapters) {
+  const validation = validateAssignedJournalAppendRequest(request);
+  if (!validation.valid) {
+    return assignedResponse(request, {
+      status: "rejected",
+      reason: "invalid_request",
+      phase: "request_validation",
+      errors: validation.errors
+    });
+  }
+
+  const command = {
+    type: RUNTIME_WORKSPACE_MUTATION_TYPE,
+    schema: RUNTIME_WORKSPACE_MUTATION_COMMAND_SCHEMA,
+    operationId: request.operationId,
+    runtimeSessionId: request.runtimeSessionId,
+    sourceContextId: request.sourceContextId,
+    sourceWindowId: request.sourceWindowId,
+    workspaceId: request.workspaceId,
+    expectedWorkspaceRevision: request.expectedWorkspaceRevision,
+    runtimeAssignmentId: request.runtimeAssignmentId,
+    assignmentEpoch: request.assignmentEpoch,
+    mutationKind: "journal.append",
+    payload: { record: request.entry },
+    requestedAt: request.requestedAt
+  };
+
+  let mutationResult;
+  try {
+    mutationResult = await coordinateRuntimeWorkspaceMutation(command, adapters);
+  } catch (error) {
+    return assignedResponse(request, {
+      status: "failed",
+      reason: "mutation_coordination_failed",
+      phase: "coordination",
+      retrySafe: true,
+      errors: [String(error?.message || error || "unknown_error")]
+    });
+  }
+
+  const resultValidation = validateRuntimeWorkspaceMutationResult(
+    mutationResult,
+    command
+  );
+  if (!resultValidation.valid) {
+    return assignedResponse(request, {
+      status: "failed",
+      reason: "mutation_result_invalid",
+      phase: "result_validation",
+      retrySafe: true,
+      errors: resultValidation.errors
+    });
+  }
+
+  return assignedResponse(request, resultValidation.result);
 }
